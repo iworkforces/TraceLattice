@@ -1,11 +1,7 @@
-import type {
-	PersistenceBackend,
-	SessionScopedPersistenceBackend,
-} from '../contracts/PersistenceBackend.js';
-import { GLOBAL_SESSION_ID, asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
+import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import { asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
 import type { Summary } from './compression/Summary.js';
 import { PersistenceCompatibilityError, PersistenceUnavailableError } from '../errors.js';
-import { requireSessionScopedPersistence } from '../persistence/SessionScopedPersistence.js';
 import {
 	assertBranchScope,
 	assertEdgeScopes,
@@ -50,21 +46,11 @@ function validateThoughts(
 		{ sessionId, thoughts: history },
 		...branches.map((branch) => ({ sessionId, thoughts: branch.thoughts })),
 	];
-	if (sessionId === GLOBAL_SESSION_ID) {
-		assertPersistableThoughtCollections(
-			collections.map((collection) => ({
-				sessionId,
-				thoughts: collection.thoughts.filter((thought) => thought.id !== undefined),
-			})),
-			`restore:${sessionId}`
-		);
-		return;
-	}
 	assertPersistableThoughtCollections(collections, `restore:${sessionId}`);
 }
 
 async function stageSession(
-	persistence: SessionScopedPersistenceBackend,
+	persistence: PersistenceBackend,
 	sessionId: SessionId
 ): Promise<RestoredSession> {
 	const history = await persistence.loadHistoryForSession(sessionId);
@@ -113,10 +99,9 @@ async function stageSession(
 export async function stagePersistenceRestore(
 	backend: PersistenceBackend
 ): Promise<PersistenceRestoreSnapshot> {
-	const persistence = requireSessionScopedPersistence(backend, 'listSessions');
-	if (!(await persistence.healthy())) throw new PersistenceUnavailableError();
+	if (!(await backend.healthy())) throw new PersistenceUnavailableError();
 
-	const listedSessions = await persistence.listSessions();
+	const listedSessions = await backend.listSessions();
 	const sessionIds: SessionId[] = [];
 	const seen = new Set<SessionId>();
 	for (const listedSessionId of listedSessions) {
@@ -127,6 +112,6 @@ export async function stagePersistenceRestore(
 	}
 
 	const sessions: RestoredSession[] = [];
-	for (const sessionId of sessionIds) sessions.push(await stageSession(persistence, sessionId));
+	for (const sessionId of sessionIds) sessions.push(await stageSession(backend, sessionId));
 	return Object.freeze({ sessions: Object.freeze(sessions) });
 }
