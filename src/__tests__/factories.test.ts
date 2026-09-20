@@ -34,25 +34,25 @@ describe('factories', () => {
 		});
 	});
 
-	describe('MockHistoryManager.getClearCallCount', () => {
-		it('should return 0 when clear has not been called', () => {
+	describe('MockHistoryManager.getResetCallCount', () => {
+		it('should return 0 when reset has not been called', () => {
 			const manager = new MockHistoryManager();
-			expect(manager.getClearCallCount()).toBe(0);
+			expect(manager.getResetCallCount()).toBe(0);
 		});
 
-		it('should track clear call count', () => {
+		it('should track reset call count', async () => {
 			const manager = new MockHistoryManager();
-			manager.clear();
-			expect(manager.getClearCallCount()).toBe(1);
-			manager.clear();
-			expect(manager.getClearCallCount()).toBe(2);
+			await manager.resetAll();
+			expect(manager.getResetCallCount()).toBe(1);
+			await manager.resetAll();
+			expect(manager.getResetCallCount()).toBe(2);
 		});
 
-		it('should track clear call count for specific sessions', () => {
+		it('should track reset call count for specific sessions', async () => {
 			const manager = new MockHistoryManager();
-			manager.clear('session-1');
-			manager.clear('session-2');
-			expect(manager.getClearCallCount()).toBe(2);
+			await manager.resetSession('session-1');
+			await manager.resetSession('session-2');
+			expect(manager.getResetCallCount()).toBe(2);
 		});
 	});
 
@@ -94,6 +94,7 @@ describe('factories', () => {
 			expect(thought.thought_number).toBe(1);
 			expect(thought.total_thoughts).toBe(1);
 			expect(thought.next_thought_needed).toBe(false);
+			expect(thought.session_id).toBe('test-session');
 		});
 
 		it('createToolRecommendation returns valid defaults', () => {
@@ -145,8 +146,8 @@ describe('factories', () => {
 	describe('MockHistoryManager', () => {
 		it('should start with empty history', () => {
 			const manager = new MockHistoryManager();
-			expect(manager.getHistory()).toEqual([]);
-			expect(manager.getHistoryLength()).toBe(0);
+			expect(manager.getHistory('test-session')).toEqual([]);
+			expect(manager.getHistoryLength('test-session')).toBe(0);
 		});
 
 		it('should add and retrieve thoughts', () => {
@@ -154,25 +155,25 @@ describe('factories', () => {
 			const thought = createTestThought({ thought_number: 1 });
 			manager.addThought(thought);
 
-			expect(manager.getHistory()).toHaveLength(1);
-			expect(manager.getHistoryLength()).toBe(1);
-			expect(manager.getHistory()[0]!.thought_number).toBe(1);
+			expect(manager.getHistory('test-session')).toHaveLength(1);
+			expect(manager.getHistoryLength('test-session')).toBe(1);
+			expect(manager.getHistory('test-session')[0]!.thought_number).toBe(1);
 		});
 
 		it('should return empty branches by default', () => {
 			const manager = new MockHistoryManager();
-			expect(manager.getBranches()).toEqual({});
-			expect(manager.getBranchIds()).toEqual([]);
+			expect(manager.getBranches('test-session')).toEqual({});
+			expect(manager.getBranchIds('test-session')).toEqual([]);
 		});
 
 		it('should return undefined for MCP tools when none set', () => {
 			const manager = new MockHistoryManager();
-			expect(manager.getAvailableMcpTools()).toBeUndefined();
+			expect(manager.getAvailableMcpTools('test-session')).toBeUndefined();
 		});
 
 		it('should return undefined for skills when none set', () => {
 			const manager = new MockHistoryManager();
-			expect(manager.getAvailableSkills()).toBeUndefined();
+			expect(manager.getAvailableSkills('test-session')).toBeUndefined();
 		});
 
 		it('should track MCP tools from added thoughts', () => {
@@ -182,7 +183,7 @@ describe('factories', () => {
 			});
 			manager.addThought(thought);
 
-			expect(manager.getAvailableMcpTools()).toEqual(['tool-a', 'tool-b']);
+			expect(manager.getAvailableMcpTools('test-session')).toEqual(['tool-a', 'tool-b']);
 		});
 
 		it('should track skills from added thoughts', () => {
@@ -192,7 +193,7 @@ describe('factories', () => {
 			});
 			manager.addThought(thought);
 
-			expect(manager.getAvailableSkills()).toEqual(['skill-x', 'skill-y']);
+			expect(manager.getAvailableSkills('test-session')).toEqual(['skill-x', 'skill-y']);
 		});
 
 		it('should isolate sessions by session_id', () => {
@@ -230,14 +231,15 @@ describe('factories', () => {
 
 		it('should not set mcpTools when thought has no available_mcp_tools', () => {
 			const manager = new MockHistoryManager();
-			manager.addThought({
-				thought: 'No tools',
-				thought_number: 1,
-				total_thoughts: 1,
-				next_thought_needed: false,
-			});
-			expect(manager.getAvailableMcpTools()).toBeUndefined();
-			expect(manager.getAvailableSkills()).toBeUndefined();
+			manager.addThought(
+				createTestThought({
+					thought: 'No tools',
+					available_mcp_tools: undefined,
+					available_skills: undefined,
+				})
+			);
+			expect(manager.getAvailableMcpTools('test-session')).toBeUndefined();
+			expect(manager.getAvailableSkills('test-session')).toBeUndefined();
 		});
 	});
 });

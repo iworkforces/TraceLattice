@@ -47,7 +47,7 @@ type ThoughtOverrides = Partial<Omit<ThoughtData, 'id' | 'session_id' | 'continu
 };
 
 export function createTestThought(overrides?: ThoughtOverrides): ThoughtData {
-	const { id, session_id, continuation_token, ...rest } = overrides ?? {};
+	const { id, session_id = 'test-session', continuation_token, ...rest } = overrides ?? {};
 	return {
 		available_mcp_tools: ['test-tool'],
 		available_skills: ['test-skill'],
@@ -55,8 +55,8 @@ export function createTestThought(overrides?: ThoughtOverrides): ThoughtData {
 		thought_number: 1,
 		total_thoughts: 1,
 		next_thought_needed: false,
+		session_id: asSessionId(session_id),
 		...(id !== undefined ? { id: asThoughtId(id) } : {}),
-		...(session_id !== undefined ? { session_id: asSessionId(session_id) } : {}),
 		...(continuation_token !== undefined
 			? { continuation_token: asSuspensionToken(continuation_token) }
 			: {}),
@@ -174,31 +174,25 @@ export class MockHistoryManager implements IHistoryManager {
 			skills: string[] | undefined;
 		}
 	>();
-	private _clearCallCount = 0;
 	private _resetCallCount = 0;
 	private readonly _referenceIndex = new ThoughtReferenceIndex();
-	private static readonly DEFAULT = '__global__';
 
-	private _getSession(sessionId?: string) {
-		const key = sessionId ?? MockHistoryManager.DEFAULT;
-		if (!this._sessions.has(key)) {
-			this._sessions.set(key, {
+	private _getSession(sessionId: string) {
+		if (!this._sessions.has(sessionId)) {
+			this._sessions.set(sessionId, {
 				history: [],
 				branches: {},
 				mcpTools: undefined,
 				skills: undefined,
 			});
 		}
-		return this._sessions.get(key)!;
+		return this._sessions.get(sessionId)!;
 	}
 
 	addThought(thought: ThoughtData): void {
 		const s = this._getSession(thought.session_id);
 		s.history.push(thought);
-		this._referenceIndex.add(
-			asSessionId(thought.session_id ?? MockHistoryManager.DEFAULT),
-			thought
-		);
+		this._referenceIndex.add(thought.session_id, thought);
 		if (thought.available_mcp_tools) s.mcpTools = thought.available_mcp_tools;
 		if (thought.available_skills) s.skills = thought.available_skills;
 	}
@@ -207,36 +201,29 @@ export class MockHistoryManager implements IHistoryManager {
 		return this._referenceIndex.resolve(sessionId, thoughtNumber);
 	}
 
-	getHistory(sessionId?: string): ThoughtData[] {
+	getHistory(sessionId: string): ThoughtData[] {
 		return this._getSession(sessionId).history;
 	}
 
-	getHistoryLength(sessionId?: string): number {
+	getHistoryLength(sessionId: string): number {
 		return this._getSession(sessionId).history.length;
 	}
 
-	getBranches(sessionId?: string): Record<BranchId, ThoughtData[]> {
+	getBranches(sessionId: string): Record<BranchId, ThoughtData[]> {
 		return this._getSession(sessionId).branches as Record<BranchId, ThoughtData[]>;
 	}
 
-	getBranchIds(sessionId?: string): BranchId[] {
+	getBranchIds(sessionId: string): BranchId[] {
 		return Object.keys(this._getSession(sessionId).branches) as BranchId[];
 	}
 
-	registerBranch(_sessionId: string | undefined, _branchId: BranchId): void {
+	registerBranch(_sessionId: string, _branchId: BranchId): void {
 		const session = this._getSession(_sessionId);
 		if (!session.branches[_branchId]) session.branches[_branchId] = [];
 	}
 
-	branchExists(sessionId: string | undefined, branchId: BranchId): boolean {
+	branchExists(sessionId: string, branchId: BranchId): boolean {
 		return branchId in this._getSession(sessionId).branches;
-	}
-
-	clear(sessionId?: string): void {
-		const key = sessionId ?? MockHistoryManager.DEFAULT;
-		this._sessions.delete(key);
-		this._referenceIndex.clearSession(asSessionId(key));
-		this._clearCallCount++;
 	}
 
 	async resetSession(sessionId: string, clearAuxiliaryState?: () => void): Promise<void> {
@@ -282,19 +269,15 @@ export class MockHistoryManager implements IHistoryManager {
 		return Array.from(this._sessions.keys());
 	}
 
-	getClearCallCount(): number {
-		return this._clearCallCount;
-	}
-
 	getResetCallCount(): number {
 		return this._resetCallCount;
 	}
 
-	getAvailableMcpTools(sessionId?: string): string[] | undefined {
+	getAvailableMcpTools(sessionId: string): string[] | undefined {
 		return this._getSession(sessionId).mcpTools;
 	}
 
-	getAvailableSkills(sessionId?: string): string[] | undefined {
+	getAvailableSkills(sessionId: string): string[] | undefined {
 		return this._getSession(sessionId).skills;
 	}
 
@@ -330,6 +313,6 @@ export function createMockToolRegistry(allowedTools: string[] = ['test-tool']): 
 	const set = new Set(allowedTools);
 	return {
 		has: (name: string): boolean => set.has(name),
-		list: (): string[] => Array.from(set),
+		getNames: (): string[] => Array.from(set),
 	};
 }
