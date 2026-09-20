@@ -7,7 +7,7 @@ import {
 	PersistencePublicationError,
 } from '../errors.js';
 
-const WRITER_LOCK_NAME = '.tracelattice-writer.lock';
+export const FILE_WRITER_LOCK_NAME = '.tracelattice-writer.lock';
 
 export interface FileWriterOperations {
 	readonly mkdir: (path: string) => Promise<void>;
@@ -143,7 +143,7 @@ export class FileWriter {
 	private async _acquireOwnership(): Promise<DirectoryOwnership> {
 		await this._operations.mkdir(this._configuredDataDir);
 		const canonicalDataDir = await this._operations.realpath(this._configuredDataDir);
-		const lockPath = join(canonicalDataDir, WRITER_LOCK_NAME);
+		const lockPath = join(canonicalDataDir, FILE_WRITER_LOCK_NAME);
 		const markerName = `${process.pid}-${randomUUID()}.owner`;
 		const markerPath = join(lockPath, markerName);
 

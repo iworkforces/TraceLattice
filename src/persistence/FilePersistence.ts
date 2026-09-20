@@ -5,13 +5,13 @@ import { join } from 'node:path';
 import type { IMetrics } from '../contracts/interfaces.js';
 import type {
 	PersistenceConfig,
-	SessionScopedPersistenceBackend,
+	PersistenceBackend,
 } from '../contracts/PersistenceBackend.js';
-import { asSessionId, GLOBAL_SESSION_ID, type BranchId, type SessionId } from '../contracts/ids.js';
+import { asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { ThoughtData } from '../core/thought.js';
-import { PersistenceImportRequiredError } from '../errors.js';
+import { PersistenceCompatibilityError } from '../errors.js';
 import {
 	EMPTY_FILE_SNAPSHOT_V2,
 	parseFileSnapshotV2,
@@ -19,7 +19,11 @@ import {
 	sessionsInSnapshot,
 } from './FileSnapshotV2.js';
 import type { FileSnapshotV2 } from './FileSnapshotTypes.js';
-import { FileWriter, isFileNotFound, type FileWriterOperations } from './FileWriter.js';
+import {
+	FILE_WRITER_LOCK_NAME,
+	FileWriter,
+	type FileWriterOperations,
+} from './FileWriter.js';
 import {
 	assertBranchScope,
 	assertEdgeScopes,
@@ -37,9 +41,8 @@ type FilePersistenceOptions = NonNullable<PersistenceConfig['options']> & {
 };
 
 const SNAPSHOT_NAME = 'snapshot.json';
-const LEGACY_DIRECTORIES = ['branches', 'edges', 'summaries'] as const;
 
-export class FilePersistence implements SessionScopedPersistenceBackend {
+export class FilePersistence implements PersistenceBackend {
 	private readonly _dataDir: string;
 	private readonly _maxHistorySize: number;
 	private readonly _persistBranches: boolean;
@@ -67,11 +70,6 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 			await persistence.close();
 			throw error;
 		}
-	}
-
-	public async saveThought(thought: ThoughtData): Promise<void> {
-		assertThoughtScope('saveThought', GLOBAL_SESSION_ID, thought);
-		await this._saveThought(GLOBAL_SESSION_ID, thought);
 	}
 
 	public async saveThoughtForSession(sessionId: SessionId, thought: ThoughtData): Promise<void> {
@@ -107,22 +105,12 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 		});
 	}
 
-	public async loadHistory(): Promise<ThoughtData[]> {
-		return await this.loadHistoryForSession(GLOBAL_SESSION_ID);
-	}
-
 	public async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {
 		const validatedSessionId = asSessionId(sessionId);
 		return await this._read('load_history', (snapshot) => [
 			...(snapshot.thoughts.find((record) => record.sessionId === validatedSessionId)?.thoughts ??
 				[]),
 		]);
-	}
-
-	public async saveBranch(branchId: BranchId, thoughts: ThoughtData[]): Promise<void> {
-		const validatedBranchId = parsePersistenceBranchId(branchId, 'global/branches');
-		assertBranchScope('saveBranch', GLOBAL_SESSION_ID, validatedBranchId, thoughts);
-		await this._saveBranch(GLOBAL_SESSION_ID, validatedBranchId, thoughts);
 	}
 
 	public async saveBranchForSession(
@@ -176,10 +164,6 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 		}));
 	}
 
-	public async deleteBranch(branchId: BranchId): Promise<void> {
-		await this.deleteBranchForSession(GLOBAL_SESSION_ID, branchId);
-	}
-
 	public async deleteBranchForSession(sessionId: SessionId, branchId: BranchId): Promise<void> {
 		if (!this._persistBranches) return;
 		const validatedSessionId = asSessionId(sessionId);
@@ -190,10 +174,6 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 				(record) => record.sessionId !== validatedSessionId || record.branchId !== validatedBranchId
 			),
 		}));
-	}
-
-	public async loadBranch(branchId: BranchId): Promise<ThoughtData[] | undefined> {
-		return await this.loadBranchForSession(GLOBAL_SESSION_ID, branchId);
 	}
 
 	public async loadBranchForSession(
@@ -211,10 +191,6 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 		});
 	}
 
-	public async listBranches(): Promise<BranchId[]> {
-		return await this.listBranchesForSession(GLOBAL_SESSION_ID);
-	}
-
 	public async listBranchesForSession(sessionId: SessionId): Promise<BranchId[]> {
 		if (!this._persistBranches) return [];
 		const validatedSessionId = asSessionId(sessionId);
@@ -230,8 +206,8 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 		return await this._read('list_sessions', sessionsInSnapshot);
 	}
 
-	public async clear(): Promise<void> {
-		await this._mutate('clear', () => EMPTY_FILE_SNAPSHOT_V2);
+	public async clearAll(): Promise<void> {
+		await this._mutate('clear_all', () => EMPTY_FILE_SNAPSHOT_V2);
 	}
 
 	public async clearSession(sessionId: SessionId): Promise<void> {
@@ -262,12 +238,6 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 		return await this._read('load_edges', (snapshot) => [
 			...(snapshot.edges.find((record) => record.sessionId === validatedSessionId)?.edges ?? []),
 		]);
-	}
-
-	public async listEdgeSessions(): Promise<SessionId[]> {
-		return await this._read('list_edge_sessions', (snapshot) =>
-			snapshot.edges.map((record) => record.sessionId).sort(compareCodePoint)
-		);
 	}
 
 	public async saveSummaries(sessionId: SessionId, summaries: readonly Summary[]): Promise<void> {
@@ -306,10 +276,6 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 		return this._dataDir;
 	}
 
-	public async getBranchIds(): Promise<string[]> {
-		return await this.listBranches();
-	}
-
 	public async close(): Promise<void> {
 		await this._writer.close();
 	}
@@ -337,37 +303,17 @@ export class FilePersistence implements SessionScopedPersistenceBackend {
 
 	private async _loadSnapshot(dataDir: string): Promise<FileSnapshotV2> {
 		const snapshotPath = join(dataDir, SNAPSHOT_NAME);
-		try {
-			return parseFileSnapshotV2(await readFile(snapshotPath, 'utf-8'), snapshotPath);
-		} catch (error) {
-			if (!isFileNotFound(error)) throw error;
+		const layoutEntries = (await readdir(dataDir)).filter(
+			(entry) => entry !== FILE_WRITER_LOCK_NAME
+		);
+		if (layoutEntries.length === 0) return EMPTY_FILE_SNAPSHOT_V2;
+		if (layoutEntries.length !== 1 || layoutEntries[0] !== SNAPSHOT_NAME) {
+			throw new PersistenceCompatibilityError(
+				dataDir,
+				'directory does not match File v2 layout'
+			);
 		}
-		const legacyArtifacts = await this._legacyArtifacts(dataDir);
-		if (legacyArtifacts.length > 0) {
-			throw new PersistenceImportRequiredError(dataDir, legacyArtifacts);
-		}
-		return EMPTY_FILE_SNAPSHOT_V2;
-	}
-
-	private async _legacyArtifacts(dataDir: string): Promise<string[]> {
-		const artifacts: string[] = [];
-		try {
-			await readFile(join(dataDir, 'history.json'), 'utf-8');
-			artifacts.push('history.json');
-		} catch (error) {
-			if (!isFileNotFound(error)) throw error;
-		}
-		for (const directory of LEGACY_DIRECTORIES) {
-			try {
-				const files = await readdir(join(dataDir, directory));
-				artifacts.push(
-					...files.filter((file) => file.endsWith('.json')).map((file) => `${directory}/${file}`)
-				);
-			} catch (error) {
-				if (!isFileNotFound(error)) throw error;
-			}
-		}
-		return artifacts.sort(compareCodePoint);
+		return parseFileSnapshotV2(await readFile(snapshotPath, 'utf-8'), snapshotPath);
 	}
 
 	private async _measure<T>(operation: string, action: () => Promise<T>): Promise<T> {
