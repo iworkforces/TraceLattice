@@ -1,8 +1,8 @@
 import type { ThoughtData } from '../core/thought.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { Summary } from '../core/compression/Summary.js';
-import type { SessionScopedPersistenceBackend } from '../contracts/PersistenceBackend.js';
-import { asSessionId, GLOBAL_SESSION_ID, type BranchId, type SessionId } from '../contracts/ids.js';
+import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import { asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
 import {
 	assertBranchScope,
 	assertEdgeScopes,
@@ -22,7 +22,7 @@ export interface MemoryPersistenceOptions {
 	persistBranches?: boolean;
 }
 
-export class MemoryPersistence implements SessionScopedPersistenceBackend {
+export class MemoryPersistence implements PersistenceBackend {
 	private readonly _histories = new Map<SessionId, ThoughtData[]>();
 	private readonly _branches = new Map<SessionId, Map<BranchId, ThoughtData[]>>();
 	private readonly _edges = new Map<SessionId, Edge[]>();
@@ -36,17 +36,9 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		this._persistBranches = options.persistBranches ?? true;
 	}
 
-	public async saveThought(thought: ThoughtData): Promise<void> {
-		await this.saveThoughtForSession(GLOBAL_SESSION_ID, thought, 'saveThought');
-	}
-
-	public async saveThoughtForSession(
-		sessionId: SessionId,
-		thought: ThoughtData,
-		operation: 'saveThought' | 'saveThoughtForSession' = 'saveThoughtForSession'
-	): Promise<void> {
+	public async saveThoughtForSession(sessionId: SessionId, thought: ThoughtData): Promise<void> {
 		const validatedSessionId = asSessionId(sessionId);
-		assertThoughtScope(operation, validatedSessionId, thought);
+		assertThoughtScope('saveThoughtForSession', validatedSessionId, thought);
 		const history = [...(this._histories.get(validatedSessionId) ?? []), thought];
 		const collections: PersistedThoughtCollection[] = [
 			{ sessionId: validatedSessionId, thoughts: history },
@@ -61,27 +53,18 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		);
 	}
 
-	public async loadHistory(): Promise<ThoughtData[]> {
-		return await this.loadHistoryForSession(GLOBAL_SESSION_ID);
-	}
-
 	public async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {
 		return [...(this._histories.get(asSessionId(sessionId)) ?? [])];
-	}
-
-	public async saveBranch(branchId: BranchId, thoughts: ThoughtData[]): Promise<void> {
-		await this.saveBranchForSession(GLOBAL_SESSION_ID, branchId, thoughts, 'saveBranch');
 	}
 
 	public async saveBranchForSession(
 		sessionId: SessionId,
 		branchId: BranchId,
-		thoughts: readonly ThoughtData[],
-		operation: 'saveBranch' | 'saveBranchForSession' = 'saveBranchForSession'
+		thoughts: readonly ThoughtData[]
 	): Promise<void> {
 		const validatedSessionId = asSessionId(sessionId);
 		const validatedBranchId = parsePersistenceBranchId(branchId, `${validatedSessionId}/branches`);
-		assertBranchScope(operation, validatedSessionId, validatedBranchId, thoughts);
+		assertBranchScope('saveBranchForSession', validatedSessionId, validatedBranchId, thoughts);
 		const branches = new Map(this._branches.get(validatedSessionId) ?? []);
 		branches.set(validatedBranchId, [...thoughts]);
 		const collections: PersistedThoughtCollection[] = [
@@ -101,10 +84,6 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		this._branches.set(validatedSessionId, branches);
 	}
 
-	public async deleteBranch(branchId: BranchId): Promise<void> {
-		await this.deleteBranchForSession(GLOBAL_SESSION_ID, branchId);
-	}
-
 	public async deleteBranchForSession(sessionId: SessionId, branchId: BranchId): Promise<void> {
 		if (!this._persistBranches) return;
 		const validatedSessionId = asSessionId(sessionId);
@@ -113,10 +92,6 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		if (branches === undefined) return;
 		branches.delete(validatedBranchId);
 		if (branches.size === 0) this._branches.delete(validatedSessionId);
-	}
-
-	public async loadBranch(branchId: BranchId): Promise<ThoughtData[] | undefined> {
-		return await this.loadBranchForSession(GLOBAL_SESSION_ID, branchId);
 	}
 
 	public async loadBranchForSession(
@@ -128,10 +103,6 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		const validatedBranchId = parsePersistenceBranchId(branchId, `${validatedSessionId}/branches`);
 		const branch = this._branches.get(validatedSessionId)?.get(validatedBranchId);
 		return branch === undefined ? undefined : [...branch];
-	}
-
-	public async listBranches(): Promise<BranchId[]> {
-		return await this.listBranchesForSession(GLOBAL_SESSION_ID);
 	}
 
 	public async listBranchesForSession(sessionId: SessionId): Promise<BranchId[]> {
@@ -151,7 +122,7 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		return true;
 	}
 
-	public async clear(): Promise<void> {
+	public async clearAll(): Promise<void> {
 		this._histories.clear();
 		this._branches.clear();
 		this._edges.clear();
@@ -180,10 +151,6 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		return [...(this._edges.get(asSessionId(sessionId)) ?? [])].sort(compareCreatedThenId);
 	}
 
-	public async listEdgeSessions(): Promise<SessionId[]> {
-		return [...this._edges.keys()].sort(compareCodePoint);
-	}
-
 	public async saveSummaries(sessionId: SessionId, summaries: readonly Summary[]): Promise<void> {
 		const validatedSessionId = asSessionId(sessionId);
 		assertSummaryScopes(validatedSessionId, summaries);
@@ -196,15 +163,4 @@ export class MemoryPersistence implements SessionScopedPersistenceBackend {
 		return [...(this._summaries.get(asSessionId(sessionId)) ?? [])].sort(compareCreatedThenId);
 	}
 
-	public getHistorySize(): number {
-		return this._histories.get(GLOBAL_SESSION_ID)?.length ?? 0;
-	}
-
-	public getBranchCount(): number {
-		return this._branches.get(GLOBAL_SESSION_ID)?.size ?? 0;
-	}
-
-	public getBranchIds(): BranchId[] {
-		return [...(this._branches.get(GLOBAL_SESSION_ID)?.keys() ?? [])].sort(compareCodePoint);
-	}
 }
