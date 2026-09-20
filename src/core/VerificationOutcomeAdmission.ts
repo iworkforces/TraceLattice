@@ -21,11 +21,10 @@ export function prepareVerificationOutcome(
 		return undefined;
 	}
 	const thoughtId = resolvedReferences.verificationTargetThoughtId;
-	const thoughtNumber = input.verification_target;
-	if (thoughtId === undefined || thoughtNumber === undefined) {
+	if (thoughtId === undefined) {
 		throw new ValidationError('verification_result', 'requires a retained verification_target');
 	}
-	const target = findTarget(snapshot, thoughtId, thoughtNumber);
+	const target = findTarget(snapshot, thoughtId);
 	if (target === undefined) {
 		throw new ValidationError('verification_result', 'verification_target is no longer retained');
 	}
@@ -38,7 +37,6 @@ export function prepareVerificationOutcome(
 	recorder?.assertCanRecord(sessionId, thoughtId);
 	return Object.freeze({
 		thoughtId,
-		thoughtNumber: target.thought_number,
 		sessionId,
 		predicted: target.confidence,
 		actual: input.verification_result,
@@ -48,15 +46,14 @@ export function prepareVerificationOutcome(
 
 function findTarget(
 	snapshot: HistorySessionSnapshot,
-	thoughtId: VerificationOutcome['thoughtId'],
-	thoughtNumber: number
+	thoughtId: VerificationOutcome['thoughtId']
 ): ThoughtData | undefined {
 	for (const thought of snapshot.history) {
-		if (thought.id === thoughtId && thought.thought_number === thoughtNumber) return thought;
+		if (thought.id === thoughtId) return thought;
 	}
 	for (const branch of Object.values(snapshot.branches)) {
 		for (const thought of branch) {
-			if (thought.id === thoughtId && thought.thought_number === thoughtNumber) return thought;
+			if (thought.id === thoughtId) return thought;
 		}
 	}
 	return undefined;
