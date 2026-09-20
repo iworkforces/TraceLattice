@@ -128,6 +128,13 @@ type _SchemaNextNeeded = SchemaOutput['next_thought_needed'];
 const _nextNeededSync: _NextNeeded = true as _SchemaNextNeeded;
 void _nextNeededSync;
 
+type _ThoughtSessionIsRequired = ThoughtData extends { session_id: SessionId } ? true : false;
+type _SchemaSessionIsRequired = SchemaOutput extends { session_id: string } ? true : false;
+const _thoughtSessionIsRequired: _ThoughtSessionIsRequired = true;
+const _schemaSessionIsRequired: _SchemaSessionIsRequired = true;
+void _thoughtSessionIsRequired;
+void _schemaSessionIsRequired;
+
 // ─── 4. DI ServiceRegistry key coverage ────────────────────────────────────
 //
 // Every service key resolved by `lib.ts` (and subsystem registrations) must
@@ -208,17 +215,12 @@ type _ExpectedDiscoveryRefresh = Promise<{ tools: number; skills: number }>;
 type _InterfaceDiscoveryRefresh = ReturnType<
 	IToolAwareSequentialThinkingServer['refreshDiscovery']
 >;
-type _ClassDiscoveryRefresh = ReturnType<
-	ToolAwareSequentialThinkingServer['refreshDiscovery']
->;
+type _ClassDiscoveryRefresh = ReturnType<ToolAwareSequentialThinkingServer['refreshDiscovery']>;
 const _exactInterfaceDiscoveryRefresh: _Exact<
 	_InterfaceDiscoveryRefresh,
 	_ExpectedDiscoveryRefresh
 > = true;
-const _exactClassDiscoveryRefresh: _Exact<
-	_ClassDiscoveryRefresh,
-	_ExpectedDiscoveryRefresh
-> = true;
+const _exactClassDiscoveryRefresh: _Exact<_ClassDiscoveryRefresh, _ExpectedDiscoveryRefresh> = true;
 
 type _ForbiddenRootExports = Extract<
 	'Container' | 'ServerConfig' | 'ToolRegistry' | 'SkillRegistry',

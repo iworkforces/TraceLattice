@@ -28,6 +28,7 @@ import type { StepRecommendation } from './step.js';
  *   thought: 'I should read the package.json to understand dependencies',
  *   thought_number: 1,
  *   total_thoughts: 5,
+ *   session_id: asSessionId('package-analysis'),
  *   next_thought_needed: true,
  *   current_step: {
  *     step_description: 'Read package.json',
@@ -57,7 +58,7 @@ export type ThoughtData = Omit<
 	id?: ThoughtId;
 
 	/** Session identifier (branded SessionId) for state isolation. */
-	session_id?: SessionId;
+	session_id: SessionId;
 
 	/** Continuation token (branded SuspensionToken) linking tool_observation back to suspended tool_call. */
 	continuation_token?: SuspensionToken;
