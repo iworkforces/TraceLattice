@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-09-19
+**Generated:** 2026-09-20
 **Commit:** c963732
 **Branch:** develop
 
@@ -30,41 +30,41 @@ MCP sequential-thinking server (`@iworkforces/tracelattice`). TypeScript ESM + V
 
 ## WHERE TO LOOK
 
-| Task | Location | Notes |
-|------|----------|-------|
-| Public API / DI wiring | `src/lib.ts` | 20 ServiceRegistry keys; `refreshDiscovery()` |
-| CLI + shutdown | `src/cli.ts`, `src/CliLifecycle.ts` | stdio default; Streamable HTTP via `TRANSPORT_TYPE` |
-| Thought ingest | `src/core/ThoughtProcessor.ts` | Only admission seam |
-| History / ownership | `src/core/HistoryManager.ts` | Coordinates; does not score |
-| DAG emit / walk | `src/core/graph/` | `EdgeEmitter`; `GraphView.depthFromRoots` |
-| Persistence backends | `src/persistence/` | Sinks only; buffer is in `core/` |
-| Contracts | `src/contracts/` | `IHistoryManager` + `ThoughtData` stay in `core/` |
-| Strategy policy | `src/core/reasoning/strategies/` | `decide()`, not `decideNext`; ToT `depthCap` 8 |
-| Packed release | `scripts/` | `verify:packed` + postbuild shebang |
+| Task                   | Location                            | Notes                                                            |
+| ---------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| Public API / DI wiring | `src/lib.ts`                        | 20 ServiceRegistry keys; `refreshDiscovery()`                    |
+| CLI + shutdown         | `src/cli.ts`, `src/CliLifecycle.ts` | stdio default; Streamable HTTP via `TRACELATTICE_TRANSPORT_TYPE` |
+| Thought ingest         | `src/core/ThoughtProcessor.ts`      | Only admission seam                                              |
+| History / ownership    | `src/core/HistoryManager.ts`        | Coordinates; does not score                                      |
+| DAG emit / walk        | `src/core/graph/`                   | `EdgeEmitter`; `GraphView.depthFromRoots`                        |
+| Persistence backends   | `src/persistence/`                  | Sinks only; buffer is in `core/`                                 |
+| Contracts              | `src/contracts/`                    | `IHistoryManager` + `ThoughtData` stay in `core/`                |
+| Strategy policy        | `src/core/reasoning/strategies/`    | `decide()`, not `decideNext`; ToT `depthCap` 8                   |
+| Packed release         | `scripts/`                          | `verify:packed` + postbuild shebang                              |
 
 ## CODE MAP
 
 Import fan-in (src, tests excluded). No LSP / codegraph in this workspace. Sentrux DSM: 1255 edges, 0 inversions, acyclic.
 
-| Symbol | Type | Location | Refs | Role |
-|--------|------|----------|------|------|
-| `asSessionId` / `GLOBAL_SESSION_ID` | fn / const | `src/contracts/ids.ts` | 57 | Only validated SessionId constructor |
-| `SequentialThinkingError` | class | `src/errors.ts` | 44 | ERROR_CODES hub (41) |
-| `ThoughtData` / `ValidatedThought` | type | `src/core/thought.ts` | 35 | Schema output + branded IDs + 7-way union |
-| `PersistenceBackend` | iface | `src/contracts/PersistenceBackend.ts` | 16 | Sink contract; scoped extras required |
-| `SequentialThinkingSchema` | schema | `src/schema.ts` | 11 | ThoughtData input SSOT |
-| `HistoryManager` | class | `src/core/HistoryManager.ts` | 8 | Session maps + mutation coordinator (~990L) |
-| `IHistoryManager` | iface | `src/core/IHistoryManager.ts` | 6 | Stays in core |
-| `ThoughtProcessor` | class | `src/core/ThoughtProcessor.ts` | 2 | Ingest seam (~890L) |
-| `ToolAwareSequentialThinkingServer` | class | `src/lib.ts` | 1 | Public server; wires 20 DI keys (~873L) |
-| `createServer` / `initializeServer` | fn | `src/lib.ts` | — | Library factory / CLI convenience |
-| `ServiceRegistry` | iface | `src/di/ServiceRegistry.ts` | 1 | 20 typed keys incl. `sessionLifecycle` |
-| `IReasoningStrategy` | iface | `src/contracts/strategy.ts` | 5 | `decide` / `shouldBranch` / `shouldTerminate` |
-| `EdgeEmitter` | class | `src/core/graph/EdgeEmitter.ts` | 1 | DAG writes; `dagEdges` gates this path |
-| `PersistenceBuffer` | class | `src/core/PersistenceBuffer.ts` | 1 | Write queue / barriers (~652L) |
-| `SessionLifecycleCoordinator` | class | `src/core/SessionLifecycleCoordinator.ts` | 4 | Admission + exclusive reset/evict |
-| `createPersistenceBackend` | fn | `src/persistence/PersistenceFactory.ts` | 1 | file / sqlite / memory / null |
-| `StreamableHttpTransport` | class | `src/transport/StreamableHttpTransport.ts` | 0 | Production HTTP MCP path (~847L); not a lib export |
+| Symbol                              | Type   | Location                                   | Refs | Role                                                               |
+| ----------------------------------- | ------ | ------------------------------------------ | ---- | ------------------------------------------------------------------ |
+| `asSessionId`                       | fn     | `src/contracts/ids.ts`                     | —    | Only validated SessionId constructor; rejects retired `__global__` |
+| `SequentialThinkingError`           | class  | `src/errors.ts`                            | 44   | ERROR_CODES hub (41)                                               |
+| `ThoughtData` / `ValidatedThought`  | type   | `src/core/thought.ts`                      | 35   | Schema output + branded IDs + 7-way union                          |
+| `PersistenceBackend`                | iface  | `src/contracts/PersistenceBackend.ts`      | 16   | Session-scoped sink contract                                       |
+| `SequentialThinkingSchema`          | schema | `src/schema.ts`                            | 11   | ThoughtData input SSOT                                             |
+| `HistoryManager`                    | class  | `src/core/HistoryManager.ts`               | 8    | Session maps + mutation coordinator (~990L)                        |
+| `IHistoryManager`                   | iface  | `src/core/IHistoryManager.ts`              | 6    | Stays in core                                                      |
+| `ThoughtProcessor`                  | class  | `src/core/ThoughtProcessor.ts`             | 2    | Ingest seam (~890L)                                                |
+| `ToolAwareSequentialThinkingServer` | class  | `src/lib.ts`                               | 1    | Public server; wires 20 DI keys (~873L)                            |
+| `createServer` / `initializeServer` | fn     | `src/lib.ts`                               | —    | Library factory / CLI convenience                                  |
+| `ServiceRegistry`                   | iface  | `src/di/ServiceRegistry.ts`                | 1    | 20 typed keys incl. `sessionLifecycle`                             |
+| `IReasoningStrategy`                | iface  | `src/contracts/strategy.ts`                | 5    | `decide` / `shouldBranch` / `shouldTerminate`                      |
+| `EdgeEmitter`                       | class  | `src/core/graph/EdgeEmitter.ts`            | 1    | DAG writes; `dagEdges` gates this path                             |
+| `PersistenceBuffer`                 | class  | `src/core/PersistenceBuffer.ts`            | 1    | Write queue / barriers (~652L)                                     |
+| `SessionLifecycleCoordinator`       | class  | `src/core/SessionLifecycleCoordinator.ts`  | 4    | Admission + exclusive reset/evict                                  |
+| `createPersistenceBackend`          | fn     | `src/persistence/PersistenceFactory.ts`    | 1    | file / sqlite / memory / null                                      |
+| `StreamableHttpTransport`           | class  | `src/transport/StreamableHttpTransport.ts` | 0    | Production HTTP MCP path (~847L); not a lib export                 |
 
 ## CONVENTIONS
 
@@ -72,7 +72,7 @@ Import fan-in (src, tests excluded). No LSP / codegraph in this workspace. Sentr
 - **Valibot** in `src/schema.ts` — not Zod. `ThoughtData` brands schema output.
 - **DI**: 20 `ServiceRegistry` keys registered in `lib.ts`. Typed `resolve(key)` only; `resolveDynamic` is untyped escape hatch.
 - **Contracts hub**: cross-module types via `src/contracts/`. Exceptions: `IHistoryManager` + `ThoughtData` stay in `core/`.
-- **Branded IDs**: `asSessionId()` validates. Other `asX()` are unchecked casts. Never `as SessionId`. Never literal `'__global__'` — use `GLOBAL_SESSION_ID`.
+- **Branded IDs**: `asSessionId()` validates and rejects the retired `__global__` value. Other `asX()` are unchecked casts. Never `as SessionId`. Every thought path carries an explicit named `SessionId`; there is no default session.
 - **Feature flags** (7): `dagEdges`, `reasoningStrategy` (`sequential`\|`tot`), `calibration`, `compression`, `toolInterleave`, `newThoughtTypes`, `outcomeRecording`. `DEFAULT_FLAGS` / `validateFeatures()` booleans **on**. Flags gate **writes**; stores stay in DI except `suspensionStore` (registered only if `toolInterleave`).
 - **Session ownership**: `getOwner()` from ALS. Stdio (no owner) unrestricted. Cross-owner → `SessionAccessDeniedError`. Restored sessions deny owner-aware access.
 - **Strategy purity**: `decide(ctx)` over a snapshot. No I/O, no graph mutation.
@@ -92,9 +92,9 @@ Import fan-in (src, tests excluded). No LSP / codegraph in this workspace. Sentr
 
 - Dual build: rslib unbundled lib then rsbuild overwrites `dist/cli.js`. `cleanDistPath` must stay **false**.
 - Packed runtime is **Bun 1.4.2**; scripts/tests are Node. Shebang writer is only `scripts/postbuild-cli.mjs`.
-- Three “session” words: thought `session_id`, MCP `Mcp-Session-Id` (ALS owner), `ConnectionPool` slot. Do not share reapers.
+- Three “session” words: required thought `session_id`, MCP `Mcp-Session-Id` transport session, and `ConnectionPool` slot. They are independent and do not share defaults or reapers. ALS request-owner identity is a separate authorization context. `resetAll()` / `clearAll()` / shutdown are explicit all-session administration, not a fourth session identity.
 - Mixed DI key casing: `HistoryManager` vs `sessionLifecycle`.
-- Processor JSDoc saying flags default **off** is stale — imported `DEFAULT_FLAGS` is all **on**.
+- Runtime environment keys use the `TRACELATTICE_*` namespace exclusively.
 
 ## NOTES
 
