@@ -8,13 +8,8 @@
  * @module core/ThoughtEvaluator
  */
 
-import type {
-	CalibrationMetrics,
-	CalibrationResult,
-	ICalibrator,
-} from '../contracts/calibrator.js';
-import { GLOBAL_SESSION_ID, type SessionId } from '../contracts/ids.js';
-import type { ThoughtType } from '../contracts/reasoning-types.js';
+import type { ICalibrator } from '../contracts/calibrator.js';
+import type { SessionId } from '../contracts/ids.js';
 import type { ConfidenceSignals, PatternSignal, ReasoningStats } from './reasoning.js';
 import type { ThoughtData } from './thought.js';
 import { Aggregator } from './evaluator/Aggregator.js';
@@ -28,55 +23,6 @@ export interface ConfidenceSignalContext {
 }
 
 /**
- * No-op calibrator used when calibration is disabled or no calibrator is injected.
- *
- * @remarks
- * Returns the raw confidence unchanged, exposes `enabled = false`, and reports
- * empty metrics. Keeps the {@link ThoughtEvaluator} constructor zero-arg compatible.
- */
-class NoOpCalibrator implements ICalibrator {
-	public readonly enabled = false;
-
-	public calibrate(
-		rawConfidence: number,
-		_type: ThoughtType,
-		_sessionId: SessionId
-	): CalibrationResult {
-		const raw = Math.min(1, Math.max(0, rawConfidence));
-		return { raw, calibrated: raw, temperature: 1.0, priorWeight: 0 };
-	}
-
-	public metrics(_sessionId?: SessionId): CalibrationMetrics {
-		return {
-			brierScore: null,
-			ece: null,
-			sampleCount: 0,
-			perTypeBrier: {
-				regular: null,
-				hypothesis: null,
-				verification: null,
-				critique: null,
-				synthesis: null,
-				meta: null,
-				tool_call: null,
-				tool_observation: null,
-				assumption: null,
-				decomposition: null,
-				backtrack: null,
-			},
-		};
-	}
-
-	public refit(_sessionId?: SessionId): void {
-		// no-op
-	}
-
-	public clearSession(_sessionId: SessionId): void {}
-
-	public clearAll(): void {}
-}
-
-/**
  * Stateless service that computes quality signals and reasoning analytics
  * from thought history and branch data.
  *
@@ -86,8 +32,8 @@ class NoOpCalibrator implements ICalibrator {
  *
  * @example
  * ```typescript
- * const evaluator = new ThoughtEvaluator();
- * const signals = evaluator.computeConfidenceSignals(history, branches);
+ * const evaluator = new ThoughtEvaluator(calibrator);
+ * const signals = evaluator.computeConfidenceSignals(history, branches, context);
  * const stats = evaluator.computeReasoningStats(history, branches);
  * const patterns = evaluator.computePatternSignals(history, branches);
  * ```
@@ -98,26 +44,26 @@ export class ThoughtEvaluator {
 	private readonly _patternDetector: PatternDetector;
 	private readonly _calibrator: ICalibrator;
 
-	constructor(calibrator?: ICalibrator) {
+	constructor(calibrator: ICalibrator) {
 		this._signalComputer = new SignalComputer();
 		this._aggregator = new Aggregator();
 		this._patternDetector = new PatternDetector();
-		this._calibrator = calibrator ?? new NoOpCalibrator();
+		this._calibrator = calibrator;
 	}
 
 	/** Compute confidence signals from history context. Pure computation. */
 	public computeConfidenceSignals(
 		history: ThoughtData[],
 		branches: Record<string, ThoughtData[]>,
-		context?: ConfidenceSignalContext
+		context: ConfidenceSignalContext
 	): ConfidenceSignals {
 		const { history: h, branches: b } = filterRetracted(history, branches);
 		const signals = this._signalComputer.computeConfidenceSignals(h, b);
 		if (!this._calibrator.enabled) return signals;
 
-		const thought = context?.currentThought ?? h[h.length - 1];
-		if (thought?.confidence === undefined) return signals;
-		const sessionId = context?.sessionId ?? thought.session_id ?? GLOBAL_SESSION_ID;
+		const thought = context.currentThought;
+		if (thought.confidence === undefined) return signals;
+		const sessionId = context.sessionId;
 
 		const result = this._calibrator.calibrate(
 			thought.confidence,

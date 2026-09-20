@@ -10,7 +10,7 @@ import { createTestThought } from './helpers/factories.js';
 import type { ThoughtData } from '../core/thought.js';
 
 import type { CalibrationMetrics, ICalibrator } from '../contracts/calibrator.js';
-import { asBranchId, asSessionId, GLOBAL_SESSION_ID, type SessionId } from '../contracts/ids.js';
+import { asBranchId, asSessionId, type SessionId } from '../contracts/ids.js';
 import type { ThoughtType } from '../contracts/reasoning-types.js';
 
 const EMPTY_CALIBRATION_METRICS: CalibrationMetrics = {
@@ -32,9 +32,11 @@ const EMPTY_CALIBRATION_METRICS: CalibrationMetrics = {
 	},
 };
 
-function createRecordingCalibrator() {
+const EVALUATOR_SESSION = asSessionId('evaluator-session');
+
+function createRecordingCalibrator(enabled = true) {
 	return {
-		enabled: true,
+		enabled,
 		calibrate: vi.fn((raw: number, _type: ThoughtType, _sessionId: SessionId) => ({
 			raw,
 			calibrated: raw / 2,
@@ -48,8 +50,15 @@ function createRecordingCalibrator() {
 	} satisfies ICalibrator;
 }
 
+function confidenceContext(history: ThoughtData[]) {
+	return {
+		currentThought: history.at(-1) ?? createTestThought(),
+		sessionId: EVALUATOR_SESSION,
+	};
+}
+
 describe('ThoughtEvaluator', () => {
-	const evaluator = new ThoughtEvaluator();
+	const evaluator = new ThoughtEvaluator(createRecordingCalibrator(false));
 
 	// Helper to build history quickly
 	function makeThought(overrides?: Partial<ThoughtData>): ThoughtData {
@@ -68,25 +77,29 @@ describe('ThoughtEvaluator', () => {
 				branch_id: asBranchId('branch'),
 			});
 
-			const signals = calibratedEvaluator.computeConfidenceSignals(history, {}, {
-				currentThought,
-				sessionId,
-			});
+			const signals = calibratedEvaluator.computeConfidenceSignals(
+				history,
+				{},
+				{
+					currentThought,
+					sessionId,
+				}
+			);
 
 			expect(calibrator.calibrate).toHaveBeenCalledWith(0.9, 'verification', sessionId);
 			expect(calibrator.metrics).toHaveBeenCalledWith(sessionId);
 			expect(signals.calibrated_confidence).toBe(0.45);
 		});
 
-		it('uses the canonical global session for the two-argument fallback', () => {
+		it('uses the explicit canonical global session context', () => {
 			const calibrator = createRecordingCalibrator();
 			const calibratedEvaluator = new ThoughtEvaluator(calibrator);
 			const history = [makeThought({ confidence: 0.8 })];
 
-			calibratedEvaluator.computeConfidenceSignals(history, {});
+			calibratedEvaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 
-			expect(calibrator.calibrate).toHaveBeenCalledWith(0.8, 'regular', GLOBAL_SESSION_ID);
-			expect(calibrator.metrics).toHaveBeenCalledWith(GLOBAL_SESSION_ID);
+			expect(calibrator.calibrate).toHaveBeenCalledWith(0.8, 'regular', EVALUATOR_SESSION);
+			expect(calibrator.metrics).toHaveBeenCalledWith(EVALUATOR_SESSION);
 		});
 
 		it('omits calibration fields when the explicit current thought has no confidence', () => {
@@ -106,7 +119,7 @@ describe('ThoughtEvaluator', () => {
 		});
 
 		it('returns zeros/nulls for empty history', () => {
-			const signals = evaluator.computeConfidenceSignals([], {});
+			const signals = evaluator.computeConfidenceSignals([], {}, confidenceContext([]));
 
 			expect(signals.reasoning_depth).toBe(0);
 			expect(signals.revision_count).toBe(0);
@@ -125,12 +138,17 @@ describe('ThoughtEvaluator', () => {
 				tool_observation: 0,
 				assumption: 0,
 				decomposition: 0,
-				backtrack: 0,			});
+				backtrack: 0,
+			});
 		});
 
 		it('returns correct values for single thought', () => {
 			const thought = makeThought({ thought_number: 1 });
-			const signals = evaluator.computeConfidenceSignals([thought], {});
+			const signals = evaluator.computeConfidenceSignals(
+				[thought],
+				{},
+				confidenceContext([thought])
+			);
 
 			expect(signals.reasoning_depth).toBe(1);
 			expect(signals.revision_count).toBe(0);
@@ -145,7 +163,7 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_type: 'critique' }),
 				makeThought({ thought_type: 'hypothesis' }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 
 			expect(signals.thought_type_distribution.regular).toBe(1);
 			expect(signals.thought_type_distribution.hypothesis).toBe(2);
@@ -164,7 +182,7 @@ describe('ThoughtEvaluator', () => {
 				makeThought({}), // no confidence
 				makeThought({ confidence: 1.0 }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 
 			expect(signals.average_confidence).toBeCloseTo(0.8, 5);
 		});
@@ -176,7 +194,7 @@ describe('ThoughtEvaluator', () => {
 				makeThought({}),
 				makeThought({ is_revision: true, revises_thought: 3 }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 
 			expect(signals.revision_count).toBe(2);
 		});
@@ -187,7 +205,7 @@ describe('ThoughtEvaluator', () => {
 				'branch-b': [makeThought({ branch_id: asBranchId('branch-b') })],
 				'branch-c': [makeThought({ branch_id: asBranchId('branch-c') })],
 			};
-			const signals = evaluator.computeConfidenceSignals([], branches);
+			const signals = evaluator.computeConfidenceSignals([], branches, confidenceContext([]));
 
 			expect(signals.branch_count).toBe(3);
 		});
@@ -197,26 +215,20 @@ describe('ThoughtEvaluator', () => {
 				makeThought({}), // no thought_type → defaults to regular
 				makeThought({}),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 
 			expect(signals.thought_type_distribution.regular).toBe(2);
 		});
 		describe('floating-point precision (regression — bug #1)', () => {
 			it('rounds average_confidence (0.9 + 0.8) / 2 = 0.85', () => {
-				const history = [
-					makeThought({ confidence: 0.9 }),
-					makeThought({ confidence: 0.8 }),
-				];
-				const signals = evaluator.computeConfidenceSignals(history, {});
+				const history = [makeThought({ confidence: 0.9 }), makeThought({ confidence: 0.8 })];
+				const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 				expect(signals.average_confidence).toBe(0.85);
 			});
 
 			it('rounds average_confidence (0.7 + 0.7) / 2 = 0.7', () => {
-				const history = [
-					makeThought({ confidence: 0.7 }),
-					makeThought({ confidence: 0.7 }),
-				];
-				const signals = evaluator.computeConfidenceSignals(history, {});
+				const history = [makeThought({ confidence: 0.7 }), makeThought({ confidence: 0.7 })];
+				const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 				expect(signals.average_confidence).toBe(0.7);
 			});
 
@@ -226,11 +238,10 @@ describe('ThoughtEvaluator', () => {
 					makeThought({ confidence: 0.8 }),
 					makeThought({ confidence: 0.75 }),
 				];
-				const signals = evaluator.computeConfidenceSignals(history, {});
+				const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 				expect(signals.average_confidence).toBe(0.8166666667);
 			});
 		});
-
 	});
 
 	describe('computeReasoningStats', () => {
@@ -258,7 +269,8 @@ describe('ThoughtEvaluator', () => {
 				tool_observation: 0,
 				assumption: 0,
 				decomposition: 0,
-				backtrack: 0,			});
+				backtrack: 0,
+			});
 		});
 
 		it('counts total thoughts correctly', () => {
@@ -400,19 +412,13 @@ describe('ThoughtEvaluator', () => {
 		});
 		describe('floating-point precision (regression — bug #1)', () => {
 			it('rounds average_confidence (0.9 + 0.8) / 2 = 0.85', () => {
-				const history = [
-					makeThought({ confidence: 0.9 }),
-					makeThought({ confidence: 0.8 }),
-				];
+				const history = [makeThought({ confidence: 0.9 }), makeThought({ confidence: 0.8 })];
 				const stats = evaluator.computeReasoningStats(history, {});
 				expect(stats.average_confidence).toBe(0.85);
 			});
 
 			it('rounds average_quality_score when present', () => {
-				const history = [
-					makeThought({ quality_score: 0.9 }),
-					makeThought({ quality_score: 0.8 }),
-				];
+				const history = [makeThought({ quality_score: 0.9 }), makeThought({ quality_score: 0.8 })];
 				const stats = evaluator.computeReasoningStats(history, {});
 				expect(stats.average_quality_score).toBe(0.85);
 			});
@@ -427,11 +433,9 @@ describe('ThoughtEvaluator', () => {
 				expect(stats.average_confidence).toBe(0.8166666667);
 			});
 		});
-
 	});
 
 	describe('computePatternSignals', () => {
-
 		it('returns empty array for empty history', () => {
 			expect(evaluator.computePatternSignals([], {})).toEqual([]);
 		});
@@ -462,9 +466,7 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_number: 3 }),
 			];
 			const signals = evaluator.computePatternSignals(history, {});
-			expect(
-				signals.find((s) => s.pattern === 'consecutive_without_verification')
-			).toBeUndefined();
+			expect(signals.find((s) => s.pattern === 'consecutive_without_verification')).toBeUndefined();
 		});
 
 		it('treats undefined thought_type as regular', () => {
@@ -500,9 +502,7 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_number: 4 }),
 			];
 			const signals = evaluator.computePatternSignals(history, {});
-			expect(
-				signals.find((s) => s.pattern === 'unverified_hypothesis')
-			).toBeUndefined();
+			expect(signals.find((s) => s.pattern === 'unverified_hypothesis')).toBeUndefined();
 		});
 
 		it('does not fire when fewer than 3 subsequent thoughts exist', () => {
@@ -511,16 +511,12 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_number: 2 }),
 			];
 			const signals = evaluator.computePatternSignals(history, {});
-			expect(
-				signals.find((s) => s.pattern === 'unverified_hypothesis')
-			).toBeUndefined();
+			expect(signals.find((s) => s.pattern === 'unverified_hypothesis')).toBeUndefined();
 		});
 
 		// no_alternatives_explored
 		it('detects 5+ thoughts with no critique and no branches', () => {
-			const history = Array.from({ length: 5 }, (_, i) =>
-				makeThought({ thought_number: i + 1 })
-			);
+			const history = Array.from({ length: 5 }, (_, i) => makeThought({ thought_number: i + 1 }));
 			const signals = evaluator.computePatternSignals(history, {});
 			const match = signals.find((s) => s.pattern === 'no_alternatives_explored');
 			expect(match).toBeDefined();
@@ -536,21 +532,15 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_number: 5 }),
 			];
 			const signals = evaluator.computePatternSignals(history, {});
-			expect(
-				signals.find((s) => s.pattern === 'no_alternatives_explored')
-			).toBeUndefined();
+			expect(signals.find((s) => s.pattern === 'no_alternatives_explored')).toBeUndefined();
 		});
 
 		it('does not fire when branches exist', () => {
-			const history = Array.from({ length: 5 }, (_, i) =>
-				makeThought({ thought_number: i + 1 })
-			);
+			const history = Array.from({ length: 5 }, (_, i) => makeThought({ thought_number: i + 1 }));
 			const signals = evaluator.computePatternSignals(history, {
 				'branch-a': [makeThought({ thought_number: 1 })],
 			});
-			expect(
-				signals.find((s) => s.pattern === 'no_alternatives_explored')
-			).toBeUndefined();
+			expect(signals.find((s) => s.pattern === 'no_alternatives_explored')).toBeUndefined();
 		});
 
 		// monotonic_type
@@ -637,9 +627,8 @@ describe('ThoughtEvaluator', () => {
 	});
 
 	describe('structural_quality', () => {
-
 		it('is undefined for empty history', () => {
-			const signals = evaluator.computeConfidenceSignals([], {});
+			const signals = evaluator.computeConfidenceSignals([], {}, confidenceContext([]));
 			expect(signals.structural_quality).toBeUndefined();
 			expect(signals.quality_components).toBeUndefined();
 		});
@@ -653,21 +642,21 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_type: 'synthesis' }),
 				makeThought({ thought_type: 'meta' }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.structural_quality).toBeDefined();
 			expect(signals.quality_components!.type_diversity).toBeCloseTo(1.0, 2);
 		});
 
 		it('returns type_diversity near 0 for all-same-type history', () => {
 			const history = [makeThought({}), makeThought({})];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.type_diversity).toBeGreaterThanOrEqual(0.01);
 			expect(signals.quality_components!.type_diversity).toBeLessThanOrEqual(0.1);
 		});
 
 		it('returns verification_coverage 1.0 when no hypotheses', () => {
 			const history = [makeThought({ thought_type: 'regular' })];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.verification_coverage).toBe(1.0);
 		});
 
@@ -677,29 +666,30 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_type: 'hypothesis', hypothesis_id: 'h2' }),
 				makeThought({ thought_type: 'verification', hypothesis_id: 'h1' }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.verification_coverage).toBeCloseTo(0.5, 2);
 		});
 
 		it('computes depth_efficiency with branching bonus', () => {
 			const history = [makeThought({}), makeThought({})];
 			const branches = { b1: [makeThought({})] };
-			const signals = evaluator.computeConfidenceSignals(history, branches);
+			const signals = evaluator.computeConfidenceSignals(
+				history,
+				branches,
+				confidenceContext(history)
+			);
 			expect(signals.quality_components!.depth_efficiency).toBeGreaterThan(0);
 		});
 
 		it('returns confidence_stability 0.5 when no confidence values', () => {
 			const history = [makeThought({}), makeThought({})];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.confidence_stability).toBe(0.5);
 		});
 
 		it('computes confidence_stability from stddev', () => {
-			const history = [
-				makeThought({ confidence: 1.0 }),
-				makeThought({ confidence: 0.0 }),
-			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const history = [makeThought({ confidence: 1.0 }), makeThought({ confidence: 0.0 })];
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.confidence_stability).toBeCloseTo(0.5, 2);
 		});
 
@@ -712,46 +702,40 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_type: 'synthesis' }),
 				makeThought({ thought_type: 'meta' }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.structural_quality).toBeGreaterThan(0);
 			expect(signals.structural_quality).toBeLessThanOrEqual(1.0);
 		});
 
 		it('floors components at 0.01 to prevent geometric mean collapse', () => {
 			const history = [makeThought({}), makeThought({})];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.type_diversity).toBeGreaterThanOrEqual(0.01);
 			expect(signals.structural_quality).toBeGreaterThan(0);
 		});
 
 		it('returns confidence_stability null for single thought with confidence', () => {
 			const history = [makeThought({ confidence: 0.2 })];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.confidence_stability).toBeNull();
 		});
 
 		it('returns confidence_stability ~1.0 for two equal confidences', () => {
-			const history = [
-				makeThought({ confidence: 0.8 }),
-				makeThought({ confidence: 0.8 }),
-			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const history = [makeThought({ confidence: 0.8 }), makeThought({ confidence: 0.8 })];
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.confidence_stability).toBeCloseTo(1.0, 5);
 		});
 
 		it('returns lower confidence_stability for divergent confidences', () => {
-			const history = [
-				makeThought({ confidence: 0.2 }),
-				makeThought({ confidence: 0.9 }),
-			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const history = [makeThought({ confidence: 0.2 }), makeThought({ confidence: 0.9 })];
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.confidence_stability).toBeLessThan(0.7);
 		});
 
 		it('uses 3-component geometric mean when confidence_stability is null', () => {
 			// Single thought with confidence → cs is null → redistributed weights
 			const history = [makeThought({ confidence: 0.2, thought_type: 'regular' })];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 
 			const c = signals.quality_components!;
 			expect(c.confidence_stability).toBeNull();
@@ -769,7 +753,7 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ confidence: 0.8, thought_type: 'regular' }),
 				makeThought({ confidence: 0.8, thought_type: 'hypothesis' }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 
 			const c = signals.quality_components!;
 			expect(c.confidence_stability).not.toBeNull();
@@ -785,13 +769,13 @@ describe('ThoughtEvaluator', () => {
 
 	describe('quality_components_raw', () => {
 		it('is undefined for empty history', () => {
-			const signals = evaluator.computeConfidenceSignals([], {});
+			const signals = evaluator.computeConfidenceSignals([], {}, confidenceContext([]));
 			expect(signals.quality_components_raw).toBeUndefined();
 		});
 
 		it('exposes raw type_diversity below the 0.01 floor for all-same-type history', () => {
 			const history = [makeThought({}), makeThought({})];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			// Shannon entropy is 0 for all-same-type → raw should be 0 (below floor)
 			expect(signals.quality_components_raw!.type_diversity).toBe(0);
 			// Floored value is at the floor
@@ -804,30 +788,27 @@ describe('ThoughtEvaluator', () => {
 				makeThought({ thought_type: 'hypothesis', hypothesis_id: 'h2' }),
 				makeThought({ thought_type: 'verification', hypothesis_id: 'h1' }),
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components_raw!.verification_coverage).toBeCloseTo(0.5, 10);
 			expect(signals.quality_components!.verification_coverage).toBeCloseTo(0.5, 10);
 		});
 
 		it('exposes raw depth_efficiency without flooring', () => {
 			const history = [makeThought({}), makeThought({})];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components_raw!.depth_efficiency).toBeGreaterThan(0);
 			expect(signals.quality_components_raw!.depth_efficiency).toBeLessThanOrEqual(1.0);
 		});
 
 		it('returns null raw confidence_stability when fewer than 2 confidence values', () => {
 			const history = [makeThought({ confidence: 0.5 })];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components_raw!.confidence_stability).toBeNull();
 		});
 
 		it('exposes raw confidence_stability as 1 - stddev (no floor)', () => {
-			const history = [
-				makeThought({ confidence: 0.0 }),
-				makeThought({ confidence: 1.0 }),
-			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const history = [makeThought({ confidence: 0.0 }), makeThought({ confidence: 1.0 })];
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			// stddev = 0.5 → raw = 0.5; floored is also 0.5
 			expect(signals.quality_components_raw!.confidence_stability).toBeCloseTo(0.5, 10);
 		});
@@ -835,7 +816,7 @@ describe('ThoughtEvaluator', () => {
 });
 
 describe('ThoughtEvaluator — uncovered branches (lines 347-351)', () => {
-	const evaluator = new ThoughtEvaluator();
+	const evaluator = new ThoughtEvaluator(createRecordingCalibrator(false));
 
 	function makeThought(overrides?: Partial<ThoughtData>): ThoughtData {
 		return createTestThought(overrides);
@@ -851,7 +832,7 @@ describe('ThoughtEvaluator — uncovered branches (lines 347-351)', () => {
 				makeThought({ thought_number: 3, confidence: 0.5 }),
 				makeThought({ thought_number: 4, confidence: 0.8 }), // non-decreasing → breaks run
 			];
-			const signals = evaluator.computeConfidenceSignals(history, {});
+			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			const patterns = evaluator.computePatternSignals(history, {});
 			const driftPatterns = patterns.filter((p) => p.pattern === 'confidence_drift');
 			expect(driftPatterns.length).toBeGreaterThanOrEqual(1);
@@ -922,6 +903,7 @@ describe('Bugs #2 & #3 — schema validation (valibot direct)', () => {
 	it('PartialToolRecommendationSchema preserves all fields when present (Bug #2)', () => {
 		const input = {
 			thought: 't',
+			session_id: EVALUATOR_SESSION,
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
@@ -941,6 +923,7 @@ describe('Bugs #2 & #3 — schema validation (valibot direct)', () => {
 	it('preserves all tools in recommended_tools array (Bug #3 — no drops)', () => {
 		const input = {
 			thought: 't',
+			session_id: EVALUATOR_SESSION,
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
@@ -957,6 +940,7 @@ describe('Bugs #2 & #3 — schema validation (valibot direct)', () => {
 	it('partial fields receive defaults (expected lenient behavior, not a bug)', () => {
 		const input = {
 			thought: 't',
+			session_id: EVALUATOR_SESSION,
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
@@ -983,12 +967,24 @@ describe('Bugs #2 & #3 — InputNormalizer (only place defaults are applied)', (
 	it('does not overwrite present fields in previous_steps recommendations', () => {
 		const normalized = normalizeInput({
 			thought: 't',
+			session_id: EVALUATOR_SESSION,
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
 			previous_steps: [FULL_STEP],
 		});
-		const tool = (normalized.previous_steps as Array<{ recommended_tools: Array<{ tool_name: string; confidence: number; rationale: string; priority: number; alternatives?: string[]; suggested_inputs?: Record<string, unknown> }> }>)[0]!.recommended_tools[0]!;
+		const tool = (
+			normalized.previous_steps as Array<{
+				recommended_tools: Array<{
+					tool_name: string;
+					confidence: number;
+					rationale: string;
+					priority: number;
+					alternatives?: string[];
+					suggested_inputs?: Record<string, unknown>;
+				}>;
+			}>
+		)[0]!.recommended_tools[0]!;
 		expect(tool.confidence).toBe(0.92);
 		expect(tool.rationale).toBe('Need to inspect the source to understand the bug');
 		expect(tool.priority).toBe(1);
@@ -1002,9 +998,10 @@ describe('Bugs #2 & #3 — ThoughtProcessor.process() end-to-end round-trip', ()
 		const processor = new ThoughtProcessor(
 			new MockHistoryManager(),
 			new ThoughtFormatter(),
-			new ThoughtEvaluator(),
+			new ThoughtEvaluator(createRecordingCalibrator(false))
 		);
 		const result = await processor.process({
+			session_id: EVALUATOR_SESSION,
 			thought: 't',
 			thought_number: 1,
 			total_thoughts: 1,
@@ -1029,7 +1026,7 @@ describe('Bugs #2 & #3 — ThoughtProcessor.process() end-to-end round-trip', ()
 });
 
 describe('Pattern hints surfacing — bugs #4 & #5', () => {
-	const evaluator = new ThoughtEvaluator();
+	const evaluator = new ThoughtEvaluator(createRecordingCalibrator(false));
 
 	function makeThought(overrides?: Partial<ThoughtData>): ThoughtData {
 		return createTestThought(overrides);
