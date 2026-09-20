@@ -91,6 +91,7 @@ Global (`~/.config/opencode/opencode.json`) or project-scoped (`.opencode.json`)
 			"command": ["npx", "-y", "@iworkforces/tracelattice"],
 			"enabled": true,
 			"environment": {
+				"TRACELATTICE_TRANSPORT_TYPE": "stdio",
 				"TRACELATTICE_MAX_HISTORY_SIZE": "10000",
 				"TRACELATTICE_LOG_LEVEL": "debug"
 			}
