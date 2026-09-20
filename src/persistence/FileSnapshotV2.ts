@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 import type { SessionId } from '../contracts/ids.js';
-import { asSessionId, GLOBAL_SESSION_ID } from '../contracts/ids.js';
+import { asSessionId } from '../contracts/ids.js';
 import { SummarySchema } from '../core/compression/Summary.js';
 import type { ThoughtData } from '../core/thought.js';
 import { PersistenceCompatibilityError, PersistenceCorruptionError } from '../errors.js';
@@ -126,5 +126,5 @@ export function sessionsInSnapshot(snapshot: FileSnapshotV2): SessionId[] {
 }
 
 export function sessionForThought(thought: ThoughtData): SessionId {
-	return thought.session_id ?? GLOBAL_SESSION_ID;
+	return asSessionId(thought.session_id);
 }

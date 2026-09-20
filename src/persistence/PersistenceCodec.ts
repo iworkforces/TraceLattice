@@ -115,7 +115,7 @@ export function parseThoughtData(raw: unknown, sourcePath: string): ThoughtData 
 	return {
 		...thought,
 		...(id === undefined ? {} : { id: asThoughtId(id) }),
-		...(session_id === undefined ? {} : { session_id: asSessionId(session_id) }),
+		session_id: asSessionId(session_id),
 		...(branch_id === undefined
 			? {}
 			: { branch_id: parsePersistenceBranchId(branch_id, sourcePath) }),
