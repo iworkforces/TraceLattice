@@ -1,9 +1,14 @@
-import { ThoughtEvaluator } from '../../../../core/ThoughtEvaluator.js';
+import { asSessionId } from '../../../../contracts/ids.js';
 import { createTestThought } from '../../../helpers/factories.js';
+import {
+	confidenceSignalContext,
+	createDisabledThoughtEvaluator,
+} from '../../../helpers/evaluator.js';
 import { scoreChecks } from './helpers.js';
 import type { BattleScenario } from './types.js';
 
 const category = 'reasoning-hints-and-confidence';
+const REASONING_HINTS_SESSION = asSessionId('reasoning-hints-session');
 
 export const REASONING_HINTS_SCENARIOS = [
 	{
@@ -12,9 +17,13 @@ export const REASONING_HINTS_SCENARIOS = [
 		description: 'Pattern detector flags three strictly decreasing confidence values.',
 		run: () => {
 			const history = [0.9, 0.8, 0.7].map((confidence, index) =>
-				createTestThought({ thought_number: index + 1, confidence })
+				createTestThought({
+					session_id: REASONING_HINTS_SESSION,
+					thought_number: index + 1,
+					confidence,
+				})
 			);
-			const signals = new ThoughtEvaluator().computePatternSignals(history, {});
+			const signals = createDisabledThoughtEvaluator().computePatternSignals(history, {});
 			return scoreChecks({
 				caseId: 'reasoning-hints-confidence-drift',
 				category,
@@ -36,9 +45,13 @@ export const REASONING_HINTS_SCENARIOS = [
 		description: 'Pattern detector flags five thoughts without critique or branches.',
 		run: () => {
 			const history = Array.from({ length: 5 }, (_, index) =>
-				createTestThought({ thought_number: index + 1, thought_type: 'regular' })
+				createTestThought({
+					session_id: REASONING_HINTS_SESSION,
+					thought_number: index + 1,
+					thought_type: 'regular',
+				})
 			);
-			const signals = new ThoughtEvaluator().computePatternSignals(history, {});
+			const signals = createDisabledThoughtEvaluator().computePatternSignals(history, {});
 			return scoreChecks({
 				caseId: 'reasoning-hints-no-alternatives',
 				category,
@@ -62,20 +75,31 @@ export const REASONING_HINTS_SCENARIOS = [
 		run: () => {
 			const history = [
 				createTestThought({
+					session_id: REASONING_HINTS_SESSION,
 					thought_number: 1,
 					thought_type: 'hypothesis',
 					hypothesis_id: 'rh1',
 					confidence: 0.8,
 				}),
 				createTestThought({
+					session_id: REASONING_HINTS_SESSION,
 					thought_number: 2,
 					thought_type: 'verification',
 					hypothesis_id: 'rh1',
 					confidence: 0.82,
 				}),
-				createTestThought({ thought_number: 3, thought_type: 'critique', confidence: 0.78 }),
+				createTestThought({
+					session_id: REASONING_HINTS_SESSION,
+					thought_number: 3,
+					thought_type: 'critique',
+					confidence: 0.78,
+				}),
 			];
-			const signals = new ThoughtEvaluator().computeConfidenceSignals(history, {});
+			const signals = createDisabledThoughtEvaluator().computeConfidenceSignals(
+				history,
+				{},
+				confidenceSignalContext(history, REASONING_HINTS_SESSION)
+			);
 			return scoreChecks({
 				caseId: 'reasoning-hints-structural-quality',
 				category,
