@@ -113,8 +113,8 @@ Reasoning Enhancement Parameters:
 - merge_branch_ids: Branch IDs merged into current context
 - meta_observation: Observation about reasoning process (with thought_type 'meta')
 - reasoning_depth: How deep to reason: 'shallow' (quick), 'moderate' (default), 'deep' (thorough)
-- session_id: (Optional) Unique identifier to scope thought history, branches, and statistics to an isolated session. When provided, all state is scoped to this session ID. When omitted, uses shared global state (backward compatible). Format: alphanumeric, hyphens, underscores, 1-100 chars.
-- reset_state: (Optional) When true, clears all state for the target session (or global state if no session_id) before processing the current thought. Use this to start a fresh reasoning chain without accumulated state from previous chains.
+- session_id: Required unique identifier that scopes thought history, branches, and statistics to an explicit session. Format: alphanumeric, hyphens, underscores, 1-100 chars; the retired value __global__ is rejected.
+- reset_state: (Optional) When true, clears all state for the required session_id before processing the current thought. Use this to start a fresh reasoning chain without accumulated state from previous chains.
 
 Response Enrichment:
 - When reasoning fields are set, response includes confidence_signals (depth, revision/branch count, type distribution, avg confidence, structural_quality, quality_components) and reasoning_stats (hypothesis tracking)
@@ -231,7 +231,11 @@ export const SkillRecommendationSchema = v.object({
 		)
 	),
 	rationale: v.optional(
-		v.pipe(v.string(), v.maxLength(2000), v.description('Why this skill is recommended (default: empty string)'))
+		v.pipe(
+			v.string(),
+			v.maxLength(2000),
+			v.description('Why this skill is recommended (default: empty string)')
+		)
 	),
 	priority: v.optional(
 		v.pipe(v.number(), v.description('Order in the recommendation sequence (default: 999)'))
@@ -324,7 +328,11 @@ export const StepRecommendationSchema = v.object({
 export const PartialToolRecommendationSchema = v.object({
 	tool_name: v.pipe(v.string(), v.description('Name of the tool being recommended')),
 	rationale: v.optional(
-		v.pipe(v.string(), v.maxLength(2000), v.description('Why this tool is recommended (default: empty string)'))
+		v.pipe(
+			v.string(),
+			v.maxLength(2000),
+			v.description('Why this tool is recommended (default: empty string)')
+		)
 	),
 	confidence: v.optional(
 		v.pipe(
@@ -432,6 +440,7 @@ export const PartialStepRecommendationSchema = v.object({
  *   thought: 'I need to analyze the problem',
  *   thought_number: 1,
  *   total_thoughts: 5,
+ *   session_id: 'analysis-task',
  *   next_thought_needed: true,
  *   available_mcp_tools: ['Read', 'Write', 'Grep']
  * });
@@ -521,7 +530,19 @@ export const SequentialThinkingSchema = v.object({
 	),
 	thought_type: v.optional(
 		v.pipe(
-			v.picklist(['regular', 'hypothesis', 'verification', 'critique', 'synthesis', 'meta', 'tool_call', 'tool_observation', 'assumption', 'decomposition', 'backtrack']),
+			v.picklist([
+				'regular',
+				'hypothesis',
+				'verification',
+				'critique',
+				'synthesis',
+				'meta',
+				'tool_call',
+				'tool_observation',
+				'assumption',
+				'decomposition',
+				'backtrack',
+			]),
 			v.description(
 				'Classified purpose: regular (default), hypothesis, verification, critique, synthesis, meta, tool_call (requires toolInterleave), tool_observation (requires toolInterleave), assumption (requires newThoughtTypes), decomposition (requires newThoughtTypes), backtrack (requires newThoughtTypes)'
 			)
@@ -556,11 +577,7 @@ export const SequentialThinkingSchema = v.object({
 		)
 	),
 	verification_target: v.optional(
-		v.pipe(
-			v.number(),
-			v.minValue(1),
-			v.description('Thought number being verified or critiqued')
-		)
+		v.pipe(v.number(), v.minValue(1), v.description('Thought number being verified or critiqued'))
 	),
 	verification_result: v.optional(
 		v.pipe(
@@ -595,18 +612,17 @@ export const SequentialThinkingSchema = v.object({
 			v.description('Effort signal: how deep reasoning should go')
 		)
 	),
-	session_id: v.optional(
-		v.pipe(
-			v.string(),
-			v.regex(
-				/^[a-zA-Z0-9_-]+$/,
-				'Session ID must contain only letters, numbers, hyphens, and underscores'
-			),
-			v.minLength(1),
-			v.maxLength(100),
-			v.description(
-				'Optional session identifier for state isolation. When provided, thought history, branches, and statistics are scoped to this session. Omitting preserves global behavior.'
-			)
+	session_id: v.pipe(
+		v.string(),
+		v.regex(
+			/^[a-zA-Z0-9_-]+$/,
+			'Session ID must contain only letters, numbers, hyphens, and underscores'
+		),
+		v.minLength(1),
+		v.maxLength(100),
+		v.notValue('__global__', "Session ID '__global__' is retired; use an explicit named session"),
+		v.description(
+			'Required session identifier for state isolation. Thought history, branches, and statistics are scoped to this explicit named session.'
 		)
 	),
 	reset_state: v.optional(
@@ -617,12 +633,45 @@ export const SequentialThinkingSchema = v.object({
 			)
 		)
 	),
-	tool_name: v.optional(v.pipe(v.string(), v.minLength(1), v.description('Name of the tool being invoked (for tool_call thoughts)'))),
-	tool_arguments: v.optional(v.pipe(v.record(v.string(), v.unknown()), v.description('Arguments passed to the tool (for tool_call thoughts)'))),
-	tool_result: v.optional(v.pipe(v.unknown(), v.description('Result returned by the tool (for tool_observation thoughts)'))),
-	continuation_token: v.optional(v.pipe(v.string(), v.minLength(1), v.description('Token for resuming long-running tool invocations'))),
-	decomposition_children: v.optional(v.pipe(v.array(v.string()), v.description('Child thought IDs produced by decomposition'))),
-	backtrack_target: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.description('Thought number to backtrack to. When the parent thought has thought_type=backtrack, this thought is logically retracted: it remains in history but is excluded from quality signals and reasoning stats.'))),
+	tool_name: v.optional(
+		v.pipe(
+			v.string(),
+			v.minLength(1),
+			v.description('Name of the tool being invoked (for tool_call thoughts)')
+		)
+	),
+	tool_arguments: v.optional(
+		v.pipe(
+			v.record(v.string(), v.unknown()),
+			v.description('Arguments passed to the tool (for tool_call thoughts)')
+		)
+	),
+	tool_result: v.optional(
+		v.pipe(
+			v.unknown(),
+			v.description('Result returned by the tool (for tool_observation thoughts)')
+		)
+	),
+	continuation_token: v.optional(
+		v.pipe(
+			v.string(),
+			v.minLength(1),
+			v.description('Token for resuming long-running tool invocations')
+		)
+	),
+	decomposition_children: v.optional(
+		v.pipe(v.array(v.string()), v.description('Child thought IDs produced by decomposition'))
+	),
+	backtrack_target: v.optional(
+		v.pipe(
+			v.number(),
+			v.integer(),
+			v.minValue(1),
+			v.description(
+				'Thought number to backtrack to. When the parent thought has thought_type=backtrack, this thought is logically retracted: it remains in history but is excluded from quality signals and reasoning stats.'
+			)
+		)
+	),
 	register_branch_id: v.optional(
 		v.pipe(
 			v.string(),
@@ -735,4 +784,11 @@ export const EdgeSchema = v.object({
 	sessionId: v.pipe(v.string(), v.minLength(1)),
 	createdAt: v.number(),
 	metadata: v.optional(v.record(v.string(), v.unknown())),
-}) satisfies v.GenericSchema<Omit<Edge, 'id' | 'from' | 'to' | 'sessionId'> & { id: string; from: string; to: string; sessionId: string }>;
+}) satisfies v.GenericSchema<
+	Omit<Edge, 'id' | 'from' | 'to' | 'sessionId'> & {
+		id: string;
+		from: string;
+		to: string;
+		sessionId: string;
+	}
+>;

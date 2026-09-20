@@ -11,6 +11,12 @@ import {
 } from '../schema.js';
 import { safeParse } from 'valibot';
 
+const TEST_SESSION_ID = 'schema-test';
+
+function parseThought(input: Record<string, unknown>) {
+	return safeParse(SequentialThinkingSchema, { session_id: TEST_SESSION_ID, ...input });
+}
+
 describe('JsonRpcRequestSchema envelope contract', () => {
 	it.each([
 		['string', 'request-42'],
@@ -128,12 +134,12 @@ describe('SequentialThinkingSchema', () => {
 	};
 
 	it('should validate valid input', () => {
-		const result = safeParse(SequentialThinkingSchema, validInput);
+		const result = parseThought(validInput);
 		expect(result.success).toBe(true);
 	});
 
 	it('should require thought field', () => {
-		const result = safeParse(SequentialThinkingSchema, {
+		const result = parseThought({
 			thought_number: 1,
 			total_thoughts: 5,
 		});
@@ -141,7 +147,7 @@ describe('SequentialThinkingSchema', () => {
 	});
 
 	it('should require thought_number >= 1', () => {
-		const result = safeParse(SequentialThinkingSchema, {
+		const result = parseThought({
 			thought: 'test',
 			thought_number: 0,
 			total_thoughts: 5,
@@ -150,7 +156,7 @@ describe('SequentialThinkingSchema', () => {
 	});
 
 	it('should require total_thoughts >= 1', () => {
-		const result = safeParse(SequentialThinkingSchema, {
+		const result = parseThought({
 			thought: 'test',
 			thought_number: 1,
 			total_thoughts: 0,
@@ -163,7 +169,7 @@ describe('SequentialThinkingSchema', () => {
 		if (invalidTool.current_step && invalidTool.current_step.recommended_tools) {
 			invalidTool.current_step.recommended_tools[0]!.confidence = 1.5;
 		}
-		const result = safeParse(SequentialThinkingSchema, invalidTool);
+		const result = parseThought(invalidTool);
 		expect(result.success).toBe(false);
 	});
 
@@ -173,7 +179,7 @@ describe('SequentialThinkingSchema', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 		};
-		const result = safeParse(SequentialThinkingSchema, minimalInput);
+		const result = parseThought(minimalInput);
 		expect(result.success).toBe(true);
 	});
 
@@ -203,7 +209,7 @@ describe('SequentialThinkingSchema', () => {
 				expected_outcome: 'Expected result',
 			},
 		};
-		const result = safeParse(SequentialThinkingSchema, withSkills);
+		const result = parseThought(withSkills);
 		expect(result.success).toBe(true);
 	});
 
@@ -215,7 +221,7 @@ describe('SequentialThinkingSchema', () => {
 			is_revision: true,
 			revises_thought: 1,
 		};
-		const result = safeParse(SequentialThinkingSchema, withRevision);
+		const result = parseThought(withRevision);
 		expect(result.success).toBe(true);
 	});
 
@@ -227,12 +233,12 @@ describe('SequentialThinkingSchema', () => {
 			branch_from_thought: 1,
 			branch_id: 'test-branch',
 		};
-		const result = safeParse(SequentialThinkingSchema, withBranch);
+		const result = parseThought(withBranch);
 		expect(result.success).toBe(true);
 	});
 
 	it.each([0, 1] as const)('accepts verification_result %i as an exact outcome label', (actual) => {
-		const result = safeParse(SequentialThinkingSchema, {
+		const result = parseThought({
 			thought: 'Result-bearing verification',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -248,7 +254,7 @@ describe('SequentialThinkingSchema', () => {
 	it.each([2, -1, 0.5, '1', true, false, null])(
 		'rejects non-binary verification_result %j',
 		(actual) => {
-			const result = safeParse(SequentialThinkingSchema, {
+			const result = parseThought({
 				thought: 'Invalid result-bearing verification',
 				thought_number: 2,
 				total_thoughts: 2,
@@ -492,7 +498,7 @@ describe('SequentialThinkingSchema with lenient previous_steps', () => {
 				},
 			],
 		};
-		const result = safeParse(SequentialThinkingSchema, input);
+		const result = parseThought(input);
 		expect(result.success).toBe(true);
 	});
 
@@ -514,7 +520,7 @@ describe('SequentialThinkingSchema with lenient previous_steps', () => {
 				expected_outcome: 'File read successfully',
 			},
 		};
-		const result = safeParse(SequentialThinkingSchema, input);
+		const result = parseThought(input);
 		expect(result.success).toBe(true);
 		// Verify priority was not in input (optional field)
 		expect((result.output as Record<string, unknown>).current_step).toBeDefined();
@@ -538,14 +544,12 @@ describe('SequentialThinkingSchema with lenient previous_steps', () => {
 				},
 			],
 		};
-	const result = safeParse(SequentialThinkingSchema, input);
-	expect(result.success).toBe(false);
-});
+		const result = parseThought(input);
+		expect(result.success).toBe(false);
+	});
 });
 
 describe('SkillRecommendationSchema - optional fields (Bug 1 fix)', () => {
-
-
 	it('should accept skill with only skill_name (confidence/rationale optional)', () => {
 		const minimal = { skill_name: 'ast-grep' };
 		const result = safeParse(SkillRecommendationSchema, minimal);
@@ -599,7 +603,7 @@ describe('SkillRecommendationSchema - optional fields (Bug 1 fix)', () => {
 				expected_outcome: 'Done',
 			},
 		};
-		const result = safeParse(SequentialThinkingSchema, input);
+		const result = parseThought(input);
 		expect(result.success).toBe(true);
 	});
 });
@@ -607,7 +611,7 @@ describe('SkillRecommendationSchema - optional fields (Bug 1 fix)', () => {
 describe('Schema accepts raw strings (sanitization moved to InputNormalizer)', () => {
 	describe('SequentialThinkingSchema', () => {
 		it('should accept strings with script tags (no schema-level sanitization)', () => {
-			const result = safeParse(SequentialThinkingSchema, {
+			const result = parseThought({
 				thought: '<script>alert(1)</script>hello',
 				thought_number: 1,
 				total_thoughts: 1,
@@ -619,7 +623,7 @@ describe('Schema accepts raw strings (sanitization moved to InputNormalizer)', (
 		});
 
 		it('should preserve TypeScript generics in thought field', () => {
-			const result = safeParse(SequentialThinkingSchema, {
+			const result = parseThought({
 				thought: 'Array<string> and Map<string, number>',
 				thought_number: 1,
 				total_thoughts: 1,
@@ -631,7 +635,7 @@ describe('Schema accepts raw strings (sanitization moved to InputNormalizer)', (
 		});
 
 		it('should accept strings with null bytes (no schema-level sanitization)', () => {
-			const result = safeParse(SequentialThinkingSchema, {
+			const result = parseThought({
 				thought: 'hello\x00world',
 				thought_number: 1,
 				total_thoughts: 1,
@@ -643,7 +647,7 @@ describe('Schema accepts raw strings (sanitization moved to InputNormalizer)', (
 		});
 
 		it('should accept remaining_steps with HTML tags (no schema-level sanitization)', () => {
-			const result = safeParse(SequentialThinkingSchema, {
+			const result = parseThought({
 				thought: 'test',
 				thought_number: 1,
 				total_thoughts: 1,
@@ -659,7 +663,7 @@ describe('Schema accepts raw strings (sanitization moved to InputNormalizer)', (
 		});
 
 		it('should accept meta_observation with HTML tags (no schema-level sanitization)', () => {
-			const result = safeParse(SequentialThinkingSchema, {
+			const result = parseThought({
 				thought: 'test',
 				thought_number: 1,
 				total_thoughts: 1,
@@ -667,9 +671,7 @@ describe('Schema accepts raw strings (sanitization moved to InputNormalizer)', (
 			});
 			expect(result.success).toBe(true);
 			if (result.success) {
-				expect(result.output.meta_observation).toBe(
-					'<img onerror=alert(1) src=x>observation'
-				);
+				expect(result.output.meta_observation).toBe('<img onerror=alert(1) src=x>observation');
 			}
 		});
 	});
@@ -712,6 +714,7 @@ describe('session_id and reset_state schema validation', () => {
 		thought: 'Test thought',
 		thought_number: 1,
 		total_thoughts: 1,
+		session_id: 'schema-session',
 	};
 
 	it('should accept valid session_id', () => {
@@ -749,6 +752,18 @@ describe('session_id and reset_state schema validation', () => {
 		expect(result.success).toBe(false);
 	});
 
+	it('rejects the retired global session_id with a clear issue', () => {
+		const result = safeParse(SequentialThinkingSchema, {
+			...baseInput,
+			session_id: '__global__',
+		});
+
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.issues.some(({ message }) => message.includes('retired'))).toBe(true);
+		}
+	});
+
 	it('should accept reset_state true', () => {
 		const result = safeParse(SequentialThinkingSchema, {
 			...baseInput,
@@ -771,12 +786,13 @@ describe('session_id and reset_state schema validation', () => {
 		}
 	});
 
-	it('should pass without session_id or reset_state (backward compatible)', () => {
-		const result = safeParse(SequentialThinkingSchema, baseInput);
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.output.session_id).toBeUndefined();
-			expect(result.output.reset_state).toBeUndefined();
-		}
+	it('requires an explicit session_id', () => {
+		const result = safeParse(SequentialThinkingSchema, {
+			thought: baseInput.thought,
+			thought_number: baseInput.thought_number,
+			total_thoughts: baseInput.total_thoughts,
+		});
+
+		expect(result.success).toBe(false);
 	});
 });
