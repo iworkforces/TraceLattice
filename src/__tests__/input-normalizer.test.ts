@@ -1,18 +1,28 @@
 /**
  * Tests for InputNormalizer.
  *
- * This test file covers the normalization logic that handles common LLM
- * field name mistakes such as using singular instead of plural forms.
+ * This test file covers recommendation defaults, identity handling, and
+ * reasoning-field normalization for the documented input contract.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
-	normalizeInput,
+	normalizeInput as normalizeRawInput,
 	normalizeReasoningFields,
 	sanitizeRecursive,
 } from '../core/InputNormalizer.js';
 import type { ThoughtData } from '../core/thought.js';
 import { ValidationError } from '../errors.js';
+import { asSessionId } from '../contracts/ids.js';
+
+const TEST_SESSION_ID = 'input-normalizer-test';
+
+function normalizeInput(input: unknown): ThoughtData {
+	if (typeof input !== 'object' || input === null) {
+		return normalizeRawInput(input);
+	}
+	return normalizeRawInput({ session_id: TEST_SESSION_ID, ...input });
+}
 
 /**
  * Helper for creating tool recommendations.
@@ -29,6 +39,25 @@ function createToolRecommendation(overrides?: Record<string, unknown>): Record<s
 
 describe('InputNormalizer', () => {
 	describe('session identity boundary', () => {
+		it('rejects an omitted session id', () => {
+			const input = {
+				thought: 'named thought',
+				thought_number: 1,
+				total_thoughts: 1,
+				next_thought_needed: false,
+			};
+
+			expect(() => normalizeRawInput(input)).toThrowError(
+				"Validation failed for 'session_id': is required"
+			);
+		});
+
+		it('rejects the retired global session id at the identifier boundary', () => {
+			expect(() => asSessionId('__global__')).toThrowError(
+				"Validation failed for 'session_id': reserved value '__global__' is retired; use an explicit named session"
+			);
+		});
+
 		it.each(['', 'bad session!', 'a/b', 'x'.repeat(101)])(
 			'rejects malformed explicit session id %j without mutating caller input',
 			(sessionId) => {
@@ -49,12 +78,13 @@ describe('InputNormalizer', () => {
 			}
 		);
 
-		it('preserves omitted identity and deep caller input while returning a fresh normalized copy', () => {
+		it('preserves named identity and deep caller input while returning a fresh normalized copy', () => {
 			const input = {
 				thought: 'global thought',
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: 'copy-test',
 				register_branch_id: 'future-branch',
 				current_step: {
 					step_description: 'inspect',
@@ -66,7 +96,7 @@ describe('InputNormalizer', () => {
 
 			const normalized = normalizeInput(input);
 
-			expect(normalized.session_id).toBeUndefined();
+			expect(normalized.session_id).toBe('copy-test');
 			expect(normalized).not.toBe(input);
 			expect(normalized.current_step).not.toBe(input.current_step);
 			expect(input).toEqual(before);
@@ -74,7 +104,7 @@ describe('InputNormalizer', () => {
 	});
 
 	describe('current_step normalization', () => {
-		it('should transform recommended_tool (singular) to recommended_tools (plural)', () => {
+		it('does not promote the unsupported recommended_tool alias', () => {
 			const input = {
 				thought: 'Test thought',
 				thought_number: 1,
@@ -89,11 +119,9 @@ describe('InputNormalizer', () => {
 
 			const normalized = normalizeInput(input) as ThoughtData;
 
-			expect(normalized.current_step).toBeDefined();
-			expect(normalized.current_step?.recommended_tools).toBeDefined();
-			expect(normalized.current_step?.recommended_tools).toHaveLength(1);
+			expect(normalized.current_step?.recommended_tools).toBeUndefined();
 			const step = normalized.current_step as Record<string, unknown> | undefined;
-			expect(step?.recommended_tool).toBeUndefined();
+			expect(step?.recommended_tool).toEqual([createToolRecommendation()]);
 		});
 
 		it('should preserve recommended_tools when already plural', () => {
@@ -116,7 +144,7 @@ describe('InputNormalizer', () => {
 			expect(normalized.current_step?.recommended_tools).toHaveLength(1);
 		});
 
-		it('should transform recommended_skill (singular) to recommended_skills (plural)', () => {
+		it('does not promote the unsupported recommended_skill alias', () => {
 			const input = {
 				thought: 'Test thought',
 				thought_number: 1,
@@ -139,11 +167,16 @@ describe('InputNormalizer', () => {
 
 			const normalized = normalizeInput(input) as ThoughtData;
 
-			expect(normalized.current_step).toBeDefined();
-			expect(normalized.current_step?.recommended_skills).toBeDefined();
-			expect(normalized.current_step?.recommended_skills).toHaveLength(1);
+			expect(normalized.current_step?.recommended_skills).toBeUndefined();
 			const step = normalized.current_step as Record<string, unknown> | undefined;
-			expect(step?.recommended_skill).toBeUndefined();
+			expect(step?.recommended_skill).toEqual([
+				{
+					skill_name: 'test-skill',
+					confidence: 0.9,
+					rationale: 'Test rationale',
+					priority: 1,
+				},
+			]);
 		});
 
 		it('should preserve recommended_skills when already plural', () => {
@@ -189,7 +222,7 @@ describe('InputNormalizer', () => {
 	});
 
 	describe('previous_steps normalization', () => {
-		it('should transform recommended_tool (singular) to recommended_tools (plural) in all steps', () => {
+		it('does not promote unsupported singular aliases in previous_steps', () => {
 			const input = {
 				thought: 'Test thought',
 				thought_number: 2,
@@ -211,13 +244,12 @@ describe('InputNormalizer', () => {
 
 			const normalized = normalizeInput(input) as ThoughtData;
 
-			expect(normalized.previous_steps).toBeDefined();
 			expect(normalized.previous_steps).toHaveLength(2);
-			expect(normalized.previous_steps?.[0]?.recommended_tools).toBeDefined();
-			expect(normalized.previous_steps?.[1]?.recommended_tools).toBeDefined();
+			expect(normalized.previous_steps?.[0]?.recommended_tools).toBeUndefined();
+			expect(normalized.previous_steps?.[1]?.recommended_tools).toBeUndefined();
 		});
 
-		it('should handle mixed singular and plural in previous_steps', () => {
+		it('normalizes only documented plural recommendations in previous_steps', () => {
 			const input = {
 				thought: 'Test thought',
 				thought_number: 3,
@@ -246,10 +278,9 @@ describe('InputNormalizer', () => {
 
 			expect(normalized.previous_steps).toBeDefined();
 			expect(normalized.previous_steps).toHaveLength(3);
-			// All should have recommended_tools (plural) after normalization
-			expect(normalized.previous_steps?.[0]?.recommended_tools).toBeDefined();
+			expect(normalized.previous_steps?.[0]?.recommended_tools).toBeUndefined();
 			expect(normalized.previous_steps?.[1]?.recommended_tools).toBeDefined();
-			expect(normalized.previous_steps?.[2]?.recommended_tools).toBeDefined();
+			expect(normalized.previous_steps?.[2]?.recommended_tools).toBeUndefined();
 		});
 
 		it('should handle empty previous_steps array', () => {
@@ -464,7 +495,7 @@ describe('InputNormalizer', () => {
 			expect(normalized).toBe('string');
 		});
 
-		it('should normalize both current_step and previous_steps together', () => {
+		it('normalizes documented plural fields in current_step and previous_steps together', () => {
 			const input = {
 				thought: 'Test thought',
 				thought_number: 2,
@@ -472,13 +503,13 @@ describe('InputNormalizer', () => {
 				next_thought_needed: false,
 				current_step: {
 					step_description: 'Current step',
-					recommended_tool: [createToolRecommendation({ tool_name: 'current-tool' })],
+					recommended_tools: [createToolRecommendation({ tool_name: 'current-tool' })],
 					expected_outcome: 'Current outcome',
 				},
 				previous_steps: [
 					{
 						step_description: 'Previous step',
-						recommended_tool: [createToolRecommendation({ tool_name: 'prev-tool' })],
+						recommended_tools: [createToolRecommendation({ tool_name: 'prev-tool' })],
 						expected_outcome: 'Previous outcome',
 					},
 				],
@@ -775,8 +806,8 @@ describe('reasoning fields normalization', () => {
 		});
 	});
 
-	describe('backward compatibility', () => {
-		it('should not break existing normalization with reasoning fields present', () => {
+	describe('current contract', () => {
+		it('normalizes documented recommendation and reasoning fields together', () => {
 			const input = {
 				thought: 'Test thought',
 				thought_number: 1,
@@ -789,17 +820,15 @@ describe('reasoning fields normalization', () => {
 				synthesis_sources: [1, 2],
 				current_step: {
 					step_description: 'Test step',
-					recommended_tool: [createToolRecommendation()],
+					recommended_tools: [createToolRecommendation()],
 					expected_outcome: 'Test outcome',
 				},
 			} as unknown;
 
 			const normalized = normalizeInput(input) as ThoughtData;
 
-			// Existing normalization still works
 			expect(normalized.current_step?.recommended_tools).toBeDefined();
 			expect(normalized.branch_id).toBe('my-branch');
-			// Reasoning fields are normalized
 			expect(normalized.thought_type).toBe('synthesis');
 			expect(normalized.quality_score).toBe(0.85);
 			expect(normalized.confidence).toBe(0.9);
@@ -977,8 +1006,9 @@ describe('session_id sanitization', () => {
 		);
 	});
 
-	it('preserves undefined session_id', () => {
-		const result = normalizeInput({ ...baseInput }) as ThoughtData;
-		expect(result.session_id).toBeUndefined();
+	it('rejects the retired global session_id', () => {
+		expect(() => normalizeRawInput({ ...baseInput, session_id: '__global__' })).toThrowError(
+			"Validation failed for 'session_id': reserved value '__global__' is retired; use an explicit named session"
+		);
 	});
 });
