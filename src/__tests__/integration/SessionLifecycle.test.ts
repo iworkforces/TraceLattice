@@ -54,7 +54,6 @@ function seedFittedCalibration(
 	for (let index = 0; index < 10; index++) {
 		recorder.recordVerification({
 			thoughtId: asThoughtId(`${sessionId}-outcome-${index}`),
-			thoughtNumber: index + 1,
 			sessionId,
 			predicted: 0.99,
 			actual: 0,
@@ -418,7 +417,9 @@ describe('session lifecycle integration', () => {
 		await vi.waitFor(() => expect(server.history.getSessionIds()).not.toContain(sessionId));
 
 		expect(recorder.getOutcomes(sessionId)).toEqual([]);
-		expect(() => recorder.assertCanRecord(sessionId, asThoughtId(`${sessionId}-outcome-0`))).not.toThrow();
+		expect(() =>
+			recorder.assertCanRecord(sessionId, asThoughtId(`${sessionId}-outcome-0`))
+		).not.toThrow();
 		expect(calibrator.calibrate(0.9, 'verification', sessionId).temperature).toBe(1);
 		await server.stop();
 	});

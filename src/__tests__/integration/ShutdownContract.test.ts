@@ -22,7 +22,7 @@ afterEach(async () => {
 describe('built CLI shutdown contract', () => {
 	it('drains stdio through the shared SIGTERM owner', async () => {
 		// Given
-		const running = spawnCli({ TRANSPORT_TYPE: 'stdio' });
+		const running = spawnCli({ TRACELATTICE_TRANSPORT_TYPE: 'stdio' });
 		const lines = createInterface({ input: running.child.stdout });
 		const responses = lines[Symbol.asyncIterator]();
 
@@ -60,9 +60,9 @@ describe('built CLI shutdown contract', () => {
 		const port = await listenOnEphemeralPort(reservation);
 		await closeServer(reservation);
 		const running = spawnCli({
-			TRANSPORT_TYPE: 'streamable-http',
-			STREAMABLE_HTTP_HOST: '127.0.0.1',
-			STREAMABLE_HTTP_PORT: String(port),
+			TRACELATTICE_TRANSPORT_TYPE: 'streamable-http',
+			TRACELATTICE_STREAMABLE_HTTP_HOST: '127.0.0.1',
+			TRACELATTICE_STREAMABLE_HTTP_PORT: String(port),
 		});
 
 		try {
@@ -91,9 +91,9 @@ describe('built CLI shutdown contract', () => {
 		const occupied = createServer();
 		const port = await listenOnEphemeralPort(occupied);
 		const running = spawnCli({
-			TRANSPORT_TYPE: 'streamable-http',
-			STREAMABLE_HTTP_HOST: '127.0.0.1',
-			STREAMABLE_HTTP_PORT: String(port),
+			TRACELATTICE_TRANSPORT_TYPE: 'streamable-http',
+			TRACELATTICE_STREAMABLE_HTTP_HOST: '127.0.0.1',
+			TRACELATTICE_STREAMABLE_HTTP_PORT: String(port),
 		});
 
 		try {

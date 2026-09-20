@@ -11,13 +11,13 @@ import { runWithContext } from '../../context/RequestContext.js';
 import { HistoryManager } from '../../core/HistoryManager.js';
 import { SessionLock } from '../../core/SessionLock.js';
 import { SessionLifecycleCoordinator } from '../../core/SessionLifecycleCoordinator.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
 import { ThoughtProcessor, type CallToolResult } from '../../core/ThoughtProcessor.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import { InMemorySuspensionStore } from '../../core/tools/InMemorySuspensionStore.js';
 import { ERROR_CODES } from '../../errors.js';
 import { createMockToolRegistry } from '../helpers/factories.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
 
 const SESSION_A = asSessionId('session-a');
 const SESSION_B = asSessionId('session-b');
@@ -49,7 +49,7 @@ function createHarness(): Harness {
 	const processor = new ThoughtProcessor(
 		history,
 		new ThoughtFormatter(),
-		new ThoughtEvaluator(),
+		createDisabledThoughtEvaluator(),
 		undefined,
 		new SequentialStrategy(),
 		undefined,
