@@ -2,10 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type {
-	PersistenceBackend,
-	SessionScopedPersistenceBackend,
-} from '../../contracts/PersistenceBackend.js';
+import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -22,14 +19,14 @@ import { createTestThought } from '../helpers/factories.js';
 
 type BackendFixture = {
 	readonly name: string;
-	readonly create: (maxHistorySize?: number) => Promise<SessionScopedPersistenceBackend>;
+	readonly create: (maxHistorySize?: number) => Promise<PersistenceBackend>;
 	readonly cleanup: (backend: PersistenceBackend) => Promise<void>;
 };
 
 type ManagedBackendFixture = {
 	readonly name: string;
 	readonly create: () => Promise<{
-		readonly backend: SessionScopedPersistenceBackend;
+		readonly backend: PersistenceBackend;
 		readonly publicationCount: () => number;
 		readonly cleanup: () => Promise<void>;
 	}>;
@@ -299,17 +296,17 @@ describe.each(fixtures)('$name session-scoped persistence conformance', ({ creat
 		}
 	});
 
-	it('distinguishes legacy branch deletion from saving an empty branch', async () => {
+	it('distinguishes scoped branch deletion from saving an empty branch', async () => {
 		const backend = await create();
 		try {
-			await backend.saveBranch(sharedBranch, []);
-			expect(await backend.loadBranch(sharedBranch)).toEqual([]);
+			await backend.saveBranchForSession(sessionA, sharedBranch, []);
+			expect(await backend.loadBranchForSession(sessionA, sharedBranch)).toEqual([]);
 
-			await backend.deleteBranch(sharedBranch);
-			await backend.deleteBranch(sharedBranch);
+			await backend.deleteBranchForSession(sessionA, sharedBranch);
+			await backend.deleteBranchForSession(sessionA, sharedBranch);
 
-			expect(await backend.loadBranch(sharedBranch)).toBeUndefined();
-			expect(await backend.listBranches()).toEqual([]);
+			expect(await backend.loadBranchForSession(sessionA, sharedBranch)).toBeUndefined();
+			expect(await backend.listBranchesForSession(sessionA)).toEqual([]);
 		} finally {
 			await cleanup(backend);
 		}
@@ -359,7 +356,7 @@ describe.each(fixtures)('$name session-scoped persistence conformance', ({ creat
 		}
 	});
 
-	it('treats legacy clear as an explicit global deletion of every namespace', async () => {
+	it('clears the whole store explicitly', async () => {
 		const backend = await create();
 		try {
 			await backend.saveThoughtForSession(sessionA, thought('A-history', sessionA, 1));
@@ -367,7 +364,7 @@ describe.each(fixtures)('$name session-scoped persistence conformance', ({ creat
 			await backend.saveEdges(sessionB, [edge('B-edge', sessionB)]);
 			await backend.saveSummaries(sessionA, [summary('A-summary', sessionA)]);
 
-			await backend.clear();
+			await backend.clearAll();
 
 			expect(await backend.listSessions()).toEqual([]);
 		} finally {
@@ -392,6 +389,40 @@ describe.each(fixtures)('$name session-scoped persistence conformance', ({ creat
 					}),
 				])
 			).rejects.toMatchObject({ code: 'PERSISTENCE_SCOPE_MISMATCH' });
+			expect(await backend.listSessions()).toEqual([]);
+		} finally {
+			await cleanup(backend);
+		}
+	});
+
+	it('rejects a thought missing its nested session before creating state', async () => {
+		const backend = await create();
+		try {
+			// Given
+			const candidate = thought('missing-session', sessionA, 1);
+			Reflect.deleteProperty(candidate, 'session_id');
+
+			// When / Then
+			await expect(backend.saveThoughtForSession(sessionA, candidate)).rejects.toMatchObject({
+				code: 'VALIDATION_ERROR',
+			});
+			expect(await backend.listSessions()).toEqual([]);
+		} finally {
+			await cleanup(backend);
+		}
+	});
+
+	it('rejects a retired nested thought session before creating state', async () => {
+		const backend = await create();
+		try {
+			// Given
+			const candidate = thought('retired-session', sessionA, 1);
+			Reflect.set(candidate, 'session_id', '__global__');
+
+			// When / Then
+			await expect(backend.saveThoughtForSession(sessionA, candidate)).rejects.toMatchObject({
+				code: 'VALIDATION_ERROR',
+			});
 			expect(await backend.listSessions()).toEqual([]);
 		} finally {
 			await cleanup(backend);
