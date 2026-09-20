@@ -52,8 +52,7 @@ export interface SkillRegistryOptions {
 /**
  * Registry for managing Claude Code skill operations.
  *
- * Extends `BaseRegistry<Skill>` with skill-specific frontmatter parsing
- * and backward-compatible aliases (`addSkill`, etc.).
+ * Extends `BaseRegistry<Skill>` with skill-specific frontmatter parsing.
  */
 export class SkillRegistry extends BaseRegistry<Skill> {
 	protected override readonly _fileExtensions = ['.md', '.yml', '.yaml'];
@@ -132,27 +131,5 @@ export class SkillRegistry extends BaseRegistry<Skill> {
 			user_invocable: parsed.user_invocable ?? false,
 			allowed_tools: parsed.allowed_tools,
 		};
-	}
-
-	// --- Backward-compatible aliases ---
-
-	public addSkill(skill: Skill): void {
-		this.add(skill);
-	}
-
-	public updateSkill(name: string, updates: Partial<Skill>): void {
-		this.update(name, updates);
-	}
-
-	public hasSkill(name: string): boolean {
-		return this.has(name);
-	}
-
-	public getSkill(name: string): Skill | undefined {
-		return this.get(name);
-	}
-
-	public setSkills(skills: Skill[]): void {
-		this.setAll(skills);
 	}
 }

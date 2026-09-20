@@ -102,7 +102,7 @@ export interface ServerConfigOptions {
 	persistenceMaxRetries?: number;
 
 	/**
-	 * Feature flag overrides. Missing fields are filled with defaults (all OFF,
+	 * Feature flag overrides. Missing fields are filled with defaults (all ON,
 	 * reasoningStrategy='sequential').
 	 */
 	features?: Partial<FeatureFlags>;

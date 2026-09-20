@@ -1,4 +1,4 @@
-import { asBranchId } from '../../contracts/ids.js';
+import { asBranchId, asSessionId } from '../../contracts/ids.js';
 /**
  * End-to-end integration tests for the Strategy layer.
  *
@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
+import type { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { NullLogger } from '../../logger/NullLogger.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import type {
@@ -21,6 +21,9 @@ import type {
 	StrategyDecision,
 } from '../../contracts/strategy.js';
 import { MockHistoryManager, createTestThought } from '../helpers/factories.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
+
+const STRATEGY_SESSION = asSessionId('test-session');
 
 interface ParsedResponse {
 	thought_number: number;
@@ -46,7 +49,7 @@ describe('Strategy Integration (ThoughtProcessor + SequentialStrategy)', () => {
 	beforeEach(() => {
 		history = new MockHistoryManager();
 		formatter = new ThoughtFormatter();
-		evaluator = new ThoughtEvaluator();
+		evaluator = createDisabledThoughtEvaluator();
 		logger = new NullLogger();
 	});
 
@@ -231,7 +234,7 @@ describe('Strategy Integration (ThoughtProcessor + SequentialStrategy)', () => {
 		expect(p3.strategy_hint?.action).toBe('terminate');
 	});
 
-	it('preserves backward-compatible response shape for ongoing thoughts', async () => {
+	it('preserves the canonical response shape for ongoing thoughts', async () => {
 		const processor = new ThoughtProcessor(
 			history,
 			formatter,
@@ -300,6 +303,6 @@ describe('Strategy Integration (ThoughtProcessor + SequentialStrategy)', () => {
 		expect(parsed.thought_number).toBe(1);
 		expect(parsed.next_thought_needed).toBe(false);
 		// History was still updated despite strategy failure.
-		expect(history.getHistoryLength()).toBe(1);
+		expect(history.getHistoryLength(STRATEGY_SESSION)).toBe(1);
 	});
 });

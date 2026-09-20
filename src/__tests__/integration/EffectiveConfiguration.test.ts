@@ -5,10 +5,7 @@ import * as v from 'valibot';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigFileOptions } from '../../config/ConfigLoader.js';
 import { ConfigLoader } from '../../config/ConfigLoader.js';
-import {
-	supportsSessionScopedPersistence,
-	type SessionScopedPersistenceBackend,
-} from '../../contracts/PersistenceBackend.js';
+import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
 import { asSessionId } from '../../contracts/ids.js';
 import { PersistenceDrainError } from '../../core/PersistenceBufferErrors.js';
 import { TreeOfThoughtStrategy } from '../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
@@ -42,11 +39,11 @@ const ENVIRONMENT_KEYS = [
 	'TRACELATTICE_FEATURES_OUTCOME_RECORDING',
 	'TRACELATTICE_TOOL_INTERLEAVE_TTL_MS',
 	'TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS',
-	'MAX_HISTORY_SIZE',
-	'MAX_BRANCHES',
-	'MAX_BRANCH_SIZE',
-	'SKILL_DIRS',
-	'TOOL_DIRS',
+	'TRACELATTICE_MAX_HISTORY_SIZE',
+	'TRACELATTICE_MAX_BRANCHES',
+	'TRACELATTICE_MAX_BRANCH_SIZE',
+	'TRACELATTICE_SKILL_DIRS',
+	'TRACELATTICE_TOOL_DIRS',
 ] as const;
 const originalEnvironment = new Map<string, string | undefined>();
 
@@ -81,13 +78,9 @@ async function disposeAfterExpectedFailure(
 	}
 }
 
-function scopedPersistence(
-	server: ToolAwareSequentialThinkingServer
-): SessionScopedPersistenceBackend {
+function persistenceBackend(server: ToolAwareSequentialThinkingServer): PersistenceBackend {
 	const persistence = server.getContainer().resolve('Persistence');
-	if (persistence === null || !supportsSessionScopedPersistence(persistence)) {
-		throw new TypeError('Expected session-scoped persistence');
-	}
+	if (persistence === null) throw new TypeError('Expected persistence');
 	return persistence;
 }
 
@@ -200,7 +193,7 @@ describe('effective runtime configuration', () => {
 	});
 
 	it('starts a persistence drain only when the configured file threshold is reached', async () => {
-		vi.stubEnv('MAX_HISTORY_SIZE', '4321');
+		vi.stubEnv('TRACELATTICE_MAX_HISTORY_SIZE', '4321');
 		const server = await createServer({
 			fileConfig: {
 				maxHistorySize: 123,
@@ -214,7 +207,7 @@ describe('effective runtime configuration', () => {
 			loadFromPersistence: false,
 		});
 		liveServers.add(server);
-		const persistence = scopedPersistence(server);
+		const persistence = persistenceBackend(server);
 		const save = vi.spyOn(persistence, 'saveThoughtForSession');
 		const sessionId = asSessionId('configured-threshold');
 
@@ -248,7 +241,7 @@ describe('effective runtime configuration', () => {
 			loadFromPersistence: false,
 		});
 		liveServers.add(server);
-		const persistence = scopedPersistence(server);
+		const persistence = persistenceBackend(server);
 		const save = vi.spyOn(persistence, 'saveThoughtForSession');
 
 		expect(server.config.persistenceFlushInterval).toBe(250);
@@ -281,7 +274,7 @@ describe('effective runtime configuration', () => {
 			});
 			liveServers.add(server);
 			expect(server.config.persistenceMaxRetries).toBe(maxRetries);
-			const persistence = scopedPersistence(server);
+			const persistence = persistenceBackend(server);
 			const firstAttempt = Promise.withResolvers<void>();
 			const failure = new Error(`controlled retry failure ${maxRetries}`);
 			const save = vi.spyOn(persistence, 'saveThoughtForSession').mockImplementation(async () => {
@@ -340,7 +333,7 @@ describe('effective runtime configuration', () => {
 		});
 		liveServers.add(server);
 		expect(server.config.persistenceBufferSize).toBe(1);
-		const persistence = scopedPersistence(server);
+		const persistence = persistenceBackend(server);
 		const originalSave = persistence.saveThoughtForSession.bind(persistence);
 		const writeStarted = Promise.withResolvers<void>();
 		const releaseWrite = Promise.withResolvers<void>();
@@ -493,7 +486,7 @@ describe('effective runtime configuration', () => {
 
 		const server = await initializeServer();
 		liveServers.add(server);
-		const persistence = scopedPersistence(server);
+		const persistence = persistenceBackend(server);
 		const save = vi.spyOn(persistence, 'saveThoughtForSession');
 
 		expect(loadSpy).toHaveBeenCalledOnce();
@@ -561,8 +554,8 @@ describe('effective runtime configuration', () => {
 		liveServers.add(server);
 
 		expect(loadSpy).toHaveBeenCalledOnce();
-		expect(server.skills.hasSkill('initialized-skill')).toBe(true);
-		expect(server.tools.hasTool('initialized-tool')).toBe(true);
+		expect(server.skills.has('initialized-skill')).toBe(true);
+		expect(server.tools.has('initialized-tool')).toBe(true);
 	});
 
 	it('discovers tools and skills from the same ordered configured roots at startup', async () => {
@@ -599,12 +592,12 @@ describe('effective runtime configuration', () => {
 		});
 		liveServers.add(server);
 
-		expect(server.skills.getSkill('shared-skill')?.description).toBe('first');
-		expect(server.tools.getTool('shared-tool')?.description).toBe('first');
-		expect(server.tools.getTool('sequentialthinking_tools')).toBe(SEQUENTIAL_THINKING_TOOL);
+		expect(server.skills.get('shared-skill')?.description).toBe('first');
+		expect(server.tools.get('shared-tool')?.description).toBe('first');
+		expect(server.tools.get('sequentialthinking_tools')).toBe(SEQUENTIAL_THINKING_TOOL);
 	});
 
-	it('applies environment discovery roots and legacy limits over file and default values', async () => {
+	it('applies environment discovery roots and explicit limits over file and default values', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'tracelattice-root-precedence-'));
 		temporaryDirectories.add(root);
 		const fileSkillDir = join(root, 'file-skills');
@@ -647,8 +640,8 @@ describe('effective runtime configuration', () => {
 				'utf8'
 			),
 		]);
-		vi.stubEnv('SKILL_DIRS', environmentSkillDir);
-		vi.stubEnv('TOOL_DIRS', environmentToolDir);
+		vi.stubEnv('TRACELATTICE_SKILL_DIRS', environmentSkillDir);
+		vi.stubEnv('TRACELATTICE_TOOL_DIRS', environmentToolDir);
 		const originalWorkingDirectory = process.cwd();
 		process.chdir(root);
 
@@ -710,8 +703,8 @@ describe('effective runtime configuration', () => {
 
 		expect(skillDiscovery).not.toHaveBeenCalled();
 		expect(toolDiscovery).not.toHaveBeenCalled();
-		expect(server.skills.hasSkill('manual-skill')).toBe(false);
-		expect(server.tools.hasTool('manual-tool')).toBe(false);
+		expect(server.skills.has('manual-skill')).toBe(false);
+		expect(server.tools.has('manual-tool')).toBe(false);
 		expect(
 			Object.getOwnPropertyNames(Object.getPrototypeOf(server)).filter((name) =>
 				name.startsWith('discover')
@@ -721,12 +714,12 @@ describe('effective runtime configuration', () => {
 		await server.discoverSkillsAsync();
 		expect(skillDiscovery).toHaveBeenCalledOnce();
 		expect(toolDiscovery).not.toHaveBeenCalled();
-		expect(server.skills.hasSkill('manual-skill')).toBe(true);
-		expect(server.tools.hasTool('manual-tool')).toBe(false);
+		expect(server.skills.has('manual-skill')).toBe(true);
+		expect(server.tools.has('manual-tool')).toBe(false);
 
 		await server.tools.discoverAsync();
 		expect(toolDiscovery).toHaveBeenCalledOnce();
-		expect(server.tools.hasTool('manual-tool')).toBe(true);
+		expect(server.tools.has('manual-tool')).toBe(true);
 	});
 
 	it('defers both registry scans when lazy discovery is enabled', async () => {
@@ -751,12 +744,12 @@ describe('effective runtime configuration', () => {
 		});
 		liveServers.add(server);
 
-		expect(server.skills.hasSkill('lazy-skill')).toBe(false);
-		expect(server.tools.hasTool('lazy-tool')).toBe(false);
+		expect(server.skills.has('lazy-skill')).toBe(false);
+		expect(server.tools.has('lazy-tool')).toBe(false);
 
 		await Promise.all([server.skills.discoverAsync(), server.tools.discoverAsync()]);
-		expect(server.skills.hasSkill('lazy-skill')).toBe(true);
-		expect(server.tools.hasTool('lazy-tool')).toBe(true);
+		expect(server.skills.has('lazy-skill')).toBe(true);
+		expect(server.tools.has('lazy-tool')).toBe(true);
 	});
 
 	it('keeps an explicit ServerConfig instance ahead of file and top-level options', async () => {
@@ -786,7 +779,7 @@ describe('effective runtime configuration', () => {
 			loadFromPersistence: false,
 		});
 		liveServers.add(server);
-		const persistence = scopedPersistence(server);
+		const persistence = persistenceBackend(server);
 		const save = vi.spyOn(persistence, 'saveThoughtForSession');
 
 		expect(server.config).toBe(config);

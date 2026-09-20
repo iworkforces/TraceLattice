@@ -6,28 +6,16 @@
  * (when no waiters chained on top), preventing unbounded memory growth.
  *
  * Different sessions are fully independent: locks for distinct session
- * ids never block each other. `undefined`/empty session ids share a
- * single global slot.
+ * ids never block each other.
  *
  * @module session-lock
  */
 
 import type { ISessionLock } from '../contracts/interfaces.js';
 import type { SessionId } from '../contracts/ids.js';
-import { GLOBAL_SESSION_ID } from '../contracts/ids.js';
 import { LockTimeoutError } from './SessionErrors.js';
 
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
-
-/**
- * Normalize a session id for keying the internal lock map.
- * Treats `undefined`, `null`, and empty strings as the global session.
- *
- * @internal
- */
-function lockKey(sessionId: SessionId | undefined): SessionId {
-	return sessionId && sessionId.length > 0 ? sessionId : GLOBAL_SESSION_ID;
-}
 
 /**
  * In-memory implementation of {@link ISessionLock}.
@@ -61,8 +49,8 @@ export class SessionLock implements ISessionLock {
 	}
 
 	/** Returns whether a session currently has a holder or queued operation. */
-	public isActive(sessionId: SessionId | undefined): boolean {
-		return this._locks.has(lockKey(sessionId));
+	public isActive(sessionId: SessionId): boolean {
+		return this._locks.has(sessionId);
 	}
 
 	/**
@@ -72,18 +60,17 @@ export class SessionLock implements ISessionLock {
 	 * different sessions run in parallel. The lock is always released
 	 * (via `finally`) even if `fn` throws.
 	 *
-	 * @param sessionId - Session to lock. Falsy values share a global slot.
+	 * @param sessionId - Session to lock.
 	 * @param fn - Critical section to run while holding the lock.
 	 * @param timeoutMs - Maximum time to wait for the lock (default 5000ms).
 	 * @throws {LockTimeoutError} When the lock cannot be acquired within `timeoutMs`.
 	 */
 	public async withLock<T>(
-		sessionId: SessionId | undefined,
+		sessionId: SessionId,
 		fn: () => Promise<T>,
 		timeoutMs: number = DEFAULT_LOCK_TIMEOUT_MS
 	): Promise<T> {
-		const key = lockKey(sessionId);
-		const previous = this._locks.get(key) ?? Promise.resolve();
+		const previous = this._locks.get(sessionId) ?? Promise.resolve();
 
 		// `next` is the tail this acquirer publishes to the chain. It only
 		// resolves after `previous` settles, guaranteeing serialization even
@@ -93,18 +80,18 @@ export class SessionLock implements ISessionLock {
 			() => release.promise,
 			() => release.promise
 		);
-		this._locks.set(key, next);
+		this._locks.set(sessionId, next);
 		// Identity protects a later acquisition from an earlier tail's cleanup.
 		void next.then(() => {
-			if (this._locks.get(key) === next) {
-				this._locks.delete(key);
+			if (this._locks.get(sessionId) === next) {
+				this._locks.delete(sessionId);
 			}
 		});
 
 		let timeoutId: ReturnType<typeof setTimeout> | undefined;
 		try {
 			await new Promise<void>((resolve, reject) => {
-				timeoutId = setTimeout(() => reject(new LockTimeoutError(key, timeoutMs)), timeoutMs);
+				timeoutId = setTimeout(() => reject(new LockTimeoutError(sessionId, timeoutMs)), timeoutMs);
 				previous.then(
 					() => resolve(),
 					() => resolve() // previous holder's failure must not poison the chain

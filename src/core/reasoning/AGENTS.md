@@ -22,13 +22,13 @@ Write path: **`thought_type === 'verification'` + `verification_result` ∈ {0,1
 
 **Not** `tool_call` / `tool_observation`.
 
-| Field | Notes |
-|-------|--------|
-| `thoughtId` / `thoughtNumber` | **target** hypothesis, not the verification thought |
-| `predicted` | target `confidence` |
-| `actual` | `verification_result` 0\|1 |
-| `type` | target `thought_type` |
-| `recordedAt` | set by recorder |
+| Field        | Notes                                               |
+| ------------ | --------------------------------------------------- |
+| `thoughtId`  | **target** hypothesis, not the verification thought |
+| `predicted`  | target `confidence`                                 |
+| `actual`     | `verification_result` 0\|1                          |
+| `type`       | target `thought_type`                               |
+| `recordedAt` | set by recorder                                     |
 
 Gated by `outcomeRecording`. Disabled → all writes/reads no-op (`enabled` false, `getOutcomes` `[]`). Duplicate target in-session → `ValidationError` (`assertCanRecord`).
 

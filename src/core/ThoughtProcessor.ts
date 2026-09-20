@@ -15,7 +15,6 @@ import type { Logger } from '../logger/StructuredLogger.js';
 import {
 	asBranchId,
 	asSessionId,
-	GLOBAL_SESSION_ID,
 	type BranchId,
 	type SessionId,
 	type ThoughtId,
@@ -72,8 +71,6 @@ type ReasoningSignalBundle = {
 
 type ProcessedThoughtResponseState = {
 	readonly thought: ThoughtData;
-	readonly sessionId: SessionId;
-	readonly exposeSessionId: boolean;
 	readonly reasoning: {
 		readonly confidenceSignals: ConfidenceSignalsResult;
 		readonly reasoningStats: ReasoningStatsResult;
@@ -87,8 +84,6 @@ type ThoughtProcessInput = ThoughtData & { readonly register_branch_id?: string 
 
 type PreparedThought = {
 	readonly thought: ThoughtData;
-	readonly sessionId: SessionId;
-	readonly exposeSessionId: boolean;
 	readonly resetState: boolean;
 	readonly registerBranchId: BranchId | undefined;
 	readonly validationWarnings: readonly string[];
@@ -135,7 +130,13 @@ export interface CallToolResult extends Record<string, unknown> {
  * @example
  * ```typescript
  * const processor = new ThoughtProcessor(historyManager, formatter, new ThoughtEvaluator());
- * const result = await processor.process({ thought: '...', thought_number: 1, total_thoughts: 5, next_thought_needed: true });
+ * const result = await processor.process({
+ *   thought: '...',
+ *   thought_number: 1,
+ *   total_thoughts: 5,
+ *   next_thought_needed: true,
+ *   session_id: asSessionId('analysis')
+ * });
  * ```
  */
 export class ThoughtProcessor {
@@ -221,7 +222,7 @@ export class ThoughtProcessor {
 	private _generateHints(
 		patterns: PatternSignal[],
 		currentThoughtNumber: number,
-		sessionId?: SessionId
+		sessionId: SessionId
 	): string[] {
 		const warnings = patterns.filter((p) => p.severity === 'warning');
 		if (warnings.length === 0) return [];
@@ -233,11 +234,11 @@ export class ThoughtProcessor {
 			return pa - pb;
 		});
 
-		const sessionKey = sessionId ?? GLOBAL_SESSION_ID;
-		if (!this._hintCooldowns.has(sessionKey)) {
-			this._hintCooldowns.set(sessionKey, new Map());
+		let cooldowns = this._hintCooldowns.get(sessionId);
+		if (cooldowns === undefined) {
+			cooldowns = new Map();
+			this._hintCooldowns.set(sessionId, cooldowns);
 		}
-		const cooldowns = this._hintCooldowns.get(sessionKey)!;
 
 		const hints: string[] = [];
 		for (const warning of warnings) {
@@ -288,7 +289,8 @@ export class ThoughtProcessor {
 	 *   thought: 'I should read the README file',
 	 *   thought_number: 1,
 	 *   total_thoughts: 3,
-	 *   next_thought_needed: true
+	 *   next_thought_needed: true,
+	 *   session_id: asSessionId('analysis')
 	 * });
 	 *
 	 * console.log(result.content[0].text);
@@ -299,19 +301,18 @@ export class ThoughtProcessor {
 	public async process(input: ThoughtProcessInput): Promise<CallToolResult> {
 		try {
 			const prepared = this._prepareInput(input);
+			const sessionId = prepared.thought.session_id;
 			const operation = async (): Promise<CallToolResult> => {
 				if (this._sessionLock !== undefined) {
-					return await this._sessionLock.withLock(prepared.sessionId, () =>
-						this._processInner(prepared)
-					);
+					return await this._sessionLock.withLock(sessionId, () => this._processInner(prepared));
 				}
 				return await this._processInner(prepared);
 			};
 			if (prepared.resetState) {
-				this.historyManager.inspectSession(prepared.sessionId);
-				return await this._lifecycle.withSessionReset(prepared.sessionId, operation);
+				this.historyManager.inspectSession(sessionId);
+				return await this._lifecycle.withSessionReset(sessionId, operation);
 			}
-			return await this._lifecycle.runOperation(prepared.sessionId, operation);
+			return await this._lifecycle.runOperation(sessionId, operation);
 		} catch (error) {
 			return this._buildErrorResponse(error);
 		}
@@ -358,8 +359,6 @@ export class ThoughtProcessor {
 		const internal = normalizeInput(parsed.output) as ThoughtData & {
 			register_branch_id?: string;
 		};
-		const exposeSessionId = internal.session_id !== undefined;
-		const sessionId = internal.session_id ?? GLOBAL_SESSION_ID;
 		const registerBranchId =
 			internal.register_branch_id === undefined
 				? undefined
@@ -370,8 +369,6 @@ export class ThoughtProcessor {
 		this._validateStatelessNewTypes(result);
 		return {
 			thought: result,
-			sessionId,
-			exposeSessionId,
 			resetState: result.reset_state === true,
 			registerBranchId,
 			validationWarnings: warnings,
@@ -437,7 +434,8 @@ export class ThoughtProcessor {
 	}
 
 	private async _processInner(prepared: PreparedThought): Promise<CallToolResult> {
-		const { thought, sessionId, exposeSessionId, resetState, registerBranchId } = prepared;
+		const { thought, resetState, registerBranchId } = prepared;
+		const sessionId = thought.session_id;
 		const existingSnapshot = this.historyManager.inspectSession(sessionId);
 		const validationSnapshot = resetState
 			? ThoughtProcessor._emptySessionSnapshot()
@@ -494,13 +492,13 @@ export class ThoughtProcessor {
 		// Tool-interleave suspend path: persist the tool_call thought, then return
 		// a `suspended` envelope without running strategy/evaluator.
 		if (validated.thought_type === 'tool_call' && this._suspensionStore) {
-			return this._handleToolCall(validated, sessionId, exposeSessionId, admissionContext);
+			return this._handleToolCall(validated, admissionContext);
 		}
 
 		// Tool-interleave resume path: consume the suspension and continue the
 		// normal pipeline (addThought → format → evaluate → strategy).
 		if (validated.thought_type === 'tool_observation' && this._suspensionStore) {
-			await this._handleToolObservation(validated, sessionId, admissionContext);
+			await this._handleToolObservation(validated, admissionContext);
 		} else {
 			this.historyManager.addThought(checkedInput, admissionContext);
 		}
@@ -509,21 +507,14 @@ export class ThoughtProcessor {
 		const formattedThought = this.thoughtFormatter.formatThought(checkedInput);
 		this.log(formattedThought, { sessionId });
 
-		const signals = this._collectReasoningSignals(checkedInput, sessionId);
+		const signals = this._collectReasoningSignals(checkedInput);
 
 		// Strategy decision — pluggable reasoning policy hook.
 		// Built after history/stats so strategies see the latest state.
-		const decision = this._runStrategy(
-			checkedInput,
-			signals.history,
-			signals.reasoningStats,
-			sessionId
-		);
+		const decision = this._runStrategy(checkedInput, signals.history, signals.reasoningStats);
 
 		return this._buildSuccessResponse({
 			thought: checkedInput,
-			sessionId,
-			exposeSessionId,
 			reasoning: {
 				confidenceSignals: signals.confidenceSignals,
 				reasoningStats: signals.reasoningStats,
@@ -545,15 +536,13 @@ export class ThoughtProcessor {
 		if (this._calibrator?.enabled === true) this._calibrator.refit(sessionId);
 	}
 
-	private _collectReasoningSignals(
-		input: ThoughtData,
-		sessionId?: SessionId
-	): ReasoningSignalBundle {
+	private _collectReasoningSignals(input: ThoughtData): ReasoningSignalBundle {
+		const sessionId = input.session_id;
 		const history = this.historyManager.getHistory(sessionId);
 		const branches = this.historyManager.getBranches(sessionId);
 		const confidenceSignals = this._thoughtEvaluator.computeConfidenceSignals(history, branches, {
 			currentThought: input,
-			sessionId: sessionId ?? GLOBAL_SESSION_ID,
+			sessionId,
 		});
 		const reasoningStats = this._thoughtEvaluator.computeReasoningStats(history, branches);
 		const patternSignals = this._thoughtEvaluator.computePatternSignals(history, branches);
@@ -568,6 +557,7 @@ export class ThoughtProcessor {
 	}
 
 	private _buildSuccessResponse(state: ProcessedThoughtResponseState): CallToolResult {
+		const sessionId = state.thought.session_id;
 		return {
 			content: [
 				{
@@ -577,8 +567,8 @@ export class ThoughtProcessor {
 							thought_number: state.thought.thought_number,
 							total_thoughts: state.thought.total_thoughts,
 							next_thought_needed: state.thought.next_thought_needed ?? true,
-							branches: this.historyManager.getBranchIds(state.sessionId),
-							thought_history_length: this.historyManager.getHistoryLength(state.sessionId),
+							branches: this.historyManager.getBranchIds(sessionId),
+							thought_history_length: this.historyManager.getHistoryLength(sessionId),
 							available_mcp_tools: state.thought.available_mcp_tools,
 							available_skills: state.thought.available_skills,
 							current_step: state.thought.current_step,
@@ -595,7 +585,7 @@ export class ThoughtProcessor {
 							}),
 							...(state.decision !== undefined && { strategy_hint: state.decision }),
 							...(state.warnings.length > 0 && { warnings: state.warnings.slice(0, 3) }),
-							...(state.exposeSessionId ? { session_id: state.sessionId } : {}),
+							session_id: sessionId,
 						},
 						null,
 						2
@@ -613,15 +603,15 @@ export class ThoughtProcessor {
 	private _runStrategy(
 		currentThought: ThoughtData,
 		history: ThoughtData[],
-		stats: ReturnType<ThoughtEvaluator['computeReasoningStats']>,
-		sessionId?: SessionId
+		stats: ReturnType<ThoughtEvaluator['computeReasoningStats']>
 	): StrategyDecision | undefined {
+		const sessionId = currentThought.session_id;
 		let decision: StrategyDecision | undefined;
 		try {
 			const edgeStore = this._getEdgeStore();
 			const graph = edgeStore ? new GraphView(edgeStore) : undefined;
 			decision = this.strategy.decide({
-				sessionId: sessionId ?? GLOBAL_SESSION_ID,
+				sessionId,
 				history,
 				graph,
 				stats,
@@ -639,11 +629,10 @@ export class ThoughtProcessor {
 		// failures must NEVER break the thought pipeline.
 		if (decision?.action === 'terminate' && this._compressionService && currentThought.branch_id) {
 			try {
-				const sid = sessionId ?? GLOBAL_SESSION_ID;
-				const branchRoot = this._findBranchRoot(sid, currentThought.branch_id);
+				const branchRoot = this._findBranchRoot(sessionId, currentThought.branch_id);
 				if (branchRoot) {
 					this._compressionService.compressBranch(
-						sid,
+						sessionId,
 						currentThought.branch_id,
 						branchRoot as ThoughtId
 					);
@@ -661,7 +650,7 @@ export class ThoughtProcessor {
 	/**
 	 * Locate the root thought id for a branch.
 	 * Prefers GraphView.branchThoughts() when an EdgeStore is available;
-	 * falls back to historyManager.getBranches()[branchId][0].id.
+	 * falls back to historyManager.getBranches(sessionId)[branchId][0].id.
 	 * @private
 	 */
 	private _findBranchRoot(sessionId: SessionId, branchId: BranchId): string | undefined {
@@ -827,8 +816,6 @@ export class ThoughtProcessor {
 	 */
 	private _handleToolCall(
 		input: ToolCallThought,
-		sessionId: SessionId,
-		exposeSessionId: boolean,
 		admissionContext: ThoughtAdmissionContext
 	): CallToolResult {
 		if (input.id === undefined) {
@@ -839,7 +826,7 @@ export class ThoughtProcessor {
 			throw new ValidationError('thought_type', 'tool_call requires suspensionStore');
 		}
 		const record: SuspensionRecord = this._suspensionStore.suspend({
-			sessionId,
+			sessionId: input.session_id,
 			toolCallThoughtNumber: input.thought_number,
 			toolCallThoughtId: input.id,
 			toolName: input.tool_name,
@@ -859,7 +846,7 @@ export class ThoughtProcessor {
 							expires_at: record.expiresAt,
 							thought_number: input.thought_number,
 							total_thoughts: input.total_thoughts,
-							...(exposeSessionId ? { session_id: sessionId } : {}),
+							session_id: input.session_id,
 						},
 						null,
 						2
@@ -875,17 +862,20 @@ export class ThoughtProcessor {
 	 */
 	private async _handleToolObservation(
 		input: ToolObservationThought,
-		sessionId: SessionId,
 		admissionContext: ThoughtAdmissionContext
 	): Promise<void> {
 		if (!this._suspensionStore) {
 			throw new ValidationError('thought_type', 'tool_observation requires suspensionStore');
 		}
-		await this._suspensionStore.compareAndAdmit(input.continuation_token, sessionId, (record) => {
-			this.historyManager.addThought(input, {
-				...admissionContext,
-				toolInvocationSourceThoughtId: record.toolCallThoughtId,
-			});
-		});
+		await this._suspensionStore.compareAndAdmit(
+			input.continuation_token,
+			input.session_id,
+			(record) => {
+				this.historyManager.addThought(input, {
+					...admissionContext,
+					toolInvocationSourceThoughtId: record.toolCallThoughtId,
+				});
+			}
+		);
 	}
 }

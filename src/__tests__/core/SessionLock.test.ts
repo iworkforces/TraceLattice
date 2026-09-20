@@ -3,7 +3,7 @@
  * ThoughtProcessor.process() calls.
  */
 
-import { asSessionId, GLOBAL_SESSION_ID } from '../../contracts/ids.js';
+import { asSessionId } from '../../contracts/ids.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SessionLock } from '../../core/SessionLock.js';
 import { LockTimeoutError } from '../../core/SessionErrors.js';
@@ -121,28 +121,6 @@ describe('SessionLock', () => {
 
 			releaseA.resolve();
 			await a;
-		});
-
-		it('undefined and the global session id share the global slot', async () => {
-			const order: string[] = [];
-			const releaseA = Promise.withResolvers<void>();
-
-			const a = lock.withLock(undefined, async () => {
-				order.push('a-start');
-				await releaseA.promise;
-				order.push('a-end');
-			});
-			const b = lock.withLock(GLOBAL_SESSION_ID, async () => {
-				order.push('b');
-			});
-
-			await Promise.resolve();
-			await Promise.resolve();
-			expect(order).toEqual(['a-start']);
-
-			releaseA.resolve();
-			await Promise.all([a, b]);
-			expect(order).toEqual(['a-start', 'a-end', 'b']);
 		});
 	});
 

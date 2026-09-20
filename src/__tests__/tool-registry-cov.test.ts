@@ -106,7 +106,7 @@ describe('ToolRegistry (coverage)', () => {
 				getLevel: vi.fn(),
 			};
 			const registry = createToolRegistry({ logger });
-			registry.addTool(makeTool('logged-tool', 'test', { type: 'object' }));
+			registry.add(makeTool('logged-tool', 'test', { type: 'object' }));
 			expect(logger.info).toHaveBeenCalled();
 		});
 
@@ -348,33 +348,33 @@ describe('ToolRegistry (coverage)', () => {
 	describe('Error factories', () => {
 		it('_createInvalidError produces InvalidToolError', () => {
 			const registry = createToolRegistry();
-			expect(() => registry.addTool({ name: '', description: '', inputSchema: {} })).toThrow(
+			expect(() => registry.add({ name: '', description: '', inputSchema: {} })).toThrow(
 				InvalidToolError
 			);
 		});
 
 		it('_createDuplicateError produces DuplicateToolError', () => {
 			const registry = createToolRegistry();
-			registry.addTool(makeTool('dup', 'test', { type: 'object' }));
-			expect(() => registry.addTool(makeTool('dup', 'test2', { type: 'object' }))).toThrow(
+			registry.add(makeTool('dup', 'test', { type: 'object' }));
+			expect(() => registry.add(makeTool('dup', 'test2', { type: 'object' }))).toThrow(
 				DuplicateToolError
 			);
 		});
 
 		it('_createNotFoundError produces ToolNotFoundError on remove', () => {
 			const registry = createToolRegistry();
-			expect(() => registry.removeTool('ghost')).toThrow(ToolNotFoundError);
+			expect(() => registry.remove('ghost')).toThrow(ToolNotFoundError);
 		});
 
 		it('_createNotFoundError produces ToolNotFoundError on update', () => {
 			const registry = createToolRegistry();
-			expect(() => registry.updateTool('ghost', { description: 'new' })).toThrow(ToolNotFoundError);
+			expect(() => registry.update('ghost', { description: 'new' })).toThrow(ToolNotFoundError);
 		});
 
 		it('InvalidToolError has correct message', () => {
 			const registry = createToolRegistry();
 			try {
-				registry.addTool({ name: '', description: '', inputSchema: {} });
+				registry.add({ name: '', description: '', inputSchema: {} });
 			} catch (err) {
 				expect(err).toBeInstanceOf(InvalidToolError);
 				expect((err as Error).message).toContain('tool must have a valid name');
@@ -383,9 +383,9 @@ describe('ToolRegistry (coverage)', () => {
 
 		it('DuplicateToolError has correct message', () => {
 			const registry = createToolRegistry();
-			registry.addTool(makeTool('dup-msg'));
+			registry.add(makeTool('dup-msg'));
 			try {
-				registry.addTool(makeTool('dup-msg'));
+				registry.add(makeTool('dup-msg'));
 			} catch (err) {
 				expect(err).toBeInstanceOf(DuplicateToolError);
 				expect((err as Error).message).toContain("tool 'dup-msg' already exists");
@@ -395,7 +395,7 @@ describe('ToolRegistry (coverage)', () => {
 		it('ToolNotFoundError has correct message', () => {
 			const registry = createToolRegistry();
 			try {
-				registry.removeTool('missing-msg');
+				registry.remove('missing-msg');
 			} catch (err) {
 				expect(err).toBeInstanceOf(ToolNotFoundError);
 				expect((err as Error).message).toContain("Tool 'missing-msg' not found, cannot remove");
@@ -410,7 +410,7 @@ describe('ToolRegistry (coverage)', () => {
 			const registry = createToolRegistry({ cache });
 
 			const tool = makeTool('direct', 'Direct access', { type: 'object' });
-			registry.addTool(tool);
+			registry.add(tool);
 
 			// Cache was invalidated by add, so get should fall through to _items
 			const result = registry.get('direct');
@@ -440,7 +440,7 @@ describe('ToolRegistry (coverage)', () => {
 
 			// Add the tool to _items
 			const tool = makeTool('empty-cache', 'Fallthrough', { type: 'object' });
-			registry.addTool(tool);
+			registry.add(tool);
 
 			// Re-set cache with empty (add invalidated it)
 			cache.set('tool:empty-cache', []);
@@ -463,61 +463,60 @@ describe('ToolRegistry (coverage)', () => {
 		it('get works without cache (default cache path)', () => {
 			const registry = createToolRegistry();
 			const tool = makeTool('no-cache', 'No cache', { type: 'object' });
-			registry.addTool(tool);
+			registry.add(tool);
 
 			const result = registry.get('no-cache');
 			expect(result).toEqual(tool);
 		});
 	});
 
-	// ==================== Backward-compatible aliases ====================
-	describe('Backward-compatible aliases', () => {
+	describe('Canonical CRUD operations', () => {
 		let registry: ToolRegistry;
 
 		beforeEach(() => {
 			registry = createToolRegistry();
 		});
 
-		it('addTool delegates to add', () => {
-			const tool = makeTool('alias-add', 'test', { type: 'object' });
-			registry.addTool(tool);
-			expect(registry.has('alias-add')).toBe(true);
+		it('adds tools', () => {
+			const tool = makeTool('added', 'test', { type: 'object' });
+			registry.add(tool);
+			expect(registry.has('added')).toBe(true);
 		});
 
-		it('removeTool delegates to remove', () => {
-			registry.addTool(makeTool('alias-rm', 'test', { type: 'object' }));
-			registry.removeTool('alias-rm');
-			expect(registry.has('alias-rm')).toBe(false);
+		it('removes tools', () => {
+			registry.add(makeTool('removed', 'test', { type: 'object' }));
+			registry.remove('removed');
+			expect(registry.has('removed')).toBe(false);
 		});
 
-		it('updateTool delegates to update', () => {
-			registry.addTool(makeTool('alias-upd', 'old', { type: 'object' }));
-			registry.updateTool('alias-upd', { description: 'new' });
-			expect(registry.get('alias-upd')?.description).toBe('new');
+		it('updates tools', () => {
+			registry.add(makeTool('updated', 'old', { type: 'object' }));
+			registry.update('updated', { description: 'new' });
+			expect(registry.get('updated')?.description).toBe('new');
 		});
 
-		it('hasTool delegates to has', () => {
-			expect(registry.hasTool('nope')).toBe(false);
-			registry.addTool(makeTool('alias-has', 'test', { type: 'object' }));
-			expect(registry.hasTool('alias-has')).toBe(true);
+		it('checks registered tools', () => {
+			expect(registry.has('nope')).toBe(false);
+			registry.add(makeTool('present', 'test', { type: 'object' }));
+			expect(registry.has('present')).toBe(true);
 		});
 
-		it('getTool delegates to get (including cache path)', () => {
-			registry.addTool(makeTool('alias-get', 'test', { type: 'object' }));
-			const result = registry.getTool('alias-get');
+		it('gets tools including through the cache path', () => {
+			registry.add(makeTool('retrieved', 'test', { type: 'object' }));
+			const result = registry.get('retrieved');
 			expect(result).toBeDefined();
-			expect(result!.name).toBe('alias-get');
+			expect(result!.name).toBe('retrieved');
 		});
 
-		it('getTool returns undefined for non-existent tool', () => {
-			expect(registry.getTool('ghost')).toBeUndefined();
+		it('returns undefined for a non-existent tool', () => {
+			expect(registry.get('ghost')).toBeUndefined();
 		});
 
-		it('setTools delegates to setAll', () => {
-			registry.addTool(makeTool('old1'));
-			registry.addTool(makeTool('old2'));
+		it('replaces all tools', () => {
+			registry.add(makeTool('old1'));
+			registry.add(makeTool('old2'));
 
-			registry.setTools([makeTool('new1', 'New 1'), makeTool('new2', 'New 2')]);
+			registry.setAll([makeTool('new1', 'New 1'), makeTool('new2', 'New 2')]);
 
 			expect(registry.has('old1')).toBe(false);
 			expect(registry.has('old2')).toBe(false);
@@ -526,9 +525,9 @@ describe('ToolRegistry (coverage)', () => {
 			expect(registry.size()).toBe(2);
 		});
 
-		it('setTools with empty array clears registry', () => {
-			registry.addTool(makeTool('existing'));
-			registry.setTools([]);
+		it('clears the registry when replacing with an empty array', () => {
+			registry.add(makeTool('existing'));
+			registry.setAll([]);
 			expect(registry.size()).toBe(0);
 		});
 	});
@@ -754,7 +753,7 @@ describe('ToolRegistry (coverage)', () => {
 			cache.dispose();
 		});
 
-		it('getTool alias works after discovery', async () => {
+		it('gets a tool after discovery', async () => {
 			const dir = createTempToolDir([
 				{
 					name: 'alias-disc.tool.md',
@@ -770,7 +769,7 @@ describe('ToolRegistry (coverage)', () => {
 			const registry = createToolRegistry({ toolDirs: [dir] });
 			await registry.discoverAsync();
 
-			const tool = registry.getTool('alias-disc');
+			const tool = registry.get('alias-disc');
 			expect(tool).toBeDefined();
 			expect(tool!.name).toBe('alias-disc');
 		});
@@ -832,15 +831,21 @@ describe('ToolRegistry (coverage)', () => {
 					return undefined;
 				},
 			});
-			(registry as unknown as { _extractFrontmatter: () => Record<string, unknown> })._extractFrontmatter = () => throwingObj;
+			(
+				registry as unknown as { _extractFrontmatter: () => Record<string, unknown> }
+			)._extractFrontmatter = () => throwingObj;
 
-			const result = (registry as unknown as { _parseFrontmatter: (c: string) => { _error?: string } })._parseFrontmatter('---\nname: test\n---');
+			const result = (
+				registry as unknown as { _parseFrontmatter: (c: string) => { _error?: string } }
+			)._parseFrontmatter('---\nname: test\n---');
 			expect(result._error).toBe('YAML parse error');
 		});
 
 		it('_buildItem returns null when name is present but inputSchema is missing', () => {
 			const registry = createToolRegistry();
-			const result = (registry as unknown as { _buildItem: (p: Partial<Tool>) => Tool | null })._buildItem({
+			const result = (
+				registry as unknown as { _buildItem: (p: Partial<Tool>) => Tool | null }
+			)._buildItem({
 				name: 'test-tool',
 				description: 'test',
 				// inputSchema deliberately omitted

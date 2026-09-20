@@ -1,15 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
+import type { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { HistoryManager } from '../../core/HistoryManager.js';
 import { InMemorySuspensionStore } from '../../core/tools/InMemorySuspensionStore.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import type { FeatureFlags } from '../../contracts/features.js';
-import type { SessionId } from '../../contracts/ids.js';
+import { asBranchId, asSessionId, type SessionId } from '../../contracts/ids.js';
 import { createMockToolRegistry } from '../helpers/factories.js';
+import { confidenceSignalContext, createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
 
-import { asBranchId } from '../../contracts/ids.js';
+const RETRACTION_SESSION = asSessionId('retraction-session');
+
 function makeFeatures(overrides: Partial<FeatureFlags> = {}): FeatureFlags {
 	return {
 		dagEdges: false,
@@ -29,7 +31,7 @@ function makeProcessor(features: FeatureFlags): {
 	evaluator: ThoughtEvaluator;
 } {
 	const history = new HistoryManager();
-	const evaluator = new ThoughtEvaluator();
+	const evaluator = createDisabledThoughtEvaluator();
 	const proc = new ThoughtProcessor(
 		history,
 		new ThoughtFormatter(),
@@ -39,12 +41,16 @@ function makeProcessor(features: FeatureFlags): {
 		undefined,
 		new InMemorySuspensionStore(),
 		createMockToolRegistry(['search', 'fetch', 'test-tool']),
-		features,
+		features
 	);
 	return { proc, history, evaluator };
 }
 
-async function seed(proc: ThoughtProcessor, count: number, sessionId?: SessionId): Promise<void> {
+async function seed(
+	proc: ThoughtProcessor,
+	count: number,
+	sessionId: SessionId = RETRACTION_SESSION
+): Promise<void> {
 	for (let i = 1; i <= count; i++) {
 		await proc.process({
 			thought: `thought ${i}`,
@@ -62,6 +68,7 @@ describe('Logical retraction via backtrack', () => {
 		await seed(proc, 3);
 
 		const result = await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'undoing #2',
 			thought_number: 4,
 			total_thoughts: 8,
@@ -71,7 +78,7 @@ describe('Logical retraction via backtrack', () => {
 		});
 		expect(result.isError).toBeFalsy();
 
-		const all = history.getHistory();
+		const all = history.getHistory(RETRACTION_SESSION);
 		const target = all.find((t) => t.thought_number === 2);
 		expect(target).toBeDefined();
 		expect(target!.retracted).toBe(true);
@@ -80,10 +87,9 @@ describe('Logical retraction via backtrack', () => {
 	});
 
 	it('excludes retracted thoughts from confidence signals', async () => {
-		const { proc, history, evaluator } = makeProcessor(
-			makeFeatures({ newThoughtTypes: true }),
-		);
+		const { proc, history, evaluator } = makeProcessor(makeFeatures({ newThoughtTypes: true }));
 		await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'h1',
 			thought_number: 1,
 			total_thoughts: 5,
@@ -92,6 +98,7 @@ describe('Logical retraction via backtrack', () => {
 			confidence: 0.9,
 		});
 		await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'h2',
 			thought_number: 2,
 			total_thoughts: 5,
@@ -100,6 +107,7 @@ describe('Logical retraction via backtrack', () => {
 			confidence: 0.4,
 		});
 		await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'retract h2',
 			thought_number: 3,
 			total_thoughts: 5,
@@ -108,9 +116,11 @@ describe('Logical retraction via backtrack', () => {
 			backtrack_target: 2,
 		});
 
+		const currentHistory = history.getHistory(RETRACTION_SESSION);
 		const signals = evaluator.computeConfidenceSignals(
-			history.getHistory(),
-			history.getBranches(),
+			currentHistory,
+			history.getBranches(RETRACTION_SESSION),
+			confidenceSignalContext(currentHistory, RETRACTION_SESSION)
 		);
 		// thought_type_distribution should not count the retracted hypothesis
 		const dist = signals.thought_type_distribution as Record<string, number>;
@@ -122,6 +132,7 @@ describe('Logical retraction via backtrack', () => {
 		await seed(proc, 2);
 
 		const result = await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'invalid',
 			thought_number: 5,
 			total_thoughts: 5,
@@ -139,6 +150,7 @@ describe('Logical retraction via backtrack', () => {
 		await seed(proc, 2);
 
 		const result = await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'no target',
 			thought_number: 3,
 			total_thoughts: 5,
@@ -155,6 +167,7 @@ describe('Logical retraction via backtrack', () => {
 		await seed(proc, 1);
 		// Add a branch thought (#2 on branch "alt")
 		await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'branch step',
 			thought_number: 2,
 			total_thoughts: 5,
@@ -163,6 +176,7 @@ describe('Logical retraction via backtrack', () => {
 			branch_id: asBranchId('alt'),
 		});
 		await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'retract branch',
 			thought_number: 3,
 			total_thoughts: 5,
@@ -171,13 +185,13 @@ describe('Logical retraction via backtrack', () => {
 			backtrack_target: 2,
 		});
 
-		const branches = history.getBranches();
+		const branches = history.getBranches(RETRACTION_SESSION);
 		expect(branches[asBranchId('alt')]).toBeDefined();
 		const branchThought = branches[asBranchId('alt')]!.find((t) => t.thought_number === 2);
 		expect(branchThought).toBeDefined();
 		expect(branchThought!.retracted).toBe(true);
 		// Also retracted in main history
-		const mainCopy = history.getHistory().find((t) => t.thought_number === 2);
+		const mainCopy = history.getHistory(RETRACTION_SESSION).find((t) => t.thought_number === 2);
 		expect(mainCopy!.retracted).toBe(true);
 	});
 
@@ -186,6 +200,7 @@ describe('Logical retraction via backtrack', () => {
 		await seed(proc, 2);
 
 		const result = await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'attempt retract',
 			thought_number: 3,
 			total_thoughts: 5,
@@ -202,6 +217,7 @@ describe('Logical retraction via backtrack', () => {
 		const { proc, history } = makeProcessor(makeFeatures({ newThoughtTypes: true }));
 		await seed(proc, 3);
 		await proc.process({
+			session_id: RETRACTION_SESSION,
 			thought: 'retract #2',
 			thought_number: 4,
 			total_thoughts: 5,
@@ -209,7 +225,7 @@ describe('Logical retraction via backtrack', () => {
 			thought_type: 'backtrack',
 			backtrack_target: 2,
 		});
-		const all = history.getHistory();
+		const all = history.getHistory(RETRACTION_SESSION);
 		expect(all.map((t) => t.thought_number)).toEqual([1, 2, 3, 4]);
 		expect(all.find((t) => t.thought_number === 2)?.thought).toBe('thought 2');
 	});

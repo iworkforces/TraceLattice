@@ -16,15 +16,15 @@ import type {
 } from '../../../contracts/strategy.js';
 
 /**
- * Default sequential strategy. Mirrors the legacy linear thinking flow:
+ * Default sequential strategy. Applies the linear thinking flow:
  *
  * - Continue while `next_thought_needed` is truthy (or unset).
  * - Terminate as soon as `next_thought_needed === false`.
  * - Branch when both `branch_from_thought` and `branch_id` are present.
  *
  * Type-agnostic: all `ThoughtType` variants (including `assumption`,
- * `decomposition`, `backtrack`, `tool_call`, `tool_observation`, and the
- * legacy six) pass through unchanged. The strategy intentionally inspects
+ * `decomposition`, `backtrack`, `tool_call`, and `tool_observation`) pass
+ * through unchanged. The strategy intentionally inspects
  * only `next_thought_needed`, `branch_from_thought`, and `branch_id` —
  * type-aware behavior lives in evaluator/scoring layers, not here.
  *

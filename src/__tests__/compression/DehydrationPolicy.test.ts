@@ -15,6 +15,7 @@ let summaryCounter = 0;
 
 function makeThought(n: number, overrides?: Partial<ThoughtData>): ThoughtData {
 	return {
+		session_id: SID,
 		id: asThoughtId(`t-${n}`),
 		thought: `t${n}`,
 		thought_number: n,
@@ -30,7 +31,10 @@ function makeHistory(count: number): ThoughtData[] {
 	return out;
 }
 
-function makeSummary(overrides: Partial<Omit<Summary, 'sessionId' | 'rootThoughtId'>> & Pick<Summary, 'coveredRange'> & { sessionId?: string; rootThoughtId?: string }): Summary {
+function makeSummary(
+	overrides: Partial<Omit<Summary, 'sessionId' | 'rootThoughtId'>> &
+		Pick<Summary, 'coveredRange'> & { sessionId?: string; rootThoughtId?: string }
+): Summary {
 	summaryCounter += 1;
 	return {
 		id: overrides.id ?? `sum-${summaryCounter}`,
@@ -140,6 +144,7 @@ describe('DehydrationPolicy', () => {
 
 	it('leaves idless cold thoughts untouched even when their number is in a summary range', () => {
 		const idless: ThoughtData = {
+			session_id: SID,
 			thought: 'idless duplicate',
 			thought_number: 1,
 			total_thoughts: 1,

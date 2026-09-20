@@ -6,6 +6,7 @@ import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { createTestThought } from '../helpers/factories.js';
 
 const managers = new Set<HistoryManager>();
+const SESSION_ID = asSessionId('reference-index-session');
 
 function manager(config: ConstructorParameters<typeof HistoryManager>[0] = {}): HistoryManager {
 	const value = new HistoryManager(config);
@@ -120,6 +121,7 @@ describe('HistoryManager reference-index lifecycle', () => {
 		history.addThought(
 			createTestThought({
 				id: 'target',
+				session_id: SESSION_ID,
 				thought_number: 1,
 				branch_from_thought: 1,
 				branch_id: branchId,
@@ -129,14 +131,15 @@ describe('HistoryManager reference-index lifecycle', () => {
 		history.addThought(
 			createTestThought({
 				id: 'backtrack',
+				session_id: SESSION_ID,
 				thought_number: 2,
 				thought_type: 'backtrack',
 				backtrack_target: 1,
 			})
 		);
 
-		expect(history.getHistory()[0]?.retracted).toBe(true);
-		expect(history.getBranches()[branchId]?.[0]?.retracted).toBe(true);
-		expect(history.resolveThoughtReference(asSessionId('__global__'), 1).kind).toBe('unique');
+		expect(history.getHistory(SESSION_ID)[0]?.retracted).toBe(true);
+		expect(history.getBranches(SESSION_ID)[branchId]?.[0]?.retracted).toBe(true);
+		expect(history.resolveThoughtReference(SESSION_ID, 1).kind).toBe('unique');
 	});
 });

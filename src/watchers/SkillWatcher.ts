@@ -80,7 +80,9 @@ export class SkillWatcher {
 	}
 
 	private _log(message: string): void {
-		if (process.env.WATCHER_VERBOSE === 'true') this._logger.debug(`[Watcher] ${message}`);
+		if (process.env.TRACELATTICE_WATCHER_VERBOSE === 'true') {
+			this._logger.debug(`[Watcher] ${message}`);
+		}
 	}
 
 	/** Resolves when Chokidar has completed its initial scan. */

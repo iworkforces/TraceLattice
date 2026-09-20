@@ -102,15 +102,15 @@ describe('SkillRegistry', () => {
 				getLevel: vi.fn(),
 			};
 			registry = new SkillRegistry({ logger, skillDirs: [tmpDir] });
-			registry.addSkill(makeSkill('logged-skill'));
+			registry.add(makeSkill('logged-skill'));
 			expect(logger.info).toHaveBeenCalled();
 		});
 
 		it('creates registry with custom cache', () => {
 			const cache = new DiscoveryCache<Skill>({ maxSize: 10, ttl: 5000 });
 			registry = new SkillRegistry({ cache, skillDirs: [tmpDir] });
-			registry.addSkill(makeSkill('cached'));
-			expect(registry.hasSkill('cached')).toBe(true);
+			registry.add(makeSkill('cached'));
+			expect(registry.has('cached')).toBe(true);
 			cache.dispose();
 		});
 
@@ -130,8 +130,8 @@ describe('SkillRegistry', () => {
 			const count = await registry.discoverAsync();
 
 			expect(count).toBe(1);
-			expect(registry.hasSkill('real-skill')).toBe(true);
-			expect(registry.hasSkill('ds-store-skill')).toBe(false);
+			expect(registry.has('real-skill')).toBe(true);
+			expect(registry.has('ds-store-skill')).toBe(false);
 		});
 
 		it('does not skip regular files', async () => {
@@ -141,7 +141,7 @@ describe('SkillRegistry', () => {
 			const count = await registry.discoverAsync();
 
 			expect(count).toBe(1);
-			expect(registry.hasSkill('normal-skill')).toBe(true);
+			expect(registry.has('normal-skill')).toBe(true);
 		});
 	});
 
@@ -156,7 +156,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('my-skill');
+			const skill = registry.get('my-skill');
 			expect(skill).toBeDefined();
 			expect(skill!.name).toBe('my-skill');
 			expect(skill!.description).toBe('A great skill');
@@ -171,7 +171,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('invocable-skill');
+			const skill = registry.get('invocable-skill');
 			expect(skill).toBeDefined();
 			expect(skill!.user_invocable).toBe(true);
 		});
@@ -185,7 +185,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('non-invocable-skill');
+			const skill = registry.get('non-invocable-skill');
 			expect(skill).toBeDefined();
 			expect(skill!.user_invocable).toBe(false);
 		});
@@ -202,7 +202,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('tools-skill');
+			const skill = registry.get('tools-skill');
 			expect(skill).toBeDefined();
 			expect(skill!.allowed_tools).toEqual(['Bash', 'Read', 'Grep']);
 		});
@@ -254,7 +254,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('minimal-skill');
+			const skill = registry.get('minimal-skill');
 			expect(skill).toBeDefined();
 			expect(skill!.description).toBe('');
 		});
@@ -266,7 +266,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('default-invocable');
+			const skill = registry.get('default-invocable');
 			expect(skill).toBeDefined();
 			expect(skill!.user_invocable).toBe(false);
 		});
@@ -278,7 +278,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('no-tools');
+			const skill = registry.get('no-tools');
 			expect(skill).toBeDefined();
 			expect(skill!.allowed_tools).toBeUndefined();
 		});
@@ -290,7 +290,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('num-desc');
+			const skill = registry.get('num-desc');
 			expect(skill).toBeDefined();
 			// description is not a string → defaults to ''
 			expect(skill!.description).toBe('');
@@ -313,7 +313,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('built-skill');
+			const skill = registry.get('built-skill');
 			expect(skill).toEqual({
 				name: 'built-skill',
 				description: 'Built via discovery',
@@ -339,20 +339,18 @@ describe('SkillRegistry', () => {
 
 		describe('_createInvalidError', () => {
 			it('throws InvalidSkillError when adding skill without name', () => {
-				expect(() => registry.addSkill({ name: '', description: 'no name' })).toThrow(
-					InvalidSkillError
-				);
+				expect(() => registry.add({ name: '', description: 'no name' })).toThrow(InvalidSkillError);
 			});
 
 			it('includes reason in error message', () => {
-				expect(() => registry.addSkill({ name: '', description: 'no name' })).toThrow(
+				expect(() => registry.add({ name: '', description: 'no name' })).toThrow(
 					'skill must have a valid name'
 				);
 			});
 
 			it('has correct error code', () => {
 				try {
-					registry.addSkill({ name: '', description: 'no name' });
+					registry.add({ name: '', description: 'no name' });
 				} catch (e) {
 					expect(e).toBeInstanceOf(InvalidSkillError);
 					expect((e as InvalidSkillError).code).toBe('INVALID_SKILL');
@@ -362,21 +360,21 @@ describe('SkillRegistry', () => {
 
 		describe('_createDuplicateError', () => {
 			it('throws DuplicateSkillError when adding duplicate skill', () => {
-				registry.addSkill(makeSkill('dup-skill'));
-				expect(() => registry.addSkill(makeSkill('dup-skill'))).toThrow(DuplicateSkillError);
+				registry.add(makeSkill('dup-skill'));
+				expect(() => registry.add(makeSkill('dup-skill'))).toThrow(DuplicateSkillError);
 			});
 
 			it('includes skill name in error message', () => {
-				registry.addSkill(makeSkill('dup-skill'));
-				expect(() => registry.addSkill(makeSkill('dup-skill'))).toThrow(
+				registry.add(makeSkill('dup-skill'));
+				expect(() => registry.add(makeSkill('dup-skill'))).toThrow(
 					"skill 'dup-skill' already exists"
 				);
 			});
 
 			it('has correct error code', () => {
-				registry.addSkill(makeSkill('dup-skill'));
+				registry.add(makeSkill('dup-skill'));
 				try {
-					registry.addSkill(makeSkill('dup-skill'));
+					registry.add(makeSkill('dup-skill'));
 				} catch (e) {
 					expect(e).toBeInstanceOf(DuplicateSkillError);
 					expect((e as DuplicateSkillError).code).toBe('DUPLICATE_SKILL');
@@ -390,19 +388,15 @@ describe('SkillRegistry', () => {
 			});
 
 			it('includes skill name and action in error message', () => {
-				expect(() => registry.remove('ghost')).toThrow(
-					"Skill 'ghost' not found, cannot remove"
-				);
+				expect(() => registry.remove('ghost')).toThrow("Skill 'ghost' not found, cannot remove");
 			});
 
 			it('throws SkillNotFoundError when updating non-existent skill', () => {
-				expect(() => registry.updateSkill('ghost', { description: 'new' })).toThrow(
-					SkillNotFoundError
-				);
+				expect(() => registry.update('ghost', { description: 'new' })).toThrow(SkillNotFoundError);
 			});
 
 			it('includes action in update error message', () => {
-				expect(() => registry.updateSkill('ghost', { description: 'new' })).toThrow(
+				expect(() => registry.update('ghost', { description: 'new' })).toThrow(
 					"Skill 'ghost' not found, cannot update"
 				);
 			});
@@ -418,98 +412,96 @@ describe('SkillRegistry', () => {
 		});
 	});
 
-	// ==================== Backward-Compatible Aliases ====================
-	describe('Backward-Compatible Aliases', () => {
+	describe('Canonical CRUD operations', () => {
 		beforeEach(() => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 		});
 
-		describe('addSkill()', () => {
+		describe('add()', () => {
 			it('adds a skill to the registry', () => {
-				const skill = makeSkill('alias-add');
-				registry.addSkill(skill);
-				expect(registry.has('alias-add')).toBe(true);
+				const skill = makeSkill('added');
+				registry.add(skill);
+				expect(registry.has('added')).toBe(true);
 			});
 
 			it('delegates to add()', () => {
 				const spy = vi.spyOn(registry, 'add');
 				const skill = makeSkill('spied');
-				registry.addSkill(skill);
+				registry.add(skill);
 				expect(spy).toHaveBeenCalledWith(skill);
 			});
 		});
 
-
-		describe('updateSkill()', () => {
+		describe('update()', () => {
 			it('updates a skill in the registry', () => {
-				registry.addSkill(makeSkill('to-update'));
-				registry.updateSkill('to-update', { description: 'Updated' });
+				registry.add(makeSkill('to-update'));
+				registry.update('to-update', { description: 'Updated' });
 				expect(registry.get('to-update')?.description).toBe('Updated');
 			});
 
 			it('delegates to update()', () => {
-				registry.addSkill(makeSkill('to-update'));
+				registry.add(makeSkill('to-update'));
 				const spy = vi.spyOn(registry, 'update');
-				registry.updateSkill('to-update', { description: 'Updated' });
+				registry.update('to-update', { description: 'Updated' });
 				expect(spy).toHaveBeenCalledWith('to-update', { description: 'Updated' });
 			});
 		});
 
-		describe('hasSkill()', () => {
+		describe('has()', () => {
 			it('returns true for existing skill', () => {
-				registry.addSkill(makeSkill('exists'));
-				expect(registry.hasSkill('exists')).toBe(true);
+				registry.add(makeSkill('exists'));
+				expect(registry.has('exists')).toBe(true);
 			});
 
 			it('returns false for non-existent skill', () => {
-				expect(registry.hasSkill('nope')).toBe(false);
+				expect(registry.has('nope')).toBe(false);
 			});
 
 			it('delegates to has()', () => {
 				const spy = vi.spyOn(registry, 'has');
-				registry.hasSkill('check');
+				registry.has('check');
 				expect(spy).toHaveBeenCalledWith('check');
 			});
 		});
 
-		describe('getSkill()', () => {
+		describe('get()', () => {
 			it('returns skill by name', () => {
 				const skill = makeSkill('get-me');
-				registry.addSkill(skill);
-				expect(registry.getSkill('get-me')).toEqual(skill);
+				registry.add(skill);
+				expect(registry.get('get-me')).toEqual(skill);
 			});
 
 			it('returns undefined for non-existent skill', () => {
-				expect(registry.getSkill('missing')).toBeUndefined();
+				expect(registry.get('missing')).toBeUndefined();
 			});
 
 			it('delegates to get()', () => {
 				const spy = vi.spyOn(registry, 'get');
-				registry.getSkill('delegated');
+				registry.get('delegated');
 				expect(spy).toHaveBeenCalledWith('delegated');
 			});
 		});
 
-		describe('setSkills()', () => {
+		describe('setAll()', () => {
 			it('replaces all skills', () => {
-				registry.addSkill(makeSkill('old'));
-				registry.setSkills([makeSkill('new1'), makeSkill('new2')]);
-				expect(registry.hasSkill('old')).toBe(false);
-				expect(registry.hasSkill('new1')).toBe(true);
-				expect(registry.hasSkill('new2')).toBe(true);
+				registry.add(makeSkill('old'));
+				registry.setAll([makeSkill('new1'), makeSkill('new2')]);
+				expect(registry.has('old')).toBe(false);
+				expect(registry.has('new1')).toBe(true);
+				expect(registry.has('new2')).toBe(true);
 				expect(registry.size()).toBe(2);
 			});
 
 			it('with empty array clears registry', () => {
-				registry.addSkill(makeSkill('existing'));
-				registry.setSkills([]);
+				registry.add(makeSkill('existing'));
+				registry.setAll([]);
 				expect(registry.size()).toBe(0);
 			});
 
 			it('delegates to setAll()', () => {
 				const spy = vi.spyOn(registry, 'setAll');
 				const skills = [makeSkill('s1')];
-				registry.setSkills(skills);
+				registry.setAll(skills);
 				expect(spy).toHaveBeenCalledWith(skills);
 			});
 		});
@@ -531,8 +523,8 @@ describe('SkillRegistry', () => {
 			const count = await registry.discoverAsync();
 
 			expect(count).toBe(2);
-			expect(registry.hasSkill('skill-a')).toBe(true);
-			expect(registry.hasSkill('skill-b')).toBe(true);
+			expect(registry.has('skill-a')).toBe(true);
+			expect(registry.has('skill-b')).toBe(true);
 		});
 
 		it('discovers .yml skill files', async () => {
@@ -542,7 +534,7 @@ describe('SkillRegistry', () => {
 			const count = await registry.discoverAsync();
 
 			expect(count).toBe(1);
-			expect(registry.hasSkill('yml-skill')).toBe(true);
+			expect(registry.has('yml-skill')).toBe(true);
 		});
 
 		it('discovers .yaml skill files', async () => {
@@ -552,7 +544,7 @@ describe('SkillRegistry', () => {
 			const count = await registry.discoverAsync();
 
 			expect(count).toBe(1);
-			expect(registry.hasSkill('yaml-skill')).toBe(true);
+			expect(registry.has('yaml-skill')).toBe(true);
 		});
 
 		it('skips files with non-matching extensions', async () => {
@@ -573,7 +565,7 @@ describe('SkillRegistry', () => {
 			const count = await registry.discoverAsync();
 
 			expect(count).toBe(1);
-			expect(registry.hasSkill('real')).toBe(true);
+			expect(registry.has('real')).toBe(true);
 		});
 
 		it('handles non-existent directories gracefully', async () => {
@@ -645,7 +637,7 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			const skill = registry.getSkill('full-skill');
+			const skill = registry.get('full-skill');
 			expect(skill).toEqual({
 				name: 'full-skill',
 				description: 'Fully loaded',
@@ -662,7 +654,7 @@ describe('SkillRegistry', () => {
 			const count = await registry.discoverAsync();
 
 			expect(count).toBe(1);
-			expect(registry.hasSkill('good-skill')).toBe(true);
+			expect(registry.has('good-skill')).toBe(true);
 		});
 
 		it('skips .DS_Store during discovery', async () => {
@@ -695,7 +687,7 @@ describe('SkillRegistry', () => {
 	describe('Entity Name', () => {
 		it('uses "skill" as entity name (visible in error messages)', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
-			expect(() => registry.addSkill({ name: '', description: '' })).toThrow(
+			expect(() => registry.add({ name: '', description: '' })).toThrow(
 				'skill must have a valid name'
 			);
 		});
@@ -712,38 +704,38 @@ describe('SkillRegistry', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			registry.updateSkill('updatable', { description: 'Updated' });
-			expect(registry.getSkill('updatable')?.description).toBe('Updated');
+			registry.update('updatable', { description: 'Updated' });
+			expect(registry.get('updatable')?.description).toBe('Updated');
 		});
 
-		it('discovered skills can be removed via aliases', async () => {
+		it('discovered skills can be removed', async () => {
 			writeFileSync(join(tmpDir, 'removable.md'), makeSkillFile({ name: 'removable' }));
 
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
 			registry.remove('removable');
-			expect(registry.hasSkill('removable')).toBe(false);
+			expect(registry.has('removable')).toBe(false);
 		});
 
-		it('setSkills replaces discovered skills', async () => {
+		it('setAll replaces discovered skills', async () => {
 			writeFileSync(join(tmpDir, 'discovered.md'), makeSkillFile({ name: 'discovered' }));
 
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
 			await registry.discoverAsync();
 
-			registry.setSkills([makeSkill('manual1'), makeSkill('manual2')]);
-			expect(registry.hasSkill('discovered')).toBe(false);
-			expect(registry.hasSkill('manual1')).toBe(true);
-			expect(registry.hasSkill('manual2')).toBe(true);
+			registry.setAll([makeSkill('manual1'), makeSkill('manual2')]);
+			expect(registry.has('discovered')).toBe(false);
+			expect(registry.has('manual1')).toBe(true);
+			expect(registry.has('manual2')).toBe(true);
 		});
 
-		it('add then remove then add same skill via aliases', () => {
+		it('adds the same skill again after removal', () => {
 			registry = new SkillRegistry({ skillDirs: [tmpDir] });
-			registry.addSkill(makeSkill('recycle'));
+			registry.add(makeSkill('recycle'));
 			registry.remove('recycle');
-			registry.addSkill(makeSkill('recycle', { description: 'New' }));
-			expect(registry.getSkill('recycle')?.description).toBe('New');
+			registry.add(makeSkill('recycle', { description: 'New' }));
+			expect(registry.get('recycle')?.description).toBe('New');
 		});
 	});
 
@@ -751,9 +743,7 @@ describe('SkillRegistry', () => {
 	describe('Protected methods (via test subclass)', () => {
 		// Subclass to expose protected methods for direct testing
 		class TestableSkillRegistry extends SkillRegistry {
-			public testParseFrontmatter(
-				content: string
-			): Partial<Skill> & { _error?: string } {
+			public testParseFrontmatter(content: string): Partial<Skill> & { _error?: string } {
 				return this._parseFrontmatter(content);
 			}
 
@@ -766,9 +756,7 @@ describe('SkillRegistry', () => {
 			}
 
 			// Allow overriding _extractFrontmatter for catch block testing
-			public setExtractFrontmatter(
-				fn: (content: string) => Record<string, unknown> | null
-			): void {
+			public setExtractFrontmatter(fn: (content: string) => Record<string, unknown> | null): void {
 				this._extractFrontmatter = fn;
 			}
 		}
@@ -826,7 +814,10 @@ describe('SkillRegistry', () => {
 
 			it('returns _error when _extractFrontmatter result causes throw', () => {
 				// Use vi.spyOn to mock _extractFrontmatter returning a Proxy that throws
-				vi.spyOn(testable as unknown as TestableWithExtractFrontmatter, '_extractFrontmatter').mockReturnValue(
+				vi.spyOn(
+					testable as unknown as TestableWithExtractFrontmatter,
+					'_extractFrontmatter'
+				).mockReturnValue(
 					new Proxy(
 						{},
 						{
@@ -845,13 +836,16 @@ describe('SkillRegistry', () => {
 			});
 
 			it('returns _error with non-Error thrown value in catch', () => {
-				vi.spyOn(testable as unknown as TestableWithExtractFrontmatter, '_extractFrontmatter').mockReturnValue(
+				vi.spyOn(
+					testable as unknown as TestableWithExtractFrontmatter,
+					'_extractFrontmatter'
+				).mockReturnValue(
 					new Proxy(
 						{},
 						{
 							get(_target, prop) {
 								if (prop === 'name') {
-										throw { message: 'string error' };
+									throw { message: 'string error' };
 								}
 								return undefined;
 							},

@@ -18,13 +18,13 @@ graph/
 
 ## WHERE TO LOOK
 
-| Task | File |
-|------|------|
-| New kind | `Edge.ts` + emit arm in `EdgeEmitter` |
-| Mutate graph | `EdgeEmitter` → `EdgeStore.addEdge` |
-| Walk / frontier | `GraphView` |
-| Root distance | `GraphView.depthFromRoots` — ToT `depthCap` |
-| Retention prune | `EdgeStore.pruneSession` |
+| Task            | File                                        |
+| --------------- | ------------------------------------------- |
+| New kind        | `Edge.ts` + emit arm in `EdgeEmitter`       |
+| Mutate graph    | `EdgeEmitter` → `EdgeStore.addEdge`         |
+| Walk / frontier | `GraphView`                                 |
+| Root distance   | `GraphView.depthFromRoots` — ToT `depthCap` |
+| Retention prune | `EdgeStore.pruneSession`                    |
 
 ## EDGE KINDS (8)
 
@@ -40,7 +40,7 @@ Endpoints are `thought.id`, never `thought_number`.
 - Self-edge (`from === to`) → `InvalidEdgeError`.
 - Same `(from, to, kind)` in a session is silently deduped.
 - Session-scoped Maps. No cross-session edges. Query via `edgesForSession`.
-- Default session id is `GLOBAL_SESSION_ID` — never write `'__global__'`.
+- Every edge is scoped to an explicit named thought `SessionId`. There is no default graph session, and retired `__global__` is invalid.
 
 ## GRAPHVIEW
 

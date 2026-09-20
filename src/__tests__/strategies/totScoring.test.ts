@@ -17,10 +17,9 @@ type ThoughtWithSignals = ThoughtData & {
 	readonly confidence_signals?: ConfidenceSignals;
 };
 
-function makeThought(
-	overrides: Partial<ThoughtWithSignals> = {}
-): ThoughtWithSignals {
+function makeThought(overrides: Partial<ThoughtWithSignals> = {}): ThoughtWithSignals {
 	return {
+		session_id: SESSION,
 		thought: 't',
 		thought_number: 1,
 		total_thoughts: 1,
@@ -30,12 +29,7 @@ function makeThought(
 }
 
 let edgeCounter = 0;
-function addEdge(
-	store: EdgeStore,
-	from: string,
-	to: string,
-	kind: EdgeKind = 'sequence'
-): Edge {
+function addEdge(store: EdgeStore, from: string, to: string, kind: EdgeKind = 'sequence'): Edge {
 	const edge: Edge = {
 		id: `e${++edgeCounter}` as EdgeId,
 		from: asThoughtId(from),
@@ -68,7 +62,8 @@ describe('scoreThought', () => {
 					tool_observation: 0,
 					assumption: 0,
 					decomposition: 0,
-					backtrack: 0,				},
+					backtrack: 0,
+				},
 				has_hypothesis: false,
 				has_verification: false,
 				average_confidence: null,

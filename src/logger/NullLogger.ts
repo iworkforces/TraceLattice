@@ -38,7 +38,6 @@ import type { LogLevel, Logger, LoggerOptions } from './StructuredLogger.js';
  * logger.warn('Or this warning');
  * logger.error('Or even this error');
  *
- * // Methods exist for compatibility but have no effect
  * logger.setLevel('debug');
  * const level = logger.getLevel(); // Returns 'error' (default)
  * ```
@@ -49,7 +48,7 @@ export class NullLogger implements Logger {
 	 *
 	 * @remarks
 	 * Since all messages are discarded, the level setting has no practical
-	 * effect. This property exists only for interface compatibility.
+	 * effect. The value is retained to satisfy the logger contract.
 	 * @private
 	 */
 	private _level: LogLevel;
@@ -57,7 +56,7 @@ export class NullLogger implements Logger {
 	/**
 	 * Creates a new NullLogger instance.
 	 *
-	 * @param options - Configuration options (ignored, but accepted for interface compatibility)
+	 * @param options - Configuration options used to initialize the logger contract
 	 *
 	 * @example
 	 * ```typescript
@@ -79,7 +78,7 @@ export class NullLogger implements Logger {
 	/**
 	 * Log a debug message (no-op).
 	 *
-	 * This method exists for interface compatibility but does nothing.
+	 * This logger discards the message.
 	 *
 	 * @param _message - Ignored
 	 * @param _meta - Ignored
@@ -89,7 +88,7 @@ export class NullLogger implements Logger {
 	/**
 	 * Log an info message (no-op).
 	 *
-	 * This method exists for interface compatibility but does nothing.
+	 * This logger discards the message.
 	 *
 	 * @param _message - Ignored
 	 * @param _meta - Ignored
@@ -99,7 +98,7 @@ export class NullLogger implements Logger {
 	/**
 	 * Log a warning message (no-op).
 	 *
-	 * This method exists for interface compatibility but does nothing.
+	 * This logger discards the message.
 	 *
 	 * @param _message - Ignored
 	 * @param _meta - Ignored
@@ -109,7 +108,7 @@ export class NullLogger implements Logger {
 	/**
 	 * Log an error message (no-op).
 	 *
-	 * This method exists for interface compatibility but does nothing.
+	 * This logger discards the message.
 	 *
 	 * @param _message - Ignored
 	 * @param _meta - Ignored
@@ -119,8 +118,8 @@ export class NullLogger implements Logger {
 	/**
 	 * Sets the minimum log level (no-op).
 	 *
-	 * This method exists for interface compatibility but has no effect
-	 * since all messages are discarded anyway.
+	 * The level is retained for `getLevel` and child loggers, but does not
+	 * affect output because all messages are discarded.
 	 *
 	 * @param level - The new minimum log level (ignored)
 	 *
@@ -151,8 +150,7 @@ export class NullLogger implements Logger {
 	/**
 	 * Creates a child null logger (returns a new NullLogger).
 	 *
-	 * This method exists for interface compatibility. It returns a new
-	 * `NullLogger` instance (not a child with extended context) since
+	 * Returns a new `NullLogger` instance (not a child with extended context) since
 	 * context tracking is not applicable for a no-op logger.
 	 *
 	 * @param _context - Additional context (ignored)

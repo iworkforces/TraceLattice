@@ -4,9 +4,11 @@ export interface BattleScenario {
 	readonly caseId: string;
 	readonly category: Category;
 	readonly description: string;
-	run(): CaseScore;
+	run(): CaseScore | Promise<CaseScore>;
 }
 
-export function runScenarios(scenarios: readonly BattleScenario[]): readonly CaseScore[] {
-	return scenarios.map((scenario) => scenario.run());
+export async function runScenarios(
+	scenarios: readonly BattleScenario[]
+): Promise<readonly CaseScore[]> {
+	return Promise.all(scenarios.map((scenario) => scenario.run()));
 }

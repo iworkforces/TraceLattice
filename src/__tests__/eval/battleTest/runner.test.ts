@@ -100,7 +100,7 @@ function runWithFixture(
 }
 
 describe('runBattleTest', () => {
-	it('blocks the run when a synthetic category drop exceeds five points', () => {
+	it('blocks the run when a synthetic category drop exceeds five points', async () => {
 		// Given
 		const category: Category = 'adversarial-prompts';
 		const caseScore = createCaseScore({ category, score: 94, caseId: 'adversarial-drop' });
@@ -111,7 +111,7 @@ describe('runBattleTest', () => {
 		});
 
 		// When
-		const report = runWithFixture(baseline, [createScenario(caseScore)]);
+		const report = await runWithFixture(baseline, [createScenario(caseScore)]);
 
 		// Then
 		expect(report.overallStatus).toBe('blocked');
@@ -119,7 +119,7 @@ describe('runBattleTest', () => {
 		expect(report.categories.find((result) => result.category === category)?.drop).toBe(6);
 	});
 
-	it('blocks a critical failure even when the category average would pass', () => {
+	it('blocks a critical failure even when the category average would pass', async () => {
 		// Given
 		const category: Category = 'state-isolation-and-reset';
 		const caseScore = createCaseScore({
@@ -131,7 +131,7 @@ describe('runBattleTest', () => {
 		const baseline = createBaseline({ category, baselineAverage: 100 });
 
 		// When
-		const report = runWithFixture(baseline, [createScenario(caseScore)]);
+		const report = await runWithFixture(baseline, [createScenario(caseScore)]);
 
 		// Then
 		expect(report.overallStatus).toBe('blocked');
@@ -139,7 +139,7 @@ describe('runBattleTest', () => {
 		expect(report.criticalFailures).toEqual(['cross-session-leakage']);
 	});
 
-	it('downgrades an approved standard block without suppressing critical failures', () => {
+	it('downgrades an approved standard block without suppressing critical failures', async () => {
 		// Given
 		const category: Category = 'tool-recommendation-quality';
 		const standardDrop = createCaseScore({ category, score: 94, caseId: 'tool-drop' });
@@ -160,14 +160,14 @@ describe('runBattleTest', () => {
 			...override,
 			category: 'malformed-and-edge-inputs',
 		};
-		const standardReport = runWithFixture(
+		const standardReport = await runWithFixture(
 			createBaseline({ category, baselineAverage: 100 }),
 			[createScenario(standardDrop)],
 			[override]
 		);
 
 		// When
-		const criticalReport = runWithFixture(
+		const criticalReport = await runWithFixture(
 			createBaseline({ category: 'malformed-and-edge-inputs', baselineAverage: 100 }),
 			[createScenario(criticalFailure)],
 			[criticalOverride]
@@ -184,9 +184,9 @@ describe('runBattleTest', () => {
 		expect(criticalReport.criticalFailures).toEqual(['malformed-input-crash']);
 	});
 
-	it('passes the default scenario catalog against the seeded baseline', () => {
+	it('passes the default scenario catalog against the seeded baseline', async () => {
 		// Given / When
-		const report = runBattleTest({ runId: RUN_ID, runTimestamp: RUN_TIMESTAMP, now: NOW });
+		const report = await runBattleTest({ runId: RUN_ID, runTimestamp: RUN_TIMESTAMP, now: NOW });
 
 		// Then
 		expect(report.overallStatus).toBe('pass');

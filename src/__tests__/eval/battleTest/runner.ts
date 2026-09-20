@@ -26,12 +26,12 @@ export type RunBattleTestOptions = {
 	readonly now?: Date;
 };
 
-export function runBattleTest(options: RunBattleTestOptions = {}): BattleTestReport {
+export async function runBattleTest(options: RunBattleTestOptions = {}): Promise<BattleTestReport> {
 	const baseline = loadBaseline(options.baselinePath);
 	const overrides = loadOverrides(options.overridesPath);
 	const now = options.now ?? new Date();
 	const approvedOverrides = activeOverrides(overrides, now);
-	const scores = runScenarios(options.scenarios ?? BATTLE_SCENARIOS);
+	const scores = await runScenarios(options.scenarios ?? BATTLE_SCENARIOS);
 	const scoresByCategory = groupScoresByCategory(scores);
 
 	const categories = CATEGORY_NAMES.map((category) =>

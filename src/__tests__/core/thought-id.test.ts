@@ -7,13 +7,13 @@
  * - InputNormalizer preserves provided id
  * - Generated ids are unique across many normalizations
  * - Schema validates id field (accepts valid string, rejects empty)
- * - Backward compat: existing thought data without id field works unchanged
+ * - Thought data without an id receives one without changing other fields
  */
 
 import { describe, it, expect } from 'vitest';
 import { safeParse } from 'valibot';
 import { normalizeInput } from '../../core/InputNormalizer.js';
-import { asThoughtId } from '../../contracts/ids.js';
+import { asSessionId, asThoughtId } from '../../contracts/ids.js';
 import { SequentialThinkingSchema } from '../../schema.js';
 import type { ThoughtData } from '../../core/thought.js';
 
@@ -23,6 +23,7 @@ function baseInput(overrides?: Record<string, unknown>): Record<string, unknown>
 		thought_number: 1,
 		total_thoughts: 1,
 		next_thought_needed: false,
+		session_id: 'thought-id-test',
 		...overrides,
 	};
 }
@@ -35,17 +36,19 @@ describe('ThoughtData.id', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('thought-id-test'),
 				id: asThoughtId('01h2k3m400a1b2c3d4e5f6a7b8'),
 			};
 			expect(thought.id).toBe('01h2k3m400a1b2c3d4e5f6a7b8');
 		});
 
-		it('should allow ThoughtData without id field (backward compat)', () => {
+		it('should allow ThoughtData without an id field', () => {
 			const thought: ThoughtData = {
 				thought: 'Test',
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('thought-id-test'),
 			};
 			expect(thought.id).toBeUndefined();
 		});
@@ -114,8 +117,8 @@ describe('ThoughtData.id', () => {
 		});
 	});
 
-	describe('Backward compatibility', () => {
-		it('should normalize existing thought data without id field unchanged in other fields', () => {
+	describe('Generated identity', () => {
+		it('should normalize thought data without changing non-id fields', () => {
 			const input = baseInput({
 				thought: 'Original thought',
 				thought_number: 5,

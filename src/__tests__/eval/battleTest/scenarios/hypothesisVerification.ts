@@ -1,5 +1,5 @@
-import { ThoughtEvaluator } from '../../../../core/ThoughtEvaluator.js';
 import { createTestThought } from '../../../helpers/factories.js';
+import { createDisabledThoughtEvaluator } from '../../../helpers/evaluator.js';
 import { scoreChecks } from './helpers.js';
 import type { BattleScenario } from './types.js';
 
@@ -15,7 +15,7 @@ export const HYPOTHESIS_VERIFICATION_SCENARIOS = [
 				createTestThought({ thought_number: 1, thought_type: 'hypothesis', hypothesis_id: 'h1' }),
 				createTestThought({ thought_number: 2, thought_type: 'verification', hypothesis_id: 'h1' }),
 			];
-			const stats = new ThoughtEvaluator().computeReasoningStats(history, {});
+			const stats = createDisabledThoughtEvaluator().computeReasoningStats(history, {});
 			return scoreChecks({
 				caseId: 'hypothesis-verified-stats',
 				category,
@@ -38,7 +38,7 @@ export const HYPOTHESIS_VERIFICATION_SCENARIOS = [
 				createTestThought({ thought_number: 2, thought_type: 'regular' }),
 				createTestThought({ thought_number: 3, thought_type: 'verification', hypothesis_id: 'h2' }),
 			];
-			const signals = new ThoughtEvaluator().computePatternSignals(history, {});
+			const signals = createDisabledThoughtEvaluator().computePatternSignals(history, {});
 			return scoreChecks({
 				caseId: 'hypothesis-healthy-pattern',
 				category,
@@ -66,7 +66,7 @@ export const HYPOTHESIS_VERIFICATION_SCENARIOS = [
 				createTestThought({ thought_number: 3, thought_type: 'critique' }),
 				createTestThought({ thought_number: 4, thought_type: 'synthesis' }),
 			];
-			const signals = new ThoughtEvaluator().computePatternSignals(history, {});
+			const signals = createDisabledThoughtEvaluator().computePatternSignals(history, {});
 			return scoreChecks({
 				caseId: 'hypothesis-unverified-warning',
 				category,

@@ -1,9 +1,14 @@
-import { ThoughtEvaluator } from '../../../../core/ThoughtEvaluator.js';
+import { asSessionId } from '../../../../contracts/ids.js';
 import { createTestThought } from '../../../helpers/factories.js';
+import {
+	confidenceSignalContext,
+	createDisabledThoughtEvaluator,
+} from '../../../helpers/evaluator.js';
 import { scoreChecks } from './helpers.js';
 import type { BattleScenario } from './types.js';
 
 const category = 'long-horizon-tasks';
+const LONG_HORIZON_SESSION = asSessionId('long-horizon-session');
 
 export const LONG_HORIZON_SCENARIOS = [
 	{
@@ -13,12 +18,17 @@ export const LONG_HORIZON_SCENARIOS = [
 		run: () => {
 			const history = Array.from({ length: 6 }, (_, index) =>
 				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
 					thought_number: index + 1,
 					total_thoughts: 6,
 					confidence: 0.8,
 				})
 			);
-			const signals = new ThoughtEvaluator().computeConfidenceSignals(history, {});
+			const signals = createDisabledThoughtEvaluator().computeConfidenceSignals(
+				history,
+				{},
+				confidenceSignalContext(history, LONG_HORIZON_SESSION)
+			);
 			return scoreChecks({
 				caseId: 'long-horizon-six-step-chain',
 				category,
@@ -36,17 +46,41 @@ export const LONG_HORIZON_SCENARIOS = [
 		description: 'Branch count contributes to structural quality without losing chain statistics.',
 		run: () => {
 			const history = [
-				createTestThought({ thought_number: 1, total_thoughts: 4, confidence: 0.6 }),
-				createTestThought({ thought_number: 2, total_thoughts: 4, confidence: 0.7 }),
-				createTestThought({ thought_number: 3, total_thoughts: 4, confidence: 0.8 }),
-				createTestThought({ thought_number: 4, total_thoughts: 4, confidence: 0.9 }),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 1,
+					total_thoughts: 4,
+					confidence: 0.6,
+				}),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 2,
+					total_thoughts: 4,
+					confidence: 0.7,
+				}),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 3,
+					total_thoughts: 4,
+					confidence: 0.8,
+				}),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 4,
+					total_thoughts: 4,
+					confidence: 0.9,
+				}),
 			];
 			const branches = {
 				branchA: [
 					createTestThought({ thought_number: 5, total_thoughts: 5, branch_from_thought: 2 }),
 				],
 			};
-			const signals = new ThoughtEvaluator().computeConfidenceSignals(history, branches);
+			const signals = createDisabledThoughtEvaluator().computeConfidenceSignals(
+				history,
+				branches,
+				confidenceSignalContext(history, LONG_HORIZON_SESSION)
+			);
 			return scoreChecks({
 				caseId: 'long-horizon-branch-depth-efficiency',
 				category,
@@ -64,13 +98,36 @@ export const LONG_HORIZON_SCENARIOS = [
 		description: 'Reasoning stats retain revision and merge counts across an extended trace.',
 		run: () => {
 			const history = [
-				createTestThought({ thought_number: 1, total_thoughts: 5 }),
-				createTestThought({ thought_number: 2, total_thoughts: 5, is_revision: true }),
-				createTestThought({ thought_number: 3, total_thoughts: 5, merge_from_thoughts: [1, 2] }),
-				createTestThought({ thought_number: 4, total_thoughts: 5, branch_from_thought: 2 }),
-				createTestThought({ thought_number: 5, total_thoughts: 5 }),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 1,
+					total_thoughts: 5,
+				}),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 2,
+					total_thoughts: 5,
+					is_revision: true,
+				}),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 3,
+					total_thoughts: 5,
+					merge_from_thoughts: [1, 2],
+				}),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 4,
+					total_thoughts: 5,
+					branch_from_thought: 2,
+				}),
+				createTestThought({
+					session_id: LONG_HORIZON_SESSION,
+					thought_number: 5,
+					total_thoughts: 5,
+				}),
 			];
-			const stats = new ThoughtEvaluator().computeReasoningStats(history, {});
+			const stats = createDisabledThoughtEvaluator().computeReasoningStats(history, {});
 			return scoreChecks({
 				caseId: 'long-horizon-revision-and-merge-stats',
 				category,

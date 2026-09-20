@@ -3,8 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { SessionScopedPersistenceBackend } from '../../contracts/PersistenceBackend.js';
-import { supportsSessionScopedPersistence } from '../../contracts/PersistenceBackend.js';
+import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -30,12 +29,9 @@ const sessionA = asSessionId('native-session-A');
 const sessionB = asSessionId('native-session-B');
 const branchId = asBranchId('native-branch');
 let root: string;
-let backend: SessionScopedPersistenceBackend | undefined;
+let backend: PersistenceBackend | undefined;
 
-async function openBackend(
-	dbPath: string,
-	maxHistorySize = 10000
-): Promise<SessionScopedPersistenceBackend> {
+async function openBackend(dbPath: string, maxHistorySize = 10000): Promise<PersistenceBackend> {
 	const candidate = await createPersistenceBackend({
 		enabled: true,
 		backend: 'sqlite',
@@ -43,10 +39,6 @@ async function openBackend(
 	});
 	expect(candidate).not.toBeNull();
 	if (candidate === null) throw new TypeError('enabled SQLite factory returned null');
-	expect(supportsSessionScopedPersistence(candidate)).toBe(true);
-	if (!supportsSessionScopedPersistence(candidate)) {
-		throw new TypeError('SQLite backend lacks session-scoped persistence');
-	}
 	return candidate;
 }
 
@@ -96,17 +88,14 @@ function namespaceState(prefix: string, sessionId: SessionId): NamespaceState {
 	};
 }
 
-async function saveState(
-	candidate: SessionScopedPersistenceBackend,
-	state: NamespaceState
-): Promise<void> {
+async function saveState(candidate: PersistenceBackend, state: NamespaceState): Promise<void> {
 	await candidate.saveThoughtForSession(state.summary.sessionId, state.history);
 	await candidate.saveBranchForSession(state.summary.sessionId, branchId, [state.branch]);
 	await candidate.saveEdges(state.summary.sessionId, [state.edge]);
 	await candidate.saveSummaries(state.summary.sessionId, [state.summary]);
 }
 
-async function loadState(candidate: SessionScopedPersistenceBackend, sessionId: SessionId) {
+async function loadState(candidate: PersistenceBackend, sessionId: SessionId) {
 	return {
 		history: await candidate.loadHistoryForSession(sessionId),
 		branch: await candidate.loadBranchForSession(sessionId, branchId),
@@ -128,12 +117,12 @@ describe('native SQLite conformance', () => {
 
 	it('opens, writes, loads, and closes a healthy real file database', async () => {
 		const dbPath = join(root, 'history.db');
-		const thought = createTestThought({ id: 'native-lifecycle' });
+		const thought = createTestThought({ id: 'native-lifecycle', session_id: sessionA });
 		backend = await openBackend(dbPath);
 
 		expect(await backend.healthy()).toBe(true);
-		await backend.saveThought(thought);
-		expect(await backend.loadHistory()).toEqual([thought]);
+		await backend.saveThoughtForSession(sessionA, thought);
+		expect(await backend.loadHistoryForSession(sessionA)).toEqual([thought]);
 		await closeBackend();
 
 		expect((await stat(dbPath)).isFile()).toBe(true);

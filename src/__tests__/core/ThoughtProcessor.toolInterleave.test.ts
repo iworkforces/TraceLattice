@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { InMemorySuspensionStore } from '../../core/tools/InMemorySuspensionStore.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import { MockHistoryManager, createMockToolRegistry } from '../helpers/factories.js';
 import type { FeatureFlags } from '../../contracts/features.js';
 import { asSessionId, asThoughtId, type SuspensionToken } from '../../contracts/ids.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
 
 function makeFeatures(overrides: Partial<FeatureFlags> = {}): FeatureFlags {
 	return {
@@ -29,7 +29,7 @@ function makeProcessor(
 	const processor = new ThoughtProcessor(
 		history,
 		new ThoughtFormatter(),
-		new ThoughtEvaluator(),
+		createDisabledThoughtEvaluator(),
 		undefined,
 		new SequentialStrategy(),
 		undefined,
@@ -59,6 +59,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 3,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: { q: 'hello' },
@@ -81,6 +82,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 2,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -97,11 +99,12 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
 		});
-		const items = history.getHistory();
+		const items = history.getHistory(asSessionId('tool-interleave'));
 		expect(items).toHaveLength(1);
 		expect(items[0]!.thought_type).toBe('tool_call');
 		expect(items[0]!.tool_name).toBe('search');
@@ -114,6 +117,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 2,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -125,6 +129,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 2,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
@@ -135,7 +140,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 		expect(payload.confidence_signals).toBeDefined();
 		expect(payload.reasoning_stats).toBeDefined();
 		// Observation persisted to history.
-		const items = history.getHistory();
+		const items = history.getHistory(asSessionId('tool-interleave'));
 		expect(items).toHaveLength(2);
 		expect(items[1]!.thought_type).toBe('tool_observation');
 	});
@@ -147,6 +152,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 7,
 			total_thoughts: 8,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -158,11 +164,12 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 8,
 			total_thoughts: 8,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
 
-		const obs = history.getHistory()[1];
+		const obs = history.getHistory(asSessionId('tool-interleave'))[1];
 		expect('_resumedFrom' in (obs ?? {})).toBe(false);
 	});
 
@@ -173,6 +180,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: 'definitely-not-a-real-token' as SuspensionToken,
 		});
@@ -185,7 +193,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 	it('tool_observation expires at equality, removes the token, and then reports it missing', async () => {
 		vi.useFakeTimers({ now: new Date('2026-09-15T00:00:00.000Z') });
 		const expired = store.suspend({
-			sessionId: asSessionId('__global__'),
+			sessionId: asSessionId('tool-interleave'),
 			toolCallThoughtNumber: 1,
 			toolCallThoughtId: asThoughtId('expired-call'),
 			toolName: 'search',
@@ -200,13 +208,14 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 2,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: expired.token,
 		});
 		expect(result.isError).toBe(true);
 		const payload = JSON.parse(result.content[0]!.text);
 		expect(payload.error).toMatch(/Suspension token expired/);
-		expect(history.getHistory()).toHaveLength(0);
+		expect(history.getHistory(asSessionId('tool-interleave'))).toHaveLength(0);
 		expect(store.size()).toBe(0);
 
 		const next = await processor.process({
@@ -214,6 +223,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 2,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: expired.token,
 		});
@@ -227,6 +237,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 2,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -243,6 +254,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 2,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
@@ -250,7 +262,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 		expect(failed.isError).toBe(true);
 		expect(JSON.parse(failed.content[0]!.text).error).toBe(sentinel.message);
 		expect(store.peek(token)).not.toBeNull();
-		expect(history.getHistory()).toHaveLength(1);
+		expect(history.getHistory(asSessionId('tool-interleave'))).toHaveLength(1);
 
 		vi.mocked(history.addThought).mockImplementation(originalAddThought);
 		const retried = await processor.process({
@@ -258,12 +270,15 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 2,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
 		expect(retried.isError).toBeUndefined();
 		expect(
-			history.getHistory().filter((thought) => thought.thought_type === 'tool_observation')
+			history
+				.getHistory(asSessionId('tool-interleave'))
+				.filter((thought) => thought.thought_type === 'tool_observation')
 		).toHaveLength(1);
 		expect(store.size()).toBe(0);
 	});
@@ -275,6 +290,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 2,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -286,6 +302,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 				thought_number: 2,
 				total_thoughts: 2,
 				next_thought_needed: false,
+				session_id: asSessionId('tool-interleave'),
 				thought_type: 'tool_observation',
 				continuation_token: token,
 			});
@@ -296,7 +313,9 @@ describe('ThoughtProcessor — tool interleave', () => {
 		expect(results.filter((result) => result.isError !== true)).toHaveLength(1);
 		expect(payloads.filter((payload) => payload.code === 'SUSPENSION_NOT_FOUND')).toHaveLength(1);
 		expect(
-			history.getHistory().filter((thought) => thought.thought_type === 'tool_observation')
+			history
+				.getHistory(asSessionId('tool-interleave'))
+				.filter((thought) => thought.thought_type === 'tool_observation')
 		).toHaveLength(1);
 		expect(store.size()).toBe(0);
 	});
@@ -308,6 +327,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 2,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -323,13 +343,14 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 2,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
 
 		expect(failed.isError).toBe(true);
 		expect(JSON.parse(failed.content[0]!.text).error).toBe(sentinel.message);
-		expect(history.getHistory()).toHaveLength(2);
+		expect(history.getHistory(asSessionId('tool-interleave'))).toHaveLength(2);
 		expect(store.size()).toBe(0);
 
 		const replay = await processor.process({
@@ -337,11 +358,12 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 2,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
 		expect(JSON.parse(replay.content[0]!.text).code).toBe('SUSPENSION_NOT_FOUND');
-		expect(history.getHistory()).toHaveLength(2);
+		expect(history.getHistory(asSessionId('tool-interleave'))).toHaveLength(2);
 	});
 
 	it('tool_call suspend single-uses the token (resume after consume returns NotFound)', async () => {
@@ -351,6 +373,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 1,
 			total_thoughts: 3,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -363,6 +386,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 2,
 			total_thoughts: 3,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
@@ -374,6 +398,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 			thought_number: 3,
 			total_thoughts: 3,
 			next_thought_needed: false,
+			session_id: asSessionId('tool-interleave'),
 			thought_type: 'tool_observation',
 			continuation_token: token,
 		});
@@ -392,6 +417,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 				thought_number: 1,
 				total_thoughts: 4,
 				next_thought_needed: true,
+				session_id: asSessionId('tool-interleave-cycle'),
 				thought_type: 'tool_call',
 				tool_name: 'search',
 				tool_arguments: { q: 'first' },
@@ -404,6 +430,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 				thought_number: 2,
 				total_thoughts: 4,
 				next_thought_needed: true,
+				session_id: asSessionId('tool-interleave-cycle'),
 				thought_type: 'tool_observation',
 				continuation_token: token1,
 			});
@@ -415,6 +442,7 @@ describe('ThoughtProcessor — tool interleave', () => {
 				thought_number: 3,
 				total_thoughts: 4,
 				next_thought_needed: true,
+				session_id: asSessionId('tool-interleave-cycle'),
 				thought_type: 'tool_call',
 				tool_name: 'fetch',
 				tool_arguments: { url: 'http://x' },
@@ -428,13 +456,14 @@ describe('ThoughtProcessor — tool interleave', () => {
 				thought_number: 4,
 				total_thoughts: 4,
 				next_thought_needed: false,
+				session_id: asSessionId('tool-interleave-cycle'),
 				thought_type: 'tool_observation',
 				continuation_token: token2,
 			});
 			expect(obs2.isError).toBeFalsy();
 
 			// Verify all 4 thoughts persisted in correct order with correct types
-			const items = history.getHistory();
+			const items = history.getHistory(asSessionId('tool-interleave-cycle'));
 			expect(items).toHaveLength(4);
 			expect(items.map((t) => t.thought_type)).toEqual([
 				'tool_call',

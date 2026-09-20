@@ -3,7 +3,10 @@ import { ThoughtFormatter } from '../core/ThoughtFormatter.js';
 import type { ThoughtData } from '../core/thought.js';
 import type { StepRecommendation } from '../core/step.js';
 
-import { asBranchId } from '../contracts/ids.js';
+import { asBranchId, asSessionId } from '../contracts/ids.js';
+
+const FORMATTER_SESSION = asSessionId('formatter-session');
+
 describe('ThoughtFormatter', () => {
 	let formatter: ThoughtFormatter;
 
@@ -15,6 +18,7 @@ describe('ThoughtFormatter', () => {
 		describe('basic thoughts', () => {
 			it('should format a basic thought with number and total', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'I need to analyze the data structure',
 					thought_number: 1,
 					total_thoughts: 3,
@@ -29,6 +33,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should format thought with correct numbering', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Continuing analysis',
 					thought_number: 2,
 					total_thoughts: 5,
@@ -42,6 +47,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should format the last thought', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Final conclusion',
 					thought_number: 3,
 					total_thoughts: 3,
@@ -55,6 +61,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should include thought icon for regular thoughts', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Regular thought',
 					thought_number: 1,
 					total_thoughts: 1,
@@ -70,6 +77,7 @@ describe('ThoughtFormatter', () => {
 		describe('revision thoughts', () => {
 			it('should format a revision thought with revision icon', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'I need to revise my earlier analysis',
 					thought_number: 3,
 					total_thoughts: 5,
@@ -88,6 +96,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show which thought is being revised', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Correcting previous assessment',
 					thought_number: 4,
 					total_thoughts: 6,
@@ -104,6 +113,7 @@ describe('ThoughtFormatter', () => {
 		describe('branch thoughts', () => {
 			it('should format a branch thought with branch icon', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Exploring an alternative approach',
 					thought_number: 3,
 					total_thoughts: 5,
@@ -121,6 +131,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show branch origin thought number', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Another branch',
 					thought_number: 5,
 					total_thoughts: 10,
@@ -136,6 +147,7 @@ describe('ThoughtFormatter', () => {
 		describe('with step recommendations', () => {
 			it('should include recommendation when current_step is present', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'I need to search the codebase',
 					thought_number: 1,
 					total_thoughts: 3,
@@ -162,6 +174,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should format thought without recommendation when no current_step', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Just thinking',
 					thought_number: 1,
 					total_thoughts: 1,
@@ -176,6 +189,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should add recommendation on a new line', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Analyzing code',
 					thought_number: 1,
 					total_thoughts: 2,
@@ -205,6 +219,7 @@ describe('ThoughtFormatter', () => {
 		describe('edge cases', () => {
 			it('should handle empty thought string', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: '',
 					thought_number: 1,
 					total_thoughts: 1,
@@ -220,6 +235,7 @@ describe('ThoughtFormatter', () => {
 			it('should handle very long thought content', () => {
 				const longContent = 'A'.repeat(10000);
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: longContent,
 					thought_number: 1,
 					total_thoughts: 1,
@@ -232,6 +248,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should handle special characters in thought', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Test with <html> & "quotes" and \'single quotes\' and `backticks`',
 					thought_number: 1,
 					total_thoughts: 1,
@@ -246,6 +263,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should handle unicode characters in thought', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: '考えてみましょう 🤔 → análisis',
 					thought_number: 1,
 					total_thoughts: 1,
@@ -259,6 +277,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should handle newlines in thought content', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Line 1\nLine 2\nLine 3',
 					thought_number: 1,
 					total_thoughts: 1,
@@ -271,6 +290,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should handle thought_number larger than total_thoughts', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Extra thought beyond estimate',
 					thought_number: 7,
 					total_thoughts: 5,
@@ -284,6 +304,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should prioritize revision over branch when both are set', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Both revision and branch flags',
 					thought_number: 3,
 					total_thoughts: 5,
@@ -303,6 +324,7 @@ describe('ThoughtFormatter', () => {
 		describe('thought type icons', () => {
 			it('should show hypothesis icon and label for thought_type hypothesis', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'The performance issue is likely in the DB layer',
 					thought_number: 2,
 					total_thoughts: 5,
@@ -317,6 +339,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show verification icon and label for thought_type verification', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Testing the DB hypothesis against evidence',
 					thought_number: 3,
 					total_thoughts: 5,
@@ -331,6 +354,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show critique icon and label for thought_type critique', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'My reasoning has a logical gap',
 					thought_number: 4,
 					total_thoughts: 6,
@@ -345,6 +369,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show synthesis icon and label for thought_type synthesis', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Combining findings from both branches',
 					thought_number: 5,
 					total_thoughts: 6,
@@ -359,6 +384,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show meta icon and label for thought_type meta', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'I notice I am over-exploring branches',
 					thought_number: 6,
 					total_thoughts: 8,
@@ -373,6 +399,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show default thought icon for thought_type regular', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'A regular analytical step',
 					thought_number: 1,
 					total_thoughts: 3,
@@ -387,6 +414,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should show default thought icon when thought_type is undefined', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'No thought type specified',
 					thought_number: 1,
 					total_thoughts: 2,
@@ -399,6 +427,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should prioritize is_revision over thought_type', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Revision wins over hypothesis',
 					thought_number: 3,
 					total_thoughts: 5,
@@ -419,6 +448,7 @@ describe('ThoughtFormatter', () => {
 		describe('meta observation', () => {
 			it('should include meta_observation text when present', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Analyzing the code structure',
 					thought_number: 2,
 					total_thoughts: 4,
@@ -433,6 +463,7 @@ describe('ThoughtFormatter', () => {
 
 			it('should not add meta_observation line when not present', () => {
 				const data: ThoughtData = {
+					session_id: FORMATTER_SESSION,
 					thought: 'Simple thought',
 					thought_number: 1,
 					total_thoughts: 1,

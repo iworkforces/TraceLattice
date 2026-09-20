@@ -38,6 +38,6 @@ YAML or JSON. All fields optional. Extra keys kept (`looseObject`).
 ## NOTES
 
 - CLI does **not** parse config args. Env + files only.
-- Env overrides use `TRACELATTICE_*` (and a few unprefixed aliases like `SKILL_DIRS` / `TOOL_DIRS`).
+- Env overrides use only `TRACELATTICE_*`. `TRACELATTICE_CONFIG` selects an explicit file.
 - `src/types/server-config.ts` is a **runtime** tools/skills bag — not this loader, not `ServerConfig`.
 - Do not add a re-export shim in this directory.

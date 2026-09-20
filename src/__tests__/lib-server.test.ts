@@ -10,6 +10,7 @@ import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { SkillRegistry } from '../registry/SkillRegistry.js';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
 import { SessionLifecycleCoordinator } from '../core/SessionLifecycleCoordinator.js';
+import { asSessionId } from '../contracts/ids.js';
 
 function createMockContainer() {
 	const container = new Container();
@@ -30,7 +31,6 @@ function createMockContainer() {
 		getBranches: vi.fn().mockReturnValue({}),
 		getBranchIds: vi.fn().mockReturnValue([]),
 		registerBranch: vi.fn(),
-		clear: vi.fn(),
 		resetSession: vi.fn().mockResolvedValue(undefined),
 		resetAll: vi.fn().mockResolvedValue(undefined),
 		getAvailableMcpTools: vi.fn().mockReturnValue([]),
@@ -61,8 +61,8 @@ function createMockContainer() {
 	const config = new ServerConfig({ maxHistorySize: 100 });
 
 	const mockToolRegistry = {
-		addTool: vi.fn(),
-		getTool: vi.fn(),
+		add: vi.fn(),
+		get: vi.fn(),
 		discoverAsync: vi.fn().mockResolvedValue(0),
 		refreshAsync: vi.fn().mockResolvedValue(0),
 	};
@@ -119,7 +119,7 @@ describe('ToolAwareSequentialThinkingServer', () => {
 		});
 
 		it('should register sequential thinking tool', () => {
-			expect(mocks.mockToolRegistry.addTool).toHaveBeenCalled();
+			expect(mocks.mockToolRegistry.add).toHaveBeenCalled();
 		});
 
 		it('should bind history shutdown to one server-owned callback', () => {
@@ -166,6 +166,7 @@ describe('ToolAwareSequentialThinkingServer', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: 'public-session',
 			};
 
 			const result = await server.processThought(input);
@@ -209,10 +210,19 @@ describe('ToolAwareSequentialThinkingServer', () => {
 	});
 
 	describe('getBranches', () => {
-		it('should return branches from history manager', () => {
+		it('returns branches for the explicitly validated session', () => {
 			mocks.mockHistoryManager.getBranches.mockReturnValue({ 'branch-1': [] });
-			const branches = server.getBranches();
+			const branches = server.getBranches('branch-session');
 			expect(branches).toEqual({ 'branch-1': [] });
+			expect(mocks.mockHistoryManager.getBranches).toHaveBeenCalledWith(
+				asSessionId('branch-session')
+			);
+		});
+
+		it('rejects omitted and retired global session identities', () => {
+			expect(() => Reflect.apply(server.getBranches, server, [])).toThrow(/session_id/);
+			expect(() => server.getBranches('__global__')).toThrow(/reserved value '__global__'/);
+			expect(mocks.mockHistoryManager.getBranches).not.toHaveBeenCalled();
 		});
 	});
 
@@ -293,7 +303,7 @@ describe('ToolAwareSequentialThinkingServer', () => {
 				// Then
 				expect(settled).toBe(false);
 				skillRefresh.resolve(7);
-					expect(await outcome).toEqual({ kind: 'rejected', error: failure });
+				expect(await outcome).toEqual({ kind: 'rejected', error: failure });
 			} finally {
 				toolRefresh.resolve(0);
 				skillRefresh.resolve(7);
@@ -327,10 +337,10 @@ describe('ToolAwareSequentialThinkingServer', () => {
 		});
 	});
 
-	describe('clear', () => {
-		it('should clear history', () => {
-			server.clear();
-			expect(mocks.mockHistoryManager.clear).toHaveBeenCalled();
+	describe('resetAll', () => {
+		it('should reset all state awaitably', async () => {
+			await server.resetAll();
+			expect(mocks.mockThoughtProcessor.resetAll).toHaveBeenCalled();
 		});
 	});
 

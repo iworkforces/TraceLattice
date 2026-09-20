@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionScopedPersistenceBackend } from '../../contracts/PersistenceBackend.js';
+import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -37,7 +37,7 @@ function deferred(): {
 	return { promise: result.promise, resolve: result.resolve };
 }
 
-class ControlledPersistence implements SessionScopedPersistenceBackend {
+class ControlledPersistence implements PersistenceBackend {
 	readonly events: string[] = [];
 	readonly histories = new Map<SessionId, ThoughtData[]>();
 	readonly branches = new Map<SessionId, Map<BranchId, ThoughtData[]>>();
@@ -47,10 +47,6 @@ class ControlledPersistence implements SessionScopedPersistenceBackend {
 	blockClearA: Promise<void> | undefined;
 	blockClearAll: Promise<void> | undefined;
 	failClearA = false;
-
-	async saveThought(thought: ThoughtData): Promise<void> {
-		await this.saveThoughtForSession(asSessionId(thought.session_id ?? '__global__'), thought);
-	}
 
 	async saveThoughtForSession(sessionId: SessionId, thought: ThoughtData): Promise<void> {
 		this.events.push(`save:start:${sessionId}:${thought.thought}`);
@@ -65,16 +61,8 @@ class ControlledPersistence implements SessionScopedPersistenceBackend {
 		this.events.push(`save:end:${sessionId}:${thought.thought}`);
 	}
 
-	async loadHistory(): Promise<ThoughtData[]> {
-		return this.loadHistoryForSession(asSessionId('__global__'));
-	}
-
 	async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {
 		return structuredClone(this.histories.get(sessionId) ?? []);
-	}
-
-	async saveBranch(branchId: BranchId, thoughts: ThoughtData[]): Promise<void> {
-		await this.saveBranchForSession(asSessionId('__global__'), branchId, thoughts);
 	}
 
 	async saveBranchForSession(
@@ -87,18 +75,10 @@ class ControlledPersistence implements SessionScopedPersistenceBackend {
 		this.branches.set(sessionId, sessions);
 	}
 
-	async deleteBranch(branchId: BranchId): Promise<void> {
-		await this.deleteBranchForSession(asSessionId('__global__'), branchId);
-	}
-
 	async deleteBranchForSession(sessionId: SessionId, branchId: BranchId): Promise<void> {
 		const branches = this.branches.get(sessionId);
 		branches?.delete(branchId);
 		if (branches?.size === 0) this.branches.delete(sessionId);
-	}
-
-	async loadBranch(branchId: BranchId): Promise<ThoughtData[] | undefined> {
-		return this.loadBranchForSession(asSessionId('__global__'), branchId);
 	}
 
 	async loadBranchForSession(
@@ -109,10 +89,6 @@ class ControlledPersistence implements SessionScopedPersistenceBackend {
 		return branch === undefined ? undefined : structuredClone(branch);
 	}
 
-	async listBranches(): Promise<BranchId[]> {
-		return this.listBranchesForSession(asSessionId('__global__'));
-	}
-
 	async listBranchesForSession(sessionId: SessionId): Promise<BranchId[]> {
 		return Array.from(this.branches.get(sessionId)?.keys() ?? []);
 	}
@@ -121,7 +97,7 @@ class ControlledPersistence implements SessionScopedPersistenceBackend {
 		return Array.from(new Set([...this.histories.keys(), ...this.branches.keys()]));
 	}
 
-	async clear(): Promise<void> {
+	async clearAll(): Promise<void> {
 		this.events.push('clear:all');
 		if (this.blockClearAll !== undefined) await this.blockClearAll;
 		this.histories.clear();
@@ -150,16 +126,12 @@ class ControlledPersistence implements SessionScopedPersistenceBackend {
 
 	async close(): Promise<void> {}
 
-	async saveEdges(sessionId: SessionId): Promise<void> {
-		this.edges.set(sessionId, []);
+	async saveEdges(sessionId: SessionId, edges: readonly Edge[]): Promise<void> {
+		this.edges.set(sessionId, structuredClone(edges));
 	}
 
-	async loadEdges(): Promise<[]> {
-		return [];
-	}
-
-	async listEdgeSessions(): Promise<SessionId[]> {
-		return Array.from(this.edges.keys());
+	async loadEdges(sessionId: SessionId): Promise<Edge[]> {
+		return structuredClone([...(this.edges.get(sessionId) ?? [])]);
 	}
 
 	async saveSummaries(sessionId: SessionId, summaries: readonly Summary[]): Promise<void> {
@@ -270,7 +242,6 @@ describe('ordered scoped session reset', () => {
 		});
 		outcomeRecorder.recordVerification({
 			thoughtId: asThoughtId('invalid-a'),
-			thoughtNumber: 1,
 			sessionId: SESSION_A,
 			predicted: 0.7,
 			actual: 1,
@@ -331,7 +302,6 @@ describe('ordered scoped session reset', () => {
 		});
 		outcomeRecorder.recordVerification({
 			thoughtId: asThoughtId('old-a'),
-			thoughtNumber: 1,
 			sessionId: SESSION_A,
 			predicted: 0.8,
 			actual: 1,
@@ -427,7 +397,6 @@ describe('ordered scoped session reset', () => {
 		});
 		outcomeRecorder.recordVerification({
 			thoughtId: asThoughtId('a-old'),
-			thoughtNumber: 1,
 			sessionId: SESSION_A,
 			predicted: 0.99,
 			actual: 0,
@@ -436,7 +405,6 @@ describe('ordered scoped session reset', () => {
 		for (let index = 1; index < 10; index++) {
 			outcomeRecorder.recordVerification({
 				thoughtId: asThoughtId(`a-old-${index}`),
-				thoughtNumber: index + 1,
 				sessionId: SESSION_A,
 				predicted: 0.99,
 				actual: 0,

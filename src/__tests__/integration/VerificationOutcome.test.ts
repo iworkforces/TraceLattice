@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import * as v from 'valibot';
 
 import type { FeatureFlags } from '../../contracts/features.js';
-import { asBranchId, asSessionId, GLOBAL_SESSION_ID } from '../../contracts/ids.js';
+import { asBranchId, asSessionId } from '../../contracts/ids.js';
 import { createServer } from '../../lib.js';
 import { SequentialThinkingSchema, SEQUENTIAL_THINKING_TOOL } from '../../schema.js';
 import { ServerConfig } from '../../ServerConfig.js';
@@ -28,13 +28,19 @@ const BASE_FEATURES: FeatureFlags = {
 	newThoughtTypes: true,
 	outcomeRecording: true,
 };
+const DEFAULT_SESSION_ID = asSessionId('verification-outcome');
 
-function input(thought: string, thoughtNumber: number, overrides: Partial<PublicInput> = {}): PublicInput {
+function input(
+	thought: string,
+	thoughtNumber: number,
+	overrides: Partial<PublicInput> = {}
+): PublicInput {
 	return {
 		thought,
 		thought_number: thoughtNumber,
 		total_thoughts: 20,
 		next_thought_needed: thoughtNumber < 20,
+		session_id: DEFAULT_SESSION_ID,
 		...overrides,
 	};
 }
@@ -60,13 +66,19 @@ async function configuredServer(
 describe('explicit verification outcomes', () => {
 	it('accepts exact public 0/1 labels and records the stable target snapshot', async () => {
 		const server = await configuredServer();
+		const sessionId = asSessionId('exact-labels');
 		try {
-			await server.processThought(input('first prediction', 1, { confidence: 0.8 }));
-			await server.processThought(input('second prediction', 2, { confidence: 0.3 }));
-			const targets = server.history.getHistory();
+			await server.processThought(
+				input('first prediction', 1, { confidence: 0.8, session_id: sessionId })
+			);
+			await server.processThought(
+				input('second prediction', 2, { confidence: 0.3, session_id: sessionId })
+			);
+			const targets = server.history.getHistory(sessionId);
 
 			const zero = await server.processThought(
 				input('first was wrong', 3, {
+					session_id: sessionId,
 					thought_type: 'verification',
 					verification_target: 1,
 					verification_result: 0,
@@ -74,6 +86,7 @@ describe('explicit verification outcomes', () => {
 			);
 			const one = await server.processThought(
 				input('second was correct', 4, {
+					session_id: sessionId,
 					thought_type: 'verification',
 					verification_target: 2,
 					verification_result: 1,
@@ -82,22 +95,23 @@ describe('explicit verification outcomes', () => {
 
 			expect(zero.isError).toBeUndefined();
 			expect(one.isError).toBeUndefined();
-			expect(server.getContainer().resolve('outcomeRecorder').getOutcomes(GLOBAL_SESSION_ID)).toEqual([
+			expect(server.getContainer().resolve('outcomeRecorder').getOutcomes(sessionId)).toEqual([
 				expect.objectContaining({
 					thoughtId: targets[0]?.id,
-					thoughtNumber: 1,
 					predicted: 0.8,
 					actual: 0,
 					type: 'regular',
 				}),
 				expect.objectContaining({
 					thoughtId: targets[1]?.id,
-					thoughtNumber: 2,
 					predicted: 0.3,
 					actual: 1,
 					type: 'regular',
 				}),
 			]);
+			expect(
+				server.getContainer().resolve('outcomeRecorder').getOutcomes(sessionId)[0]
+			).not.toHaveProperty('thoughtNumber');
 		} finally {
 			await server.stop();
 		}
@@ -117,7 +131,7 @@ describe('explicit verification outcomes', () => {
 				const result = await server.processThought(candidate as unknown as PublicInput);
 				expect(result.isError).toBe(true);
 			}
-			expect(server.history.getHistory()).toHaveLength(1);
+			expect(server.history.getHistory(DEFAULT_SESSION_ID)).toHaveLength(1);
 			expect(server.getContainer().resolve('outcomeRecorder').getAllOutcomes()).toEqual([]);
 		} finally {
 			await server.stop();
@@ -151,7 +165,9 @@ describe('explicit verification outcomes', () => {
 		const server = await configuredServer();
 		const sessionId = asSessionId('duplicate-session');
 		try {
-			await server.processThought(input('prediction', 1, { confidence: 0.9, session_id: sessionId }));
+			await server.processThought(
+				input('prediction', 1, { confidence: 0.9, session_id: sessionId })
+			);
 			const [first, second] = await Promise.all([
 				server.processThought(
 					input('label one', 2, {
@@ -173,7 +189,9 @@ describe('explicit verification outcomes', () => {
 
 			expect([first.isError, second.isError].filter(Boolean)).toHaveLength(1);
 			expect(server.history.getHistory(sessionId)).toHaveLength(2);
-			expect(server.getContainer().resolve('outcomeRecorder').getOutcomes(sessionId)).toHaveLength(1);
+			expect(server.getContainer().resolve('outcomeRecorder').getOutcomes(sessionId)).toHaveLength(
+				1
+			);
 		} finally {
 			await server.stop();
 		}
@@ -226,12 +244,15 @@ describe('explicit verification outcomes', () => {
 		}
 	});
 
-	it('isolates global and named branch targets while deduplicating stable branch copies', async () => {
+	it('isolates named branch targets while deduplicating stable branch copies', async () => {
 		const server = await configuredServer();
+		const otherSessionId = asSessionId('other-session');
 		const sessionId = asSessionId('branch-session');
 		const branchId = asBranchId('alternate');
 		try {
-			await server.processThought(input('global prediction', 1, { confidence: 0.2 }));
+			await server.processThought(
+				input('other prediction', 1, { confidence: 0.2, session_id: otherSessionId })
+			);
 			await server.processThought(input('branch anchor', 1, { session_id: sessionId }));
 			await server.processThought(
 				input('branch prediction', 2, {
@@ -245,7 +266,8 @@ describe('explicit verification outcomes', () => {
 			expect(server.history.getBranches(sessionId)[branchId]?.[0]?.id).toBe(branchTarget?.id);
 
 			await server.processThought(
-				input('global label', 2, {
+				input('other label', 2, {
+					session_id: otherSessionId,
 					thought_type: 'verification',
 					verification_target: 1,
 					verification_result: 0,
@@ -261,7 +283,7 @@ describe('explicit verification outcomes', () => {
 			);
 
 			const recorder = server.getContainer().resolve('outcomeRecorder');
-			expect(recorder.getOutcomes(GLOBAL_SESSION_ID)).toEqual([
+			expect(recorder.getOutcomes(otherSessionId)).toEqual([
 				expect.objectContaining({ actual: 0, predicted: 0.2 }),
 			]);
 			expect(recorder.getOutcomes(sessionId)).toEqual([
@@ -284,7 +306,9 @@ describe('explicit verification outcomes', () => {
 				})
 			);
 			expect(result.isError).toBeUndefined();
-			expect(pruned.history.getHistory().map((thought) => thought.thought_number)).toEqual([2]);
+			expect(
+				pruned.history.getHistory(DEFAULT_SESSION_ID).map((thought) => thought.thought_number)
+			).toEqual([2]);
 			expect(pruned.getContainer().resolve('outcomeRecorder').getAllOutcomes()).toHaveLength(1);
 		} finally {
 			await pruned.stop();
@@ -303,7 +327,7 @@ describe('explicit verification outcomes', () => {
 			await retracted.processThought(
 				input('retract target', 3, { thought_type: 'backtrack', backtrack_target: 1 })
 			);
-			expect(retracted.history.getHistory()[0]?.retracted).toBe(true);
+			expect(retracted.history.getHistory(DEFAULT_SESSION_ID)[0]?.retracted).toBe(true);
 			expect(retracted.getContainer().resolve('outcomeRecorder').getAllOutcomes()).toHaveLength(1);
 		} finally {
 			await retracted.stop();

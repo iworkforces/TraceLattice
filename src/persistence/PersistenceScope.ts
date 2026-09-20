@@ -2,10 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ThoughtData } from '../core/thought.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { Summary } from '../core/compression/Summary.js';
-import { asBranchId, GLOBAL_SESSION_ID, type BranchId, type SessionId } from '../contracts/ids.js';
-import {
-	PersistenceCompatibilityError,
-} from '../errors.js';
+import { asBranchId, asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
+import { PersistenceCompatibilityError } from '../errors.js';
 import {
 	PersistenceScopeMismatchError,
 	type PersistenceScope,
@@ -82,7 +80,7 @@ export function assertPersistableThoughtCollections(
 
 function thoughtScope(thought: ThoughtData): PersistenceScope {
 	return {
-		sessionId: thought.session_id ?? GLOBAL_SESSION_ID,
+		sessionId: asSessionId(thought.session_id),
 		...(thought.branch_id === undefined ? {} : { branchId: thought.branch_id }),
 	};
 }

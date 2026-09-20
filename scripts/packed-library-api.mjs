@@ -84,6 +84,19 @@ try {
   const concurrentRefresh = discoveryServer.refreshDiscovery();
   assert.equal(concurrentRefresh, firstRefresh);
   assert.deepEqual(await firstRefresh, { tools: 1, skills: 1 });
+  const thoughtSessionId = 'packed-library-verification';
+  const processed = await discoveryServer.processThought({
+    thought: 'Verify the installed package-root library',
+    thought_number: 1,
+    total_thoughts: 1,
+    next_thought_needed: false,
+    session_id: thoughtSessionId,
+  });
+  assert.notEqual(processed.isError, true);
+  assert.equal(Array.isArray(processed.content), true);
+  const response = JSON.parse(processed.content[0].text);
+  assert.equal(response.session_id, thoughtSessionId);
+  assert.deepEqual(discoveryServer.getBranches(thoughtSessionId), {});
 } finally {
   if (discoveryServer) await discoveryServer.dispose();
   await rm(discoveryRoot, { recursive: true, force: true });
@@ -210,6 +223,14 @@ type InterfaceDiscoveryRefresh = ReturnType<
 type ClassDiscoveryRefresh = ReturnType<
   ToolAwareSequentialThinkingServer['refreshDiscovery']
 >;
+type InterfaceProcessInput = Parameters<
+  IToolAwareSequentialThinkingServer['processThought']
+>[0];
+type ClassProcessInput = Parameters<ToolAwareSequentialThinkingServer['processThought']>[0];
+type InterfaceGetBranchesParameters = Parameters<
+  IToolAwareSequentialThinkingServer['getBranches']
+>;
+type ClassGetBranchesParameters = Parameters<ToolAwareSequentialThinkingServer['getBranches']>;
 const exactInterfaceDiscoveryRefresh: Exact<
   InterfaceDiscoveryRefresh,
   ExpectedDiscoveryRefresh
@@ -218,6 +239,12 @@ const exactClassDiscoveryRefresh: Exact<
   ClassDiscoveryRefresh,
   ExpectedDiscoveryRefresh
 > = true;
+const interfaceSessionRequired: {} extends Pick<InterfaceProcessInput, 'session_id'>
+  ? false
+  : true = true;
+const classSessionRequired: {} extends Pick<ClassProcessInput, 'session_id'> ? false : true = true;
+const exactInterfaceGetBranches: Exact<InterfaceGetBranchesParameters, [sessionId: string]> = true;
+const exactClassGetBranches: Exact<ClassGetBranchesParameters, [sessionId: string]> = true;
 
 void classTransport;
 void kind;
@@ -226,6 +253,10 @@ void serverFactory;
 void serverInitializer;
 void exactInterfaceDiscoveryRefresh;
 void exactClassDiscoveryRefresh;
+void interfaceSessionRequired;
+void classSessionRequired;
+void exactInterfaceGetBranches;
+void exactClassGetBranches;
 `;
 
 async function runCommand(command, args, options) {

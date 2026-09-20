@@ -60,6 +60,7 @@ describe('SkillWatcher', () => {
 
 	afterEach(() => {
 		delete process.env.WATCHER_VERBOSE;
+		delete process.env.TRACELATTICE_WATCHER_VERBOSE;
 		vi.restoreAllMocks();
 	});
 
@@ -179,7 +180,7 @@ describe('SkillWatcher', () => {
 
 	it('uses debug logging only when watcher verbosity is enabled', async () => {
 		// Given
-		process.env.WATCHER_VERBOSE = 'true';
+		process.env.TRACELATTICE_WATCHER_VERBOSE = 'true';
 		const watcher = new SkillWatcher(registry, logger);
 
 		// When
@@ -187,6 +188,19 @@ describe('SkillWatcher', () => {
 
 		// Then
 		expect(logger.debug).toHaveBeenCalledWith('[Watcher] Skill added: example.md');
+		await watcher.stop();
+	});
+
+	it('ignores the unprefixed watcher verbosity setting', async () => {
+		// Given
+		process.env.WATCHER_VERBOSE = 'true';
+		const watcher = new SkillWatcher(registry, logger);
+
+		// When
+		await handler('add')('/skills/example.md');
+
+		// Then
+		expect(logger.debug).not.toHaveBeenCalled();
 		await watcher.stop();
 	});
 });

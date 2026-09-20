@@ -77,24 +77,24 @@ export interface ICalibrator {
 	 */
 	calibrate(rawConfidence: number, type: ThoughtType, sessionId: SessionId): CalibrationResult;
 	/**
-	 * Get calibration metrics for a session, or globally if `sessionId` is omitted.
+	 * Get calibration metrics for a session, or aggregate metrics if `sessionId` is omitted.
 	 *
-	 * @param sessionId - Optional session id; omit for global metrics.
+	 * @param sessionId - Optional session id; omit for aggregate metrics.
 	 * @returns Aggregate calibration metrics.
 	 */
 	metrics(sessionId?: SessionId): CalibrationMetrics;
 	/**
 	 * Refit the calibration model from accumulated samples.
 	 *
-	 * @param sessionId - Optional session id; omit to refit global state.
+	 * @param sessionId - Session id whose calibration model is refitted.
 	 */
-	refit(sessionId?: SessionId): void;
+	refit(sessionId: SessionId): void;
 	/**
-	 * Remove the fitted temperature for one session while preserving global state.
+	 * Remove the fitted temperature for one session.
 	 *
 	 * @param sessionId - Session identifier whose fitted temperature is removed.
 	 */
 	clearSession(sessionId: SessionId): void;
-	/** Remove all fitted session and global temperatures. */
+	/** Remove all fitted session temperatures. */
 	clearAll(): void;
 }

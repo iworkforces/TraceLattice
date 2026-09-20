@@ -64,13 +64,9 @@ export const ERROR_CODES = {
 	PERSISTENCE_DRAIN: 'PERSISTENCE_DRAIN',
 	PERSISTENCE_SESSION_ADMISSION_CLOSED: 'PERSISTENCE_SESSION_ADMISSION_CLOSED',
 	PERSISTENCE_SESSION_BARRIER_REENTRANCY: 'PERSISTENCE_SESSION_BARRIER_REENTRANCY',
-	ASYNC_RESET_REQUIRED: 'ASYNC_RESET_REQUIRED',
-	PERSISTENCE_CAPABILITY_UNSUPPORTED: 'PERSISTENCE_CAPABILITY_UNSUPPORTED',
 	PERSISTENCE_SCOPE_MISMATCH: 'PERSISTENCE_SCOPE_MISMATCH',
 	PERSISTENCE_UNAVAILABLE: 'PERSISTENCE_UNAVAILABLE',
 	PERSISTENCE_COMPATIBILITY: 'PERSISTENCE_COMPATIBILITY',
-	PERSISTENCE_IMPORT_REQUIRED: 'PERSISTENCE_IMPORT_REQUIRED',
-	PERSISTENCE_LEGACY_AMBIGUITY: 'PERSISTENCE_LEGACY_AMBIGUITY',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -154,7 +150,7 @@ export class ConfigurationError extends SequentialThinkingError {
  *
  * @example
  * ```typescript
- * const tool = registry.getTool('non-existent-tool');
+ * const tool = registry.get('non-existent-tool');
  * if (!tool) {
  *   throw new ToolNotFoundError('non-existent-tool');
  * }
@@ -194,7 +190,7 @@ export class ToolNotFoundError extends SequentialThinkingError {
  *
  * @example
  * ```typescript
- * const skill = registry.getSkill('non-existent-skill');
+ * const skill = registry.get('non-existent-skill');
  * if (!skill) {
  *   throw new SkillNotFoundError('non-existent-skill');
  * }
@@ -352,7 +348,7 @@ export class HistoryLimitExceededError extends SequentialThinkingError {
  *
  * @example
  * ```typescript
- * if (registry.hasSkill(skill.name)) {
+ * if (registry.has(skill.name)) {
  *   throw new DuplicateSkillError(skill.name);
  * }
  * ```
@@ -416,7 +412,7 @@ export class InvalidSkillError extends SequentialThinkingError {
  *
  * @example
  * ```typescript
- * if (registry.hasTool(tool.name)) {
+ * if (registry.has(tool.name)) {
  *   throw new DuplicateToolError(tool.name);
  * }
  * ```
@@ -799,38 +795,6 @@ export class PersistenceCompatibilityError extends SequentialThinkingError {
 		this.sourcePath = sourcePath;
 		this.detail = detail;
 		this.cause = cause;
-	}
-}
-
-/** Error raised when legacy files require an explicit one-way import. */
-export class PersistenceImportRequiredError extends SequentialThinkingError {
-	public readonly sourcePath: string;
-	public readonly legacyArtifacts: readonly string[];
-
-	constructor(sourcePath: string, legacyArtifacts: readonly string[]) {
-		super(
-			`Legacy persistence at '${sourcePath}' requires explicit import`,
-			ERROR_CODES.PERSISTENCE_IMPORT_REQUIRED
-		);
-		this.name = 'PersistenceImportRequiredError';
-		this.sourcePath = sourcePath;
-		this.legacyArtifacts = [...legacyArtifacts];
-	}
-}
-
-/** Error raised when legacy bytes do not identify one durable namespace. */
-export class PersistenceLegacyAmbiguityError extends SequentialThinkingError {
-	public readonly sourcePath: string;
-	public readonly detail: string;
-
-	constructor(sourcePath: string, detail: string) {
-		super(
-			`Legacy persistence at '${sourcePath}' is ambiguous: ${detail}`,
-			ERROR_CODES.PERSISTENCE_LEGACY_AMBIGUITY
-		);
-		this.name = 'PersistenceLegacyAmbiguityError';
-		this.sourcePath = sourcePath;
-		this.detail = detail;
 	}
 }
 

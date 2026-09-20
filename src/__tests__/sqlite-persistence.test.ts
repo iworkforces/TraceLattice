@@ -5,7 +5,6 @@ import {
 	asEdgeId,
 	asSessionId,
 	asThoughtId,
-	GLOBAL_SESSION_ID,
 	type BranchId,
 	type SessionId,
 } from '../contracts/ids.js';
@@ -41,6 +40,7 @@ type SchemaRow = {
 };
 
 const EMPTY_RESULT: SqliteRunResult = { changes: 0, lastInsertRowid: 0 };
+const TEST_SESSION_ID = asSessionId('test-session');
 
 function schemaRowsFromDdl(): SchemaRow[] {
 	return SQLITE_V2_SCHEMA_DDL.split(';')
@@ -204,8 +204,8 @@ describe('SQLite v2 frozen schema', () => {
 		expect(drifted.commands).toEqual([]);
 	});
 
-	it('classifies exact unversioned payload tables as import-required', () => {
-		const legacy = new StructuralDatabase([
+	it('rejects any non-v2 object set generically without mutation', () => {
+		const unknown = new StructuralDatabase([
 			{
 				type: 'table',
 				name: 'thoughts',
@@ -221,10 +221,13 @@ describe('SQLite v2 frozen schema', () => {
 			},
 		]);
 
-		expect(() => initializeOrValidateSqliteV2(legacy, 'legacy.db')).toThrowError(
-			expect.objectContaining({ code: 'PERSISTENCE_IMPORT_REQUIRED' })
+		expect(() => initializeOrValidateSqliteV2(unknown, 'unknown.db')).toThrowError(
+			expect.objectContaining({
+				code: 'PERSISTENCE_COMPATIBILITY',
+				detail: 'database does not match SQLite v2 schema',
+			})
 		);
-		expect(legacy.commands).toEqual([]);
+		expect(unknown.commands).toEqual([]);
 	});
 
 	it('rolls back operation and commit failures', () => {
@@ -290,20 +293,20 @@ describe('SQLite row decoders', () => {
 });
 
 describe('SqlitePersistence stateful structural behavior', () => {
-	it('keeps legacy operations global while isolating named history and matching branch IDs', async () => {
+	it('isolates two named sessions with matching branch IDs', async () => {
 		// Given
 		const { persistence } = createStructuralPersistence();
 		const namedSession = asSessionId('named-session');
 		const sharedBranch = asBranchId('shared-branch');
-		const globalThought = createTestThought({ id: 'global-history', thought: 'global' });
+		const testSessionThought = createTestThought({ id: 'test-history', thought: 'test session' });
 		const namedThought = createTestThought({
 			id: 'named-history',
 			session_id: namedSession,
 			thought: 'named',
 		});
-		const globalBranchThought = createTestThought({
-			id: 'global-branch',
-			thought: 'global branch',
+		const testSessionBranchThought = createTestThought({
+			id: 'test-branch',
+			thought: 'test session branch',
 		});
 		const namedBranchThought = createTestThought({
 			id: 'named-branch',
@@ -312,21 +315,55 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		});
 
 		// When
-		await persistence.saveThought(globalThought);
+		await persistence.saveThoughtForSession(TEST_SESSION_ID, testSessionThought);
 		await persistence.saveThoughtForSession(namedSession, namedThought);
-		await persistence.saveBranch(sharedBranch, [globalBranchThought]);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, sharedBranch, [
+			testSessionBranchThought,
+		]);
 		await persistence.saveBranchForSession(namedSession, sharedBranch, [namedBranchThought]);
 
 		// Then
-		expect(await persistence.loadHistory()).toEqual([globalThought]);
+		expect(await persistence.loadHistoryForSession(TEST_SESSION_ID)).toEqual([testSessionThought]);
 		expect(await persistence.loadHistoryForSession(namedSession)).toEqual([namedThought]);
-		expect(await persistence.loadBranch(sharedBranch)).toEqual([globalBranchThought]);
+		expect(await persistence.loadBranchForSession(TEST_SESSION_ID, sharedBranch)).toEqual([
+			testSessionBranchThought,
+		]);
 		expect(await persistence.loadBranchForSession(namedSession, sharedBranch)).toEqual([
 			namedBranchThought,
 		]);
-		expect(await persistence.listBranches()).toEqual([sharedBranch]);
+		expect(await persistence.listBranchesForSession(TEST_SESSION_ID)).toEqual([sharedBranch]);
 		expect(await persistence.listBranchesForSession(namedSession)).toEqual([sharedBranch]);
-		expect(await persistence.listSessions()).toEqual([GLOBAL_SESSION_ID, namedSession]);
+		expect(await persistence.listSessions()).toEqual([namedSession, TEST_SESSION_ID]);
+	});
+
+	it('rejects a thought missing its nested session before creating SQLite state', async () => {
+		// Given
+		const { persistence } = createStructuralPersistence();
+		const thought = createTestThought({ id: 'missing-session' });
+		Reflect.deleteProperty(thought, 'session_id');
+
+		// When / Then
+		await expect(persistence.saveThoughtForSession(TEST_SESSION_ID, thought)).rejects.toMatchObject(
+			{
+				code: 'VALIDATION_ERROR',
+			}
+		);
+		expect(await persistence.listSessions()).toEqual([]);
+	});
+
+	it('rejects a retired nested thought session before creating SQLite state', async () => {
+		// Given
+		const { persistence } = createStructuralPersistence();
+		const thought = createTestThought({ id: 'retired-session' });
+		Reflect.set(thought, 'session_id', '__global__');
+
+		// When / Then
+		await expect(persistence.saveThoughtForSession(TEST_SESSION_ID, thought)).rejects.toMatchObject(
+			{
+				code: 'VALIDATION_ERROR',
+			}
+		);
+		expect(await persistence.listSessions()).toEqual([]);
 	});
 
 	it('preserves admission order and applies positive retention independently per session', async () => {
@@ -377,10 +414,11 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		);
 
 		// When
-		for (const thought of thoughts) await persistence.saveThought(thought);
+		for (const thought of thoughts)
+			await persistence.saveThoughtForSession(TEST_SESSION_ID, thought);
 
 		// Then
-		expect(await persistence.loadHistory()).toEqual(thoughts);
+		expect(await persistence.loadHistoryForSession(TEST_SESSION_ID)).toEqual(thoughts);
 	});
 
 	it('replaces one branch and preserves an explicitly empty branch record', async () => {
@@ -391,13 +429,13 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		const replacement = createTestThought({ id: 'branch-replacement' });
 
 		// When
-		await persistence.saveBranch(branchId, [initial]);
-		await persistence.saveBranch(branchId, [replacement]);
-		await persistence.saveBranch(branchId, []);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [initial]);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [replacement]);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, branchId, []);
 
 		// Then
-		expect(await persistence.loadBranch(branchId)).toEqual([]);
-		expect(await persistence.listBranches()).toEqual([branchId]);
+		expect(await persistence.loadBranchForSession(TEST_SESSION_ID, branchId)).toEqual([]);
+		expect(await persistence.listBranchesForSession(TEST_SESSION_ID)).toEqual([branchId]);
 	});
 
 	it('deletes one branch idempotently without deleting its session sibling', async () => {
@@ -440,7 +478,7 @@ describe('SqlitePersistence stateful structural behavior', () => {
 			branchIds[2],
 			branchIds[0],
 		]);
-		expect(await persistence.listEdgeSessions()).toEqual([sessions[1], sessions[2], sessions[0]]);
+		expect(await persistence.listSessions()).toEqual([sessions[1], sessions[2], sessions[0]]);
 	});
 
 	it('clears one session across every namespace while preserving another', async () => {
@@ -483,8 +521,11 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		// Given
 		const { database, persistence } = createStructuralPersistence();
 		const sessionId = asSessionId('clear-all');
-		await persistence.saveThought(createTestThought({ id: 'global-before-clear' }));
-		await persistence.saveBranch(asBranchId('before-clear'), []);
+		await persistence.saveThoughtForSession(
+			TEST_SESSION_ID,
+			createTestThought({ id: 'global-before-clear' })
+		);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, asBranchId('before-clear'), []);
 		await persistence.saveEdges(sessionId, [
 			edgeFixture({ id: 'edge-before-clear', sessionId, createdAt: 1 }),
 		]);
@@ -494,7 +535,7 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		const before = database.snapshot();
 
 		// When
-		await persistence.clear();
+		await persistence.clearAll();
 
 		// Then
 		const after = database.snapshot();
@@ -594,8 +635,11 @@ describe('SqlitePersistence stateful structural behavior', () => {
 	it('reports stats, health transitions, and closure through public methods', async () => {
 		// Given
 		const { database, persistence } = createStructuralPersistence();
-		await persistence.saveThought(createTestThought({ id: 'stats-thought' }));
-		await persistence.saveBranch(asBranchId('stats-branch'), []);
+		await persistence.saveThoughtForSession(
+			TEST_SESSION_ID,
+			createTestThought({ id: 'stats-thought' })
+		);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, asBranchId('stats-branch'), []);
 
 		// When / Then
 		expect(persistence.getStats()).toEqual({ thoughtCount: 1, branchCount: 1, dbSize: 0 });
@@ -650,12 +694,14 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		// Given
 		const { persistence } = createStructuralPersistence();
 		const thought = canonicalThought('duplicate-history', 'duplicate history');
-		await persistence.saveThought(thought);
+		await persistence.saveThoughtForSession(TEST_SESSION_ID, thought);
 
 		// When / Then
-		await expect(persistence.saveThought(thought)).rejects.toMatchObject({
-			code: 'PERSISTENCE_COMPATIBILITY',
-		});
+		await expect(persistence.saveThoughtForSession(TEST_SESSION_ID, thought)).rejects.toMatchObject(
+			{
+				code: 'PERSISTENCE_COMPATIBILITY',
+			}
+		);
 	});
 
 	it('rejects duplicate candidate IDs inside one branch array', async () => {
@@ -665,7 +711,9 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		const thought = createTestThought({ id: 'duplicate-candidate-id' });
 
 		// When / Then
-		await expect(persistence.saveBranch(branchId, [thought, thought])).rejects.toMatchObject({
+		await expect(
+			persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [thought, thought])
+		).rejects.toMatchObject({
 			code: 'PERSISTENCE_COMPATIBILITY',
 		});
 	});
@@ -675,26 +723,27 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		const { persistence } = createStructuralPersistence();
 		const branchId = asBranchId('equal-reuse');
 		const thought = createTestThought({ id: 'equal-reuse-id' });
-		await persistence.saveThought(thought);
+		await persistence.saveThoughtForSession(TEST_SESSION_ID, thought);
 
 		// When
-		await persistence.saveBranch(branchId, [thought]);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [thought]);
 
 		// Then
-		expect(await persistence.loadBranch(branchId)).toEqual([thought]);
+		expect(await persistence.loadBranchForSession(TEST_SESSION_ID, branchId)).toEqual([thought]);
 	});
 
 	it('rejects a branch conflict after history was admitted', async () => {
 		// Given
 		const { persistence } = createStructuralPersistence();
 		const branchId = asBranchId('history-first');
-		await persistence.saveThought(
+		await persistence.saveThoughtForSession(
+			TEST_SESSION_ID,
 			createTestThought({ id: 'history-first-id', thought: 'history payload' })
 		);
 
 		// When / Then
 		await expect(
-			persistence.saveBranch(branchId, [
+			persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [
 				createTestThought({ id: 'history-first-id', thought: 'branch payload' }),
 			])
 		).rejects.toMatchObject({ code: 'PERSISTENCE_COMPATIBILITY' });
@@ -704,13 +753,14 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		// Given
 		const { persistence } = createStructuralPersistence();
 		const branchId = asBranchId('branch-first');
-		await persistence.saveBranch(branchId, [
+		await persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [
 			createTestThought({ id: 'branch-first-id', thought: 'branch payload' }),
 		]);
 
 		// When / Then
 		await expect(
-			persistence.saveThought(
+			persistence.saveThoughtForSession(
+				TEST_SESSION_ID,
 				createTestThought({ id: 'branch-first-id', thought: 'history payload' })
 			)
 		).rejects.toMatchObject({ code: 'PERSISTENCE_COMPATIBILITY' });
@@ -865,11 +915,13 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		const { database, persistence } = createStructuralPersistence();
 		const candidate = canonicalThought('multi-branch-id', 'candidate payload');
 		const conflict = canonicalThought('multi-branch-id', 'conflicting payload');
-		database.seedBranchData(GLOBAL_SESSION_ID, first, JSON.stringify([conflict]));
-		database.seedBranchData(GLOBAL_SESSION_ID, second, JSON.stringify([candidate]));
+		database.seedBranchData(TEST_SESSION_ID, first, JSON.stringify([conflict]));
+		database.seedBranchData(TEST_SESSION_ID, second, JSON.stringify([candidate]));
 
 		// When / Then
-		await expect(persistence.saveThought(candidate)).rejects.toMatchObject({
+		await expect(
+			persistence.saveThoughtForSession(TEST_SESSION_ID, candidate)
+		).rejects.toMatchObject({
 			code: 'PERSISTENCE_COMPATIBILITY',
 		});
 	});
@@ -1013,7 +1065,10 @@ describe('SqlitePersistence stateful structural behavior', () => {
 
 		// When / Then
 		await expect(
-			persistence.saveThought(createTestThought({ id: 'rolled-back-insert' }))
+			persistence.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ id: 'rolled-back-insert' })
+			)
 		).rejects.toThrow(COUNT_SESSION_THOUGHTS_SQL);
 		expect(database.snapshot()).toEqual(before);
 	});
@@ -1041,16 +1096,19 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		// Given
 		const { database, persistence } = createStructuralPersistence({ maxHistorySize: 1 });
 		const original = createTestThought({ id: 'retained-original' });
-		await persistence.saveThought(original);
+		await persistence.saveThoughtForSession(TEST_SESSION_ID, original);
 		const before = database.snapshot();
 		database.failNextCommit();
 
 		// When / Then
 		await expect(
-			persistence.saveThought(createTestThought({ id: 'retained-replacement' }))
+			persistence.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ id: 'retained-replacement' })
+			)
 		).rejects.toThrow('COMMIT');
 		expect(database.snapshot()).toEqual(before);
-		expect(await persistence.loadHistory()).toEqual([original]);
+		expect(await persistence.loadHistoryForSession(TEST_SESSION_ID)).toEqual([original]);
 	});
 
 	it('rolls branch replacement data back when commit fails', async () => {
@@ -1058,16 +1116,18 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		const { database, persistence } = createStructuralPersistence();
 		const branchId = asBranchId('branch-commit-rollback');
 		const original = createTestThought({ id: 'branch-original' });
-		await persistence.saveBranch(branchId, [original]);
+		await persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [original]);
 		const before = database.snapshot();
 		database.failNextCommit();
 
 		// When / Then
 		await expect(
-			persistence.saveBranch(branchId, [createTestThought({ id: 'branch-replacement' })])
+			persistence.saveBranchForSession(TEST_SESSION_ID, branchId, [
+				createTestThought({ id: 'branch-replacement' }),
+			])
 		).rejects.toThrow('COMMIT');
 		expect(database.snapshot()).toEqual(before);
-		expect(await persistence.loadBranch(branchId)).toEqual([original]);
+		expect(await persistence.loadBranchForSession(TEST_SESSION_ID, branchId)).toEqual([original]);
 	});
 
 	it('rolls scoped clear data back after a later namespace delete fails', async () => {

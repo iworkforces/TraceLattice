@@ -4,7 +4,7 @@ import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import type { ThoughtData } from '../../core/thought.js';
 import { asSessionId, asThoughtId, asSuspensionToken } from '../../contracts/ids.js';
 
-const SESSION = asSessionId('__global__');
+const SESSION = asSessionId('tool-invocation-session');
 
 function toolCallThought(overrides: Partial<ThoughtData> = {}): ThoughtData {
 	return {
@@ -13,6 +13,7 @@ function toolCallThought(overrides: Partial<ThoughtData> = {}): ThoughtData {
 		total_thoughts: 2,
 		next_thought_needed: true,
 		thought_type: 'tool_call',
+		session_id: SESSION,
 		tool_name: 'search',
 		tool_arguments: { q: 'foo' },
 		id: asThoughtId('tc-id-1'),
@@ -27,6 +28,7 @@ function toolObservationThought(overrides: Partial<ThoughtData> = {}): ThoughtDa
 		total_thoughts: 2,
 		next_thought_needed: false,
 		thought_type: 'tool_observation',
+		session_id: SESSION,
 		continuation_token: asSuspensionToken('tok'),
 		id: asThoughtId('to-id-1'),
 		...overrides,

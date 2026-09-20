@@ -40,10 +40,10 @@ describe('battle-test scenario catalog', () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 
-	it('runs to deterministic CaseScore output', () => {
+	it('runs to deterministic CaseScore output', async () => {
 		// Given / When
-		const firstRun = runScenarios(BATTLE_SCENARIOS);
-		const secondRun = runScenarios(BATTLE_SCENARIOS);
+		const firstRun = await runScenarios(BATTLE_SCENARIOS);
+		const secondRun = await runScenarios(BATTLE_SCENARIOS);
 
 		// Then
 		expect(firstRun).toHaveLength(33);
@@ -54,9 +54,9 @@ describe('battle-test scenario catalog', () => {
 		);
 	});
 
-	it('keeps critical-failure-aware state and malformed scenarios green today', () => {
+	it('keeps critical-failure-aware state and malformed scenarios green today', async () => {
 		// Given
-		const scores = runScenarios(BATTLE_SCENARIOS);
+		const scores = await runScenarios(BATTLE_SCENARIOS);
 		const stateScores = scores.filter((score) => score.category === 'state-isolation-and-reset');
 		const malformedScores = scores.filter(
 			(score) => score.category === 'malformed-and-edge-inputs'
@@ -82,9 +82,9 @@ describe('battle-test scenario catalog', () => {
 		expect(malformedDescriptions.join('\n')).toContain('malformed-input-crash');
 	});
 
-	it('scores final-answer omissions without critical failures', () => {
+	it('scores final-answer omissions without critical failures', async () => {
 		// Given
-		const scores = runScenarios(BATTLE_SCENARIOS);
+		const scores = await runScenarios(BATTLE_SCENARIOS);
 
 		// When
 		const omissionScore = scores.find((score) => score.caseId === 'final-answer-scope-trace');

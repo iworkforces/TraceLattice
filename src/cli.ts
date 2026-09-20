@@ -32,7 +32,7 @@ if (shouldShowVersion) {
 	process.exit(0);
 }
 async function main() {
-	const transportType = process.env.TRANSPORT_TYPE || 'stdio';
+	const transportType = process.env.TRACELATTICE_TRANSPORT_TYPE || 'stdio';
 	const adapter = new ValibotJsonSchemaAdapter();
 	const server = new McpServer(
 		{
@@ -78,16 +78,18 @@ async function startStreamableHttpTransport(
 	lifecycle: CliLifecycle
 ): Promise<void> {
 	const { StreamableHttpTransport } = await import('./transport/StreamableHttpTransport.js');
-	const port = parseInt(process.env.STREAMABLE_HTTP_PORT || '9007', 10);
-	const host = process.env.STREAMABLE_HTTP_HOST || 'localhost';
+	const port = parseInt(process.env.TRACELATTICE_STREAMABLE_HTTP_PORT || '9007', 10);
+	const host = process.env.TRACELATTICE_STREAMABLE_HTTP_HOST || 'localhost';
 	const transportMetrics = thinkingServer.getContainer().resolve('Metrics');
-	const stateful = process.env.STREAMABLE_HTTP_STATEFUL !== 'false';
+	const stateful = process.env.TRACELATTICE_STREAMABLE_HTTP_STATEFUL !== 'false';
 	const streamableTransport = new StreamableHttpTransport({
 		port,
 		host,
-		corsOrigin: process.env.CORS_ORIGIN || '*',
-		enableCors: process.env.ENABLE_CORS !== 'false',
-		allowedHosts: process.env.ALLOWED_HOSTS?.split(',').map((hostValue) => hostValue.trim()),
+		corsOrigin: process.env.TRACELATTICE_CORS_ORIGIN || '*',
+		enableCors: process.env.TRACELATTICE_ENABLE_CORS !== 'false',
+		allowedHosts: process.env.TRACELATTICE_ALLOWED_HOSTS?.split(',').map((hostValue) =>
+			hostValue.trim()
+		),
 		metrics: transportMetrics,
 		stateful,
 	});

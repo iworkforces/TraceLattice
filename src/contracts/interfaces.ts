@@ -69,8 +69,6 @@ export interface DiscoveryCacheOptions {
 export interface VerificationOutcome {
 	/** The thought id that made the prediction. */
 	thoughtId: ThoughtId;
-	/** The thought number of the prediction (backward compat). */
-	thoughtNumber: number;
 	/** The session this outcome belongs to. */
 	sessionId: SessionId;
 	/** The predicted confidence (0-1). */
@@ -244,7 +242,7 @@ export interface IToolRegistry {
 	/**
 	 * Returns the names of all registered tools.
 	 */
-	list(): string[];
+	getNames(): string[];
 }
 
 /**
@@ -264,19 +262,15 @@ export interface ISessionLock {
 	/**
 	 * Execute `fn` while holding the lock for the given session.
 	 *
-	 * @param sessionId - Session to lock (`undefined` shares a global slot).
+	 * @param sessionId - Session to lock.
 	 * @param fn - Critical section to run while holding the lock.
 	 * @param timeoutMs - Max wait for lock acquisition (default 5000ms).
 	 * @throws {LockTimeoutError} If the lock is not acquired before `timeoutMs`.
 	 */
-	withLock<T>(
-		sessionId: SessionId | undefined,
-		fn: () => Promise<T>,
-		timeoutMs?: number
-	): Promise<T>;
+	withLock<T>(sessionId: SessionId, fn: () => Promise<T>, timeoutMs?: number): Promise<T>;
 
 	/** Whether the session currently has a holder or queued operation. */
-	isActive(sessionId: SessionId | undefined): boolean;
+	isActive(sessionId: SessionId): boolean;
 
 	/** Number of currently held lock chains (diagnostics). */
 	readonly size: number;

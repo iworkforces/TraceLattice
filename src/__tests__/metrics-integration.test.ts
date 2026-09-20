@@ -11,7 +11,9 @@ import { Metrics } from '../metrics/metrics.impl.js';
 import { FilePersistence } from '../persistence/FilePersistence.js';
 import { HttpTransport } from '../transport/HttpTransport.js';
 import type { ThoughtData } from '../core/thought.js';
-import { asThoughtId } from '../contracts/ids.js';
+import { asSessionId, asThoughtId } from '../contracts/ids.js';
+
+const METRICS_SESSION = asSessionId('metrics-session');
 
 function createMetrics(): Metrics {
 	return new Metrics({ prefix: 'sequentialthinking' });
@@ -145,6 +147,7 @@ describe('Metrics Integration', () => {
 
 	it('increments thought_requests_total from HistoryManager addThought', async () => {
 		const thought: ThoughtData = {
+			session_id: METRICS_SESSION,
 			thought: 'Test thought',
 			thought_number: 1,
 			total_thoughts: 1,
@@ -159,9 +162,27 @@ describe('Metrics Integration', () => {
 
 	it('tracks multiple thought requests without double counting', async () => {
 		const thoughts: ThoughtData[] = [
-			{ thought: 'First', thought_number: 1, total_thoughts: 3, next_thought_needed: true },
-			{ thought: 'Second', thought_number: 2, total_thoughts: 3, next_thought_needed: true },
-			{ thought: 'Third', thought_number: 3, total_thoughts: 3, next_thought_needed: false },
+			{
+				session_id: METRICS_SESSION,
+				thought: 'First',
+				thought_number: 1,
+				total_thoughts: 3,
+				next_thought_needed: true,
+			},
+			{
+				session_id: METRICS_SESSION,
+				thought: 'Second',
+				thought_number: 2,
+				total_thoughts: 3,
+				next_thought_needed: true,
+			},
+			{
+				session_id: METRICS_SESSION,
+				thought: 'Third',
+				thought_number: 3,
+				total_thoughts: 3,
+				next_thought_needed: false,
+			},
 		];
 
 		for (const thought of thoughts) {
@@ -217,6 +238,7 @@ describe('Metrics Integration', () => {
 		const dataDir = await mkdtemp(join(tmpdir(), 'trace-lattice-metrics-'));
 		const persistence = new FilePersistence({ dataDir, metrics });
 		const thought: ThoughtData = {
+			session_id: METRICS_SESSION,
 			id: asThoughtId('metrics-persisted-thought'),
 			thought: 'Persist me',
 			thought_number: 1,
@@ -224,8 +246,8 @@ describe('Metrics Integration', () => {
 			next_thought_needed: false,
 		};
 
-		await persistence.saveThought(thought);
-		await persistence.loadHistory();
+		await persistence.saveThoughtForSession(METRICS_SESSION, thought);
+		await persistence.loadHistoryForSession(METRICS_SESSION);
 
 		const snapshot = metrics.export();
 		expect(snapshot).toContain(

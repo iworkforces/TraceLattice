@@ -1,21 +1,17 @@
-import { createHash } from 'node:crypto';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
-import { supportsSessionScopedPersistence } from '../contracts/PersistenceBackend.js';
-import { GLOBAL_SESSION_ID, asBranchId, asSessionId } from '../contracts/ids.js';
+import { asBranchId, asSessionId } from '../contracts/ids.js';
 import { FilePersistence } from '../persistence/FilePersistence.js';
 import { nodeFileWriterOperations } from '../persistence/FileWriter.js';
 import { MemoryPersistence } from '../persistence/MemoryPersistence.js';
-import { importLegacyFileV1 } from '../persistence/FileLegacyImport.js';
 import { parseFileSnapshotV2 } from '../persistence/FileSnapshotV2.js';
 import { parseThoughtData } from '../persistence/PersistenceCodec.js';
-import { requireSessionScopedPersistence } from '../persistence/SessionScopedPersistence.js';
 import { createTestThought } from './helpers/factories.js';
 
 const SNAPSHOT_SOURCE_PATH = '/data/snapshot.json';
+const TEST_SESSION_ID = asSessionId('test-session');
 const EMPTY_FILE_V2_SNAPSHOT = {
 	version: 2,
 	thoughts: [],
@@ -27,6 +23,7 @@ const MINIMAL_PERSISTED_THOUGHT = {
 	thought: 'Persisted minimal thought',
 	thought_number: 1,
 	total_thoughts: 1,
+	session_id: 'session-minimal',
 } as const;
 
 function persistedThought(id: string, sessionId: string) {
@@ -37,59 +34,26 @@ function persistedThought(id: string, sessionId: string) {
 	};
 }
 
-const legacyBackend: PersistenceBackend = {
-	saveThought: async () => {},
-	loadHistory: async () => [],
-	saveBranch: async () => {},
-	loadBranch: async () => undefined,
-	listBranches: async () => [],
-	healthy: async () => true,
-	clear: async () => {},
-	close: async () => {},
-	saveEdges: async () => {},
-	loadEdges: async () => [],
-	listEdgeSessions: async () => [],
-	saveSummaries: async () => {},
-	loadSummaries: async () => [],
-};
-
-describe('session-scoped persistence capability', () => {
-	it('keeps the legacy 13-method structural backend source-compatible and rejects named fallback', () => {
-		expect(Object.keys(legacyBackend)).toHaveLength(13);
-		expect(supportsSessionScopedPersistence(legacyBackend)).toBe(false);
-		expect(() => requireSessionScopedPersistence(legacyBackend, 'clearSession')).toThrowError(
-			expect.objectContaining({
-				code: 'PERSISTENCE_CAPABILITY_UNSUPPORTED',
-				operation: 'clearSession',
-			})
-		);
-	});
-
-	it('recognizes each built-in only when all nine scoped methods are present', async () => {
+describe('mandatory session-scoped persistence contract', () => {
+	it('exposes only scoped storage operations on built-in backends', async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), 'tracelattice-task7-guard-'));
 		const file = await FilePersistence.create({ dataDir });
 		try {
-			expect(supportsSessionScopedPersistence(new MemoryPersistence())).toBe(true);
-			expect(supportsSessionScopedPersistence(file)).toBe(true);
+			for (const backend of [new MemoryPersistence(), file]) {
+				expect(typeof backend.saveThoughtForSession).toBe('function');
+				expect(typeof backend.clearAll).toBe('function');
+				expect('saveThought' in backend).toBe(false);
+				expect('loadHistory' in backend).toBe(false);
+				expect('saveBranch' in backend).toBe(false);
+				expect('deleteBranch' in backend).toBe(false);
+				expect('loadBranch' in backend).toBe(false);
+				expect('listBranches' in backend).toBe(false);
+				expect('listEdgeSessions' in backend).toBe(false);
+			}
 		} finally {
 			await file.close();
 			await rm(dataDir, { recursive: true, force: true });
 		}
-	});
-
-	it('requires both legacy and scoped branch deletion for the complete scoped capability', () => {
-		const backend = new MemoryPersistence();
-		const withoutLegacyDelete = Object.create(backend) as MemoryPersistence & {
-			deleteBranch?: undefined;
-		};
-		Object.defineProperty(withoutLegacyDelete, 'deleteBranch', { value: undefined });
-		const withoutScopedDelete = Object.create(backend) as MemoryPersistence & {
-			deleteBranchForSession?: undefined;
-		};
-		Object.defineProperty(withoutScopedDelete, 'deleteBranchForSession', { value: undefined });
-
-		expect(supportsSessionScopedPersistence(withoutLegacyDelete)).toBe(false);
-		expect(supportsSessionScopedPersistence(withoutScopedDelete)).toBe(false);
 	});
 });
 
@@ -197,7 +161,7 @@ describe('File v2 compatibility boundary', () => {
 		expect(parsed).toEqual(fullyPopulatedThought);
 	});
 
-	it('accepts a minimal persisted thought without synthesizing optional identity or step fields', () => {
+	it('accepts a minimal persisted thought with an explicit session identity', () => {
 		// Given
 		const persistedThoughtPayload = MINIMAL_PERSISTED_THOUGHT;
 
@@ -209,7 +173,42 @@ describe('File v2 compatibility boundary', () => {
 			thought: 'Persisted minimal thought',
 			thought_number: 1,
 			total_thoughts: 1,
+			session_id: 'session-minimal',
 		});
+	});
+
+	it('rejects a persisted thought missing its session identity', () => {
+		// Given
+		const persistedThoughtPayload = { ...MINIMAL_PERSISTED_THOUGHT };
+		Reflect.deleteProperty(persistedThoughtPayload, 'session_id');
+
+		// When / Then
+		expect(() => parseThoughtData(persistedThoughtPayload, SNAPSHOT_SOURCE_PATH)).toThrow();
+	});
+
+	it.each([
+		[
+			'partition',
+			{
+				sessionId: '__global__',
+				thoughts: [persistedThought('retired-partition-thought', '__global__')],
+			},
+		],
+		[
+			'nested thought',
+			{
+				sessionId: 'ordinary-session',
+				thoughts: [persistedThought('retired-thought', '__global__')],
+			},
+		],
+	] as const)('rejects a retired %s session identity', (_, thoughtRecord) => {
+		// Given
+		const snapshot = { ...EMPTY_FILE_V2_SNAPSHOT, thoughts: [thoughtRecord] };
+
+		// When / Then
+		expect(() => parseFileSnapshotV2(JSON.stringify(snapshot), SNAPSHOT_SOURCE_PATH)).toThrowError(
+			expect.objectContaining({ code: 'PERSISTENCE_COMPATIBILITY' })
+		);
 	});
 
 	it.each([
@@ -632,10 +631,10 @@ describe('File v2 compatibility boundary', () => {
 		const dataDir = await mkdtemp(join(tmpdir(), 'tracelattice-task7-layout-'));
 		const backend = await FilePersistence.create({ dataDir });
 		try {
-			await backend.saveThought(createTestThought({ id: 'global-1' }));
+			await backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'named-1' }));
 			const snapshot: unknown = JSON.parse(await readFile(join(dataDir, 'snapshot.json'), 'utf-8'));
 			expect(snapshot).toMatchObject({ version: 2, branches: [], edges: [], summaries: [] });
-			expect(await backend.loadHistoryForSession(GLOBAL_SESSION_ID)).toHaveLength(1);
+			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(1);
 		} finally {
 			await backend.close();
 			await rm(dataDir, { recursive: true, force: true });
@@ -652,7 +651,8 @@ describe('File v2 compatibility boundary', () => {
 		try {
 			const writer = await FilePersistence.create({ dataDir });
 			try {
-				for (const thought of thoughts) await writer.saveThought(thought);
+				for (const thought of thoughts)
+					await writer.saveThoughtForSession(TEST_SESSION_ID, thought);
 			} finally {
 				await writer.close();
 			}
@@ -660,7 +660,7 @@ describe('File v2 compatibility boundary', () => {
 			// When
 			const reader = await FilePersistence.create({ dataDir });
 			try {
-				const reopened = await reader.loadHistory();
+				const reopened = await reader.loadHistoryForSession(TEST_SESSION_ID);
 
 				// Then
 				expect(reopened.map(({ id }) => id)).toEqual([
@@ -676,7 +676,7 @@ describe('File v2 compatibility boundary', () => {
 		}
 	});
 
-	it('distinguishes malformed JSON, well-formed drift, and legacy import-required storage', async () => {
+	it('distinguishes malformed JSON, well-formed drift, and unsupported nonempty layouts', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'tracelattice-task7-classify-'));
 		try {
 			for (const [name, bytes, code] of [
@@ -688,140 +688,13 @@ describe('File v2 compatibility boundary', () => {
 				await writeFile(join(dataDir, 'snapshot.json'), bytes, 'utf-8');
 				await expect(FilePersistence.create({ dataDir })).rejects.toMatchObject({ code });
 			}
-			const legacyDir = join(root, 'legacy');
-			await import('node:fs/promises').then(async ({ mkdir }) => await mkdir(legacyDir));
-			await writeFile(join(legacyDir, 'history.json'), '[]', 'utf-8');
-			await expect(FilePersistence.create({ dataDir: legacyDir })).rejects.toMatchObject({
-				code: 'PERSISTENCE_IMPORT_REQUIRED',
-			});
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	});
-
-	it('imports immutable legacy sources only to an absent destination and rejects ambiguous branches', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'tracelattice-task7-import-'));
-		const source = join(root, 'source');
-		const destination = join(root, 'destination');
-		const ambiguous = join(root, 'ambiguous');
-		await mkdir(join(source, 'branches'), { recursive: true });
-		await mkdir(join(ambiguous, 'branches'), { recursive: true });
-		const sourceBytes = JSON.stringify([createTestThought({ id: 'legacy-global' })]);
-		await writeFile(join(source, 'history.json'), sourceBytes, 'utf-8');
-		await writeFile(join(ambiguous, 'branches', 'empty.json'), '[]', 'utf-8');
-		try {
-			await importLegacyFileV1(source, destination);
-			expect(await readFile(join(source, 'history.json'), 'utf-8')).toBe(sourceBytes);
-			const imported = await FilePersistence.create({ dataDir: destination });
-			expect((await imported.loadHistory()).map(({ id }) => id)).toEqual(['legacy-global']);
-			await imported.close();
-			await expect(importLegacyFileV1(source, destination)).rejects.toMatchObject({
+			const unsupportedDir = join(root, 'unsupported');
+			await import('node:fs/promises').then(async ({ mkdir }) => await mkdir(unsupportedDir));
+			await writeFile(join(unsupportedDir, 'foreign.bin'), 'opaque', 'utf-8');
+			await expect(FilePersistence.create({ dataDir: unsupportedDir })).rejects.toMatchObject({
 				code: 'PERSISTENCE_COMPATIBILITY',
+				detail: 'directory does not match File v2 layout',
 			});
-			await expect(importLegacyFileV1(ambiguous, join(root, 'rejected'))).rejects.toMatchObject({
-				code: 'PERSISTENCE_LEGACY_AMBIGUITY',
-			});
-			await expect(access(join(root, 'rejected'))).rejects.toMatchObject({ code: 'ENOENT' });
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	});
-
-	it('imports accepted-empty-v1 as one canonical empty v2 snapshot without mutating its source', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'tracelattice-task7-empty-v1-'));
-		const source = join(root, 'source');
-		const destination = join(root, 'destination');
-		const sessionId = asSessionId('empty-session');
-		const edgePath = join(source, 'edges', `${sessionId}.json`);
-		const summaryPath = join(source, 'summaries', `${sessionId}.json`);
-		await mkdir(join(source, 'edges'), { recursive: true });
-		await mkdir(join(source, 'summaries'), { recursive: true });
-		await writeFile(edgePath, '[]', 'utf-8');
-		await writeFile(summaryPath, '[]', 'utf-8');
-		const sourceBytes = await Promise.all([readFile(edgePath), readFile(summaryPath)]);
-		const sourceHashes = sourceBytes.map((bytes) =>
-			createHash('sha256').update(bytes).digest('hex')
-		);
-
-		try {
-			await importLegacyFileV1(source, destination);
-
-			const snapshotBytes = await readFile(join(destination, 'snapshot.json'), 'utf-8');
-			expect(JSON.parse(snapshotBytes)).toEqual({
-				version: 2,
-				thoughts: [],
-				branches: [],
-				edges: [],
-				summaries: [],
-			});
-			expect(snapshotBytes).toBe(
-				`${JSON.stringify({ version: 2, thoughts: [], branches: [], edges: [], summaries: [] }, null, 2)}\n`
-			);
-			const sourceBytesAfter = await Promise.all([readFile(edgePath), readFile(summaryPath)]);
-			expect(sourceBytesAfter).toEqual(sourceBytes);
-			expect(
-				sourceBytesAfter.map((bytes) => createHash('sha256').update(bytes).digest('hex'))
-			).toEqual(sourceHashes);
-			expect(
-				(await readdir(root)).filter((entry) => entry.startsWith('.destination.import-'))
-			).toEqual([]);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	});
-
-	it('imports non-empty legacy edge and summary namespaces into a reloaded v2 session', async () => {
-		// Given
-		const root = await mkdtemp(join(tmpdir(), 'tracelattice-task7-non-empty-v1-'));
-		const source = join(root, 'source');
-		const destination = join(root, 'destination');
-		const sessionId = asSessionId('legacy-edge-summary-session');
-		const edgePath = join(source, 'edges', `${sessionId}.json`);
-		const summaryPath = join(source, 'summaries', `${sessionId}.json`);
-		const legacyEdge = {
-			id: 'legacy-edge-1',
-			from: 'legacy-thought-1',
-			to: 'legacy-thought-2',
-			kind: 'verifies',
-			sessionId,
-			createdAt: 123,
-			metadata: { source: 'legacy-v1' },
-		};
-		const legacySummary = {
-			id: 'legacy-summary-1',
-			sessionId,
-			branchId: 'legacy-branch',
-			rootThoughtId: 'legacy-thought-1',
-			coveredIds: ['legacy-thought-1', 'legacy-thought-2'],
-			coveredRange: [1, 2],
-			topics: ['legacy', 'import'],
-			aggregateConfidence: 0.75,
-			createdAt: 456,
-			meta: { source: 'legacy-v1' },
-		};
-		await mkdir(join(source, 'edges'), { recursive: true });
-		await mkdir(join(source, 'summaries'), { recursive: true });
-		await writeFile(edgePath, JSON.stringify([legacyEdge]), 'utf-8');
-		await writeFile(summaryPath, JSON.stringify([legacySummary]), 'utf-8');
-		const sourceBytes = await Promise.all([readFile(edgePath), readFile(summaryPath)]);
-
-		try {
-			// When
-			await importLegacyFileV1(source, destination);
-			const reloaded = await FilePersistence.create({ dataDir: destination });
-			try {
-				const [edges, summaries] = await Promise.all([
-					reloaded.loadEdges(sessionId),
-					reloaded.loadSummaries(sessionId),
-				]);
-
-				// Then
-				expect(edges).toEqual([legacyEdge]);
-				expect(summaries).toEqual([legacySummary]);
-			} finally {
-				await reloaded.close();
-			}
-			expect(await Promise.all([readFile(edgePath), readFile(summaryPath)])).toEqual(sourceBytes);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -847,34 +720,6 @@ describe('File v2 compatibility boundary', () => {
 			});
 		} finally {
 			await rm(dataDir, { recursive: true, force: true });
-		}
-	});
-
-	it('produces deterministic snapshots from equivalent legacy layouts', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'tracelattice-task7-deterministic-'));
-		const branchIds = [asBranchId('alpha'), asBranchId('beta')];
-		try {
-			for (const [sourceName, orderedBranches] of [
-				['source-a', branchIds],
-				['source-b', [...branchIds].reverse()],
-			] as const) {
-				const source = join(root, sourceName);
-				await mkdir(join(source, 'branches'), { recursive: true });
-				for (const branchId of orderedBranches) {
-					await writeFile(
-						join(source, 'branches', `${branchId}.json`),
-						JSON.stringify([createTestThought({ id: `${branchId}-thought`, branch_id: branchId })]),
-						'utf-8'
-					);
-				}
-				await importLegacyFileV1(source, join(root, `destination-${sourceName}`));
-			}
-
-			expect(await readFile(join(root, 'destination-source-a', 'snapshot.json'), 'utf-8')).toBe(
-				await readFile(join(root, 'destination-source-b', 'snapshot.json'), 'utf-8')
-			);
-		} finally {
-			await rm(root, { recursive: true, force: true });
 		}
 	});
 
@@ -920,19 +765,24 @@ describe('File v2 compatibility boundary', () => {
 		}
 	});
 
-	it('keeps legacy history and branch operations explicitly global', async () => {
+	it('uses an explicit named session through every mandatory scoped operation', async () => {
 		const backend = new MemoryPersistence();
-		const branchId = asBranchId('global-branch');
+		const branchId = asBranchId('named-branch');
 		await expect(
-			backend.saveThought(createTestThought({ id: 'named', session_id: 'named' }))
+			backend.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ id: 'named', session_id: 'named' })
+			)
 		).rejects.toMatchObject({ code: 'PERSISTENCE_SCOPE_MISMATCH' });
-		await backend.saveThought(createTestThought({ id: 'global' }));
-		await backend.saveBranch(branchId, [
-			createTestThought({ id: 'global-branch-thought', branch_id: branchId }),
+		await backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'named-main' }));
+		await backend.saveBranchForSession(TEST_SESSION_ID, branchId, [
+			createTestThought({ id: 'named-branch-thought', branch_id: branchId }),
 		]);
-		expect((await backend.loadHistory()).map(({ id }) => id)).toEqual(['global']);
-		expect(await backend.listBranches()).toEqual([branchId]);
-		expect(await backend.listSessions()).toEqual([GLOBAL_SESSION_ID]);
-		expect(asSessionId('named')).not.toBe(GLOBAL_SESSION_ID);
+		expect((await backend.loadHistoryForSession(TEST_SESSION_ID)).map(({ id }) => id)).toEqual([
+			'named-main',
+		]);
+		expect(await backend.listBranchesForSession(TEST_SESSION_ID)).toEqual([branchId]);
+		expect(await backend.listSessions()).toEqual([TEST_SESSION_ID]);
+		expect(asSessionId('named')).not.toBe(TEST_SESSION_ID);
 	});
 });

@@ -1,5 +1,4 @@
 import { expect } from 'vitest';
-import { supportsSessionScopedPersistence } from '../../contracts/PersistenceBackend.js';
 import { asBranchId, asSessionId, asSummaryId, asThoughtId } from '../../contracts/ids.js';
 import { runWithContext } from '../../context/RequestContext.js';
 import type { Summary } from '../../core/compression/Summary.js';
@@ -69,10 +68,8 @@ export async function assertMalformedIdentityRejected(): Promise<void> {
 			expect(server.history.getSessionIds()).toEqual([asSessionId('B')]);
 			expect(server.history.branchExists('B', asBranchId('must-not-register'))).toBe(false);
 			const persistence = server.getContainer().resolve('Persistence');
-			expect(persistence && supportsSessionScopedPersistence(persistence)).toBe(true);
-			if (persistence && supportsSessionScopedPersistence(persistence)) {
-				expect(await persistence.listSessions()).toEqual([asSessionId('B')]);
-			}
+			expect(persistence).not.toBeNull();
+			if (persistence) expect(await persistence.listSessions()).toEqual([asSessionId('B')]);
 		} finally {
 			await server.dispose();
 		}
@@ -124,7 +121,6 @@ export async function assertFiveCycleBoundedChurn(backend: ScenarioBackend): Pro
 			});
 			container.resolve('outcomeRecorder').recordVerification({
 				thoughtId: asThoughtId(`${sessionId}-outcome`),
-				thoughtNumber: 3,
 				sessionId: session,
 				predicted: 0.8,
 				actual: 1,

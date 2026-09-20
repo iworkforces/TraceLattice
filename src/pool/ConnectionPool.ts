@@ -368,22 +368,22 @@ export class ConnectionPool implements IConnectionPool {
 	/**
 	 * Process a thought in the specified session.
 	 *
-	 * @param sessionId - The session ID
+	 * @param poolSessionId - The pool slot ID, distinct from `input.session_id`
 	 * @param input - The thought data to process
 	 * @returns Promise with the processing result
 	 * @throws Error if session not found
 	 */
-	async process(sessionId: SessionId, input: SessionThoughtInput): Promise<ProcessResult> {
-		const result = await this._runWithSession(sessionId, (session) =>
+	async process(poolSessionId: SessionId, input: SessionThoughtInput): Promise<ProcessResult> {
+		const result = await this._runWithSession(poolSessionId, (session) =>
 			session.processAdmitted(input)
 		);
 		switch (result.status) {
 			case 'completed':
 				return result.value;
 			case 'inactive':
-				throw new SessionNotActiveError(sessionId);
+				throw new SessionNotActiveError(poolSessionId);
 			case 'missing':
-				throw new SessionNotFoundError(sessionId);
+				throw new SessionNotFoundError(poolSessionId);
 			default:
 				return assertNever(result);
 		}
@@ -560,10 +560,7 @@ export class ConnectionPool implements IConnectionPool {
 		}
 	}
 
-	/**
-	 * Close all sessions and stop the cleanup timer.
-	 */
-	terminate(): Promise<void> {
+	dispose(): Promise<void> {
 		if (this._terminationGeneration) {
 			return this._terminationGeneration.completion.promise;
 		}
@@ -607,15 +604,6 @@ export class ConnectionPool implements IConnectionPool {
 		}
 		this._logger.info('ConnectionPool terminated');
 		generation.completion.resolve();
-	}
-
-	/**
-	 * Dispose of the connection pool, releasing all resources.
-	 * Implements the IDisposable interface.
-	 * Delegates to terminate() for backward compatibility.
-	 */
-	dispose(): Promise<void> {
-		return this.terminate();
 	}
 
 	/**

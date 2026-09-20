@@ -30,8 +30,7 @@ export interface EdgeEmissionSession {
 /** Configuration options for EdgeEmitter. */
 export interface EdgeEmitterConfig {
 	edgeStore?: IEdgeStore;
-	dagEdges?: boolean;
-	defaultSessionId: SessionId;
+	dagEdges: boolean;
 	logger?: Logger;
 }
 
@@ -42,13 +41,11 @@ export interface EdgeEmitterConfig {
 export class EdgeEmitter {
 	private readonly _edgeStore?: IEdgeStore;
 	private readonly _dagEdges: boolean;
-	private readonly _defaultSessionId: SessionId;
 	private readonly _logger: Logger;
 
 	constructor(config: EdgeEmitterConfig) {
 		this._edgeStore = config.edgeStore;
-		this._dagEdges = config.dagEdges ?? true;
-		this._defaultSessionId = config.defaultSessionId;
+		this._dagEdges = config.dagEdges;
 		this._logger = config.logger ?? new NullLogger();
 	}
 
@@ -79,7 +76,7 @@ export class EdgeEmitter {
 		if (!this._edgeStore || !this._dagEdges) return false;
 		if (!thought.id) return false;
 
-		const sessionId = thought.session_id ?? this._defaultSessionId;
+		const sessionId = thought.session_id;
 		const references = context?.resolvedReferences ?? {};
 		const hasRelationalIntent =
 			(thought.branch_from_thought !== undefined && thought.branch_id !== undefined) ||

@@ -22,14 +22,14 @@ transport/
 
 | Class | Endpoints | Mode | CLI |
 |-------|-----------|------|-----|
-| `StreamableHttpTransport` | POST `/mcp` | stateful **default true**; `Mcp-Session-Id`; GET `/mcp` is **405** | `TRANSPORT_TYPE=streamable-http` |
+| `StreamableHttpTransport` | POST `/mcp` | stateful **default true**; `Mcp-Session-Id`; GET `/mcp` is **405** | `TRACELATTICE_TRANSPORT_TYPE=streamable-http` |
 | `HttpTransport` | POST `/messages` | always stateless | **not** selected |
 
 Shared GET: `/health`, `/ready`, `/metrics`.
 
 ## SHARED BASE
 
-- Host allowlist (`ALLOWED_HOSTS`)
+- Host allowlist (`TRACELATTICE_ALLOWED_HOSTS`)
 - CORS preflight + headers
 - 100 req/min per-IP (`X-Forwarded-For` aware)
 - 10MB body, 30s request timeout

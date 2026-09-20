@@ -36,6 +36,7 @@ function makeThought(
 	signals?: Signals
 ): ThoughtData {
 	const t: ThoughtData & { confidence_signals?: ConfidenceSignals } = {
+		session_id: SESSION,
 		id: id as ThoughtId,
 		thought,
 		thought_number,
@@ -66,33 +67,39 @@ class FakeHistoryManager implements IHistoryManager {
 	addThought(t: ThoughtData): void {
 		this._thoughts.push(t);
 	}
-	resolveThoughtReference(): ThoughtReferenceResolution {
+	resolveThoughtReference(
+		_sessionId: SessionId,
+		_thoughtNumber: number
+	): ThoughtReferenceResolution {
 		return { kind: 'missing' };
 	}
-	getHistory(): ThoughtData[] {
+	getHistory(_sessionId: string): ThoughtData[] {
 		this.getHistoryCalls += 1;
 		return this._thoughts;
 	}
-	getHistoryLength(): number {
+	getHistoryLength(_sessionId: string): number {
 		return this._thoughts.length;
 	}
-	getBranches(): Record<BranchId, ThoughtData[]> {
+	getBranches(_sessionId: string): Record<BranchId, ThoughtData[]> {
 		return this._branches;
 	}
-	getBranchIds(): BranchId[] {
+	getBranchIds(_sessionId: string): BranchId[] {
 		return [...this._branchIds];
 	}
-	registerBranch(): void {}
-	branchExists(): boolean {
+	registerBranch(_sessionId: string, _branchId: BranchId): void {}
+	branchExists(_sessionId: string, _branchId: BranchId): boolean {
 		return false;
 	}
 	clear(): void {
 		this._thoughts.length = 0;
 	}
-	async resetSession(): Promise<void> {
+	async resetSession(_sessionId: string, _clearAuxiliaryState?: () => void): Promise<void> {
 		this.clear();
 	}
-	async resetSessionWithinExclusive(): Promise<void> {
+	async resetSessionWithinExclusive(
+		_sessionId: SessionId,
+		_clearAuxiliaryState?: () => void
+	): Promise<void> {
 		this.clear();
 	}
 	async resetAll(): Promise<void> {
@@ -101,7 +108,7 @@ class FakeHistoryManager implements IHistoryManager {
 	async resetAllWithinExclusive(): Promise<void> {
 		this.clear();
 	}
-	inspectSession(): HistorySessionSnapshot {
+	inspectSession(_sessionId: string): HistorySessionSnapshot {
 		this.inspectCalls += 1;
 		return {
 			history: [...this._thoughts],
@@ -114,9 +121,9 @@ class FakeHistoryManager implements IHistoryManager {
 		};
 	}
 	getSessionIds(): string[] {
-		return ['__global__'];
+		return [SESSION];
 	}
-	getAvailableSkills(): string[] | undefined {
+	getAvailableSkills(_sessionId: string): string[] | undefined {
 		return undefined;
 	}
 
@@ -124,7 +131,7 @@ class FakeHistoryManager implements IHistoryManager {
 		return undefined;
 	}
 
-	getAvailableMcpTools(): string[] | undefined {
+	getAvailableMcpTools(_sessionId: string): string[] | undefined {
 		return undefined;
 	}
 }

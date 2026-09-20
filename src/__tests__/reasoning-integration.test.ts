@@ -1,10 +1,10 @@
-import { asBranchId, GLOBAL_SESSION_ID, type BranchId, type SessionId } from '../contracts/ids.js';
+import { asBranchId, asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
 /**
  * Integration tests for the full reasoning pipeline.
  *
  * Exercises ThoughtProcessor + ThoughtEvaluator together across multi-step
  * reasoning chains: hypothesis → verification → synthesis, branching + merge,
- * backward compatibility, metacognitive observations, and confidence tracking.
+ * baseline thought behavior, metacognitive observations, and confidence tracking.
  *
  * @module __tests__/reasoning-integration
  */
@@ -12,12 +12,15 @@ import { asBranchId, GLOBAL_SESSION_ID, type BranchId, type SessionId } from '..
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ThoughtProcessor } from '../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../core/ThoughtEvaluator.js';
+import type { ThoughtEvaluator } from '../core/ThoughtEvaluator.js';
 import { StructuredLogger } from '../logger/StructuredLogger.js';
 import type { ThoughtData } from '../core/thought.js';
 import type { HistorySessionSnapshot, IHistoryManager } from '../core/IHistoryManager.js';
 import { ThoughtReferenceIndex } from '../core/ThoughtReferenceIndex.js';
 import { createTestThought } from './helpers/factories.js';
+import { createDisabledThoughtEvaluator } from './helpers/evaluator.js';
+
+const REASONING_SESSION = asSessionId('test-session');
 
 /**
  * Branch-aware mock that routes thoughts with `branch_id` into the branches map,
@@ -32,7 +35,7 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 
 	addThought(thought: ThoughtData): void {
 		this._history.push(thought);
-		this._referenceIndex.add(thought.session_id ?? GLOBAL_SESSION_ID, thought);
+		this._referenceIndex.add(thought.session_id, thought);
 		if (thought.branch_id) {
 			if (!this._branches[thought.branch_id]) {
 				this._branches[thought.branch_id] = [];
@@ -51,29 +54,42 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 		return this._referenceIndex.resolve(sessionId, thoughtNumber);
 	}
 
-	getHistory(): ThoughtData[] {
+	getHistory(_sessionId: string): ThoughtData[] {
 		return this._history;
 	}
 
-	getHistoryLength(): number {
+	getHistoryLength(_sessionId: string): number {
 		return this._history.length;
 	}
 
-	getBranches(): Record<BranchId, ThoughtData[]> {
+	getBranches(_sessionId: string): Record<BranchId, ThoughtData[]> {
 		return this._branches as Record<BranchId, ThoughtData[]>;
 	}
 
-	getBranchIds(): BranchId[] {
+	getBranchIds(_sessionId: string): BranchId[] {
 		return Object.keys(this._branches) as BranchId[];
 	}
 
-	registerBranch(): void {}
+	registerBranch(_sessionId: string, _branchId: BranchId): void {}
 
-	branchExists(_sessionId: string | undefined, branchId: BranchId): boolean {
+	branchExists(_sessionId: string, branchId: BranchId): boolean {
 		return branchId in this._branches;
 	}
 
-	clear(): void {
+	async resetSession(_sessionId: string, _clearAuxiliaryState?: () => void): Promise<void> {
+		await this.resetAllWithinExclusive();
+	}
+	async resetSessionWithinExclusive(
+		_sessionId: SessionId,
+		_clearAuxiliaryState?: () => void
+	): Promise<void> {
+		await this.resetAllWithinExclusive();
+	}
+
+	async resetAll(): Promise<void> {
+		await this.resetAllWithinExclusive();
+	}
+	async resetAllWithinExclusive(): Promise<void> {
 		this._history = [];
 		this._branches = {};
 		this._availableMcpTools = undefined;
@@ -81,21 +97,7 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 		this._referenceIndex.clearAll();
 	}
 
-	async resetSession(): Promise<void> {
-		this.clear();
-	}
-	async resetSessionWithinExclusive(): Promise<void> {
-		this.clear();
-	}
-
-	async resetAll(): Promise<void> {
-		this.clear();
-	}
-	async resetAllWithinExclusive(): Promise<void> {
-		this.clear();
-	}
-
-	inspectSession(): HistorySessionSnapshot {
+	inspectSession(_sessionId: string): HistorySessionSnapshot {
 		return {
 			history: [...this._history],
 			branches: { ...this._branches } as Record<BranchId, ThoughtData[]>,
@@ -106,14 +108,14 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 	}
 
 	getSessionIds(): string[] {
-		return ['__global__'];
+		return [REASONING_SESSION];
 	}
 
-	getAvailableMcpTools(): string[] | undefined {
+	getAvailableMcpTools(_sessionId: string): string[] | undefined {
 		return this._availableMcpTools;
 	}
 
-	getAvailableSkills(): string[] | undefined {
+	getAvailableSkills(_sessionId: string): string[] | undefined {
 		return this._availableSkills;
 	}
 
@@ -133,13 +135,14 @@ describe('Reasoning Integration', () => {
 		historyManager = new BranchAwareMockHistoryManager();
 		formatter = new ThoughtFormatter();
 		logger = new StructuredLogger({ context: 'ReasoningIntegration', pretty: false });
-		evaluator = new ThoughtEvaluator();
+		evaluator = createDisabledThoughtEvaluator();
 		processor = new ThoughtProcessor(historyManager, formatter, evaluator, logger);
 	});
 
 	it('should track hypothesis through verification to synthesis', async () => {
 		// Step 1: Create hypothesis
 		const r1 = await processor.process({
+			session_id: REASONING_SESSION,
 			thought: 'I hypothesize the issue is in the auth module',
 			thought_number: 1,
 			total_thoughts: 4,
@@ -156,6 +159,7 @@ describe('Reasoning Integration', () => {
 
 		// Step 2: Verify hypothesis
 		const r2 = await processor.process({
+			session_id: REASONING_SESSION,
 			thought: 'Checking auth module — confirmed the bug',
 			thought_number: 2,
 			total_thoughts: 4,
@@ -175,6 +179,7 @@ describe('Reasoning Integration', () => {
 
 		// Step 3: Synthesize final answer
 		const r3 = await processor.process({
+			session_id: REASONING_SESSION,
 			thought: 'Auth bug confirmed and fixed',
 			thought_number: 3,
 			total_thoughts: 3,
@@ -237,6 +242,7 @@ describe('Reasoning Integration', () => {
 
 	it('should handle existing input format without reasoning fields', async () => {
 		const result = await processor.process({
+			session_id: REASONING_SESSION,
 			thought: 'Standard thinking step',
 			thought_number: 1,
 			total_thoughts: 1,

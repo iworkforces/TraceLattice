@@ -3,17 +3,12 @@ import type { IEdgeStore } from '../contracts/interfaces.js';
 import type { SessionId } from '../contracts/ids.js';
 import type { ISummaryStore } from '../contracts/summary.js';
 import type { Logger } from '../logger/StructuredLogger.js';
-import { requireSessionScopedPersistence } from '../persistence/SessionScopedPersistence.js';
-import { AsyncResetRequiredError } from './SessionErrors.js';
-
 interface ResetBarrier {
 	withSessionResetBarrier(sessionId: SessionId, operation: () => Promise<void>): Promise<void>;
 	withGlobalResetBarrier(operation: () => Promise<void>): Promise<void>;
 }
 
-export interface SessionResetCoordinatorConfig<SessionState> {
-	readonly persistence: PersistenceBackend | null;
-	readonly barrier: ResetBarrier | null;
+interface SessionResetCoordinatorBaseConfig<SessionState> {
 	readonly edgeStore?: IEdgeStore;
 	readonly summaryStore?: ISummaryStore;
 	readonly sessions: Map<SessionId, SessionState>;
@@ -21,9 +16,15 @@ export interface SessionResetCoordinatorConfig<SessionState> {
 	readonly logger: Logger;
 }
 
+type ResetDurability =
+	| { readonly persistence: null; readonly barrier: null }
+	| { readonly persistence: PersistenceBackend; readonly barrier: ResetBarrier };
+
+export type SessionResetCoordinatorConfig<SessionState> =
+	SessionResetCoordinatorBaseConfig<SessionState> & ResetDurability;
+
 export class SessionResetCoordinator<SessionState> {
-	private readonly _persistence: PersistenceBackend | null;
-	private readonly _barrier: ResetBarrier | null;
+	private readonly _durability: ResetDurability;
 	private readonly _edgeStore?: IEdgeStore;
 	private readonly _summaryStore?: ISummaryStore;
 	private readonly _sessions: Map<SessionId, SessionState>;
@@ -31,8 +32,7 @@ export class SessionResetCoordinator<SessionState> {
 	private readonly _logger: Logger;
 
 	constructor(config: SessionResetCoordinatorConfig<SessionState>) {
-		this._persistence = config.persistence;
-		this._barrier = config.barrier;
+		this._durability = config;
 		this._edgeStore = config.edgeStore;
 		this._summaryStore = config.summaryStore;
 		this._sessions = config.sessions;
@@ -40,47 +40,33 @@ export class SessionResetCoordinator<SessionState> {
 		this._logger = config.logger;
 	}
 
-	clearSession(sessionId: SessionId): void {
-		if (this._persistence !== null) throw new AsyncResetRequiredError('session', sessionId);
-		this._clearSessionStores(sessionId);
-		this._sessions.delete(sessionId);
-		this._logger.info('Session cleared', { sessionId });
-	}
-
-	clearAll(): void {
-		if (this._persistence !== null) throw new AsyncResetRequiredError('all');
-		this._clearAllLiveState();
-	}
-
 	async resetSession(
 		sessionId: SessionId,
 		preservedOwner: string | undefined,
 		clearAuxiliaryState?: () => void
 	): Promise<void> {
-		if (this._persistence === null) {
+		const durability = this._durability;
+		if (durability.persistence === null) {
 			this._replaceLiveSession(sessionId, preservedOwner);
 			clearAuxiliaryState?.();
 			return;
 		}
-		const scopedPersistence = requireSessionScopedPersistence(this._persistence, 'clearSession');
-		if (this._barrier === null) throw new AsyncResetRequiredError('session', sessionId);
-		await this._barrier.withSessionResetBarrier(sessionId, async () => {
-			await scopedPersistence.clearSession(sessionId);
+		await durability.barrier.withSessionResetBarrier(sessionId, async () => {
+			await durability.persistence.clearSession(sessionId);
 			this._replaceLiveSession(sessionId, preservedOwner);
 			clearAuxiliaryState?.();
 		});
 	}
 
 	async resetAll(clearAuxiliaryState?: () => void): Promise<void> {
-		const persistence = this._persistence;
-		if (persistence === null) {
+		const durability = this._durability;
+		if (durability.persistence === null) {
 			this._clearAllLiveState();
 			clearAuxiliaryState?.();
 			return;
 		}
-		if (this._barrier === null) throw new AsyncResetRequiredError('all');
-		await this._barrier.withGlobalResetBarrier(async () => {
-			await persistence.clear();
+		await durability.barrier.withGlobalResetBarrier(async () => {
+			await durability.persistence.clearAll();
 			this._clearAllLiveState();
 			clearAuxiliaryState?.();
 		});

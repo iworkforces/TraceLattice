@@ -8,8 +8,6 @@ interface TestSession extends SessionLike {
 	readonly id: string;
 }
 
-const DEFAULT_ID = asSessionId('__global__');
-
 function makeLogger(): Logger {
 	return {
 		debug: vi.fn(),
@@ -27,7 +25,6 @@ function makeManager(options?: {
 	readonly logger?: Logger;
 }): SessionManager<TestSession> {
 	return new SessionManager<TestSession>({
-		defaultSessionId: DEFAULT_ID,
 		sessionTtlMs: 60_000,
 		cleanupIntervalMs: 100,
 		getMaxSessions: () => options?.maxSessions ?? 1_000,
@@ -51,6 +48,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.clearAllTimers();
 	vi.useRealTimers();
+	vi.unstubAllEnvs();
 });
 
 describe('SessionManager prospective admission planning', () => {
@@ -58,7 +56,7 @@ describe('SessionManager prospective admission planning', () => {
 		// Given
 		const manager = makeManager({ maxSessions: 3, maxSessionsPerOwner: 2 });
 		const sessions = new Map<SessionId, TestSession>([
-			[DEFAULT_ID, session('default', 0)],
+			[asSessionId('ordinary-oldest'), session('ordinary-oldest', 0)],
 			[asSessionId('owner-old'), session('owner-old', 1, 'A')],
 			[asSessionId('owner-new'), session('owner-new', 4, 'A')],
 			[asSessionId('other-old'), session('other-old', 2, 'B')],
@@ -68,7 +66,7 @@ describe('SessionManager prospective admission planning', () => {
 		const plan = manager.planProspectiveAdmission(sessions, 'A', eligible);
 
 		// Then
-		expect(plan).toEqual([asSessionId('owner-old'), asSessionId('other-old')]);
+		expect(plan).toEqual([asSessionId('owner-old'), asSessionId('ordinary-oldest')]);
 		expect(sessions).toHaveLength(4);
 	});
 
@@ -128,16 +126,17 @@ describe('SessionManager prospective admission planning', () => {
 		expect(plan).toEqual([asSessionId('first'), asSessionId('second')]);
 	});
 
-	it('counts the default globally but never selects it for eviction', () => {
+	it('selects the sole named session when prospective admission requires capacity', () => {
 		// Given
 		const manager = makeManager({ maxSessions: 1 });
-		const sessions = new Map<SessionId, TestSession>([[DEFAULT_ID, session('default', 0)]]);
+		const sessionId = asSessionId('ordinary-session');
+		const sessions = new Map<SessionId, TestSession>([[sessionId, session('ordinary-session', 0)]]);
 
 		// When
 		const plan = manager.planProspectiveAdmission(sessions, undefined, eligible);
 
 		// Then
-		expect(plan).toBeUndefined();
+		expect(plan).toEqual([sessionId]);
 	});
 
 	it('excludes restored sessions from counts and candidate selection', () => {
@@ -172,7 +171,6 @@ describe('SessionManager prospective admission planning', () => {
 	it('uses the configured default owner quota of fifty for prospective admission', () => {
 		// Given
 		const manager = new SessionManager<TestSession>({
-			defaultSessionId: DEFAULT_ID,
 			sessionTtlMs: 60_000,
 			cleanupIntervalMs: 100,
 			getMaxSessions: () => 1_000,
@@ -212,12 +210,12 @@ describe('SessionManager prospective admission planning', () => {
 });
 
 describe('SessionManager TTL candidates and timer', () => {
-	it('uses the same default, restored, eligibility, and oldest-first candidate rules for TTL', () => {
+	it('uses the same restored, eligibility, and oldest-first candidate rules for TTL', () => {
 		// Given
 		const manager = makeManager();
 		const pinned = asSessionId('pinned');
 		const sessions = new Map<SessionId, TestSession>([
-			[DEFAULT_ID, session('default', 0)],
+			[asSessionId('ordinary-oldest'), session('ordinary-oldest', 0)],
 			[asSessionId('restored'), { ...session('restored', 1), provenance: 'restored' }],
 			[pinned, session('pinned', 2)],
 			[asSessionId('eligible-old'), session('eligible-old', 3)],
@@ -232,7 +230,11 @@ describe('SessionManager TTL candidates and timer', () => {
 		);
 
 		// Then
-		expect(candidates).toEqual([asSessionId('eligible-old'), asSessionId('eligible-new')]);
+		expect(candidates).toEqual([
+			asSessionId('ordinary-oldest'),
+			asSessionId('eligible-old'),
+			asSessionId('eligible-new'),
+		]);
 	});
 
 	it('observes and reports asynchronous cleanup rejection without an unhandled promise', async () => {
@@ -278,25 +280,19 @@ describe('SessionManager TTL candidates and timer', () => {
 });
 
 describe('SessionManager config integration', () => {
-	it('SESSION_MAX_PER_OWNER env var flows through ConfigLoader to ServerConfig', async () => {
+	it('TRACELATTICE_SESSION_MAX_PER_OWNER env var flows through ConfigLoader to ServerConfig', async () => {
 		// Given
 		const { ConfigLoader } = await import('../../config/ConfigLoader.js');
 		const { ServerConfig } = await import('../../ServerConfig.js');
-		const previous = process.env.SESSION_MAX_PER_OWNER;
-		process.env.SESSION_MAX_PER_OWNER = '7';
+		vi.stubEnv('TRACELATTICE_SESSION_MAX_PER_OWNER', '7');
 
-		try {
-			// When
-			const loader = new ConfigLoader();
-			const fileConfig = loader.load() ?? {};
-			const config = new ServerConfig({ maxSessionsPerOwner: fileConfig.maxSessionsPerOwner });
+		// When
+		const loader = new ConfigLoader();
+		const fileConfig = loader.load() ?? {};
+		const config = new ServerConfig({ maxSessionsPerOwner: fileConfig.maxSessionsPerOwner });
 
-			// Then
-			expect(config.maxSessionsPerOwner).toBe(7);
-		} finally {
-			if (previous === undefined) delete process.env.SESSION_MAX_PER_OWNER;
-			else process.env.SESSION_MAX_PER_OWNER = previous;
-		}
+		// Then
+		expect(config.maxSessionsPerOwner).toBe(7);
 	});
 
 	it('ServerConfig validates and serializes maxSessionsPerOwner', async () => {

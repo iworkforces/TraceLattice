@@ -18,7 +18,6 @@ function makeOutcome(
 	const { sessionId, thoughtId, ...rest } = overrides;
 	return {
 		thoughtId: asThoughtId(thoughtId ?? 't1'),
-		thoughtNumber: 1,
 		sessionId: asSessionId(sessionId ?? 'session-a'),
 		predicted: 0.8,
 		actual: 1,
@@ -77,13 +76,11 @@ describe('OutcomeRecorder', () => {
 		).not.toThrow();
 	});
 
-	it('permits distinct target ids with the same thought number', () => {
+	it('permits distinct canonical target ids', () => {
 		const recorder = new OutcomeRecorder({ enabled: true });
-		recorder.recordVerification(makeOutcome({ thoughtId: 'target-a', thoughtNumber: 7 }));
+		recorder.recordVerification(makeOutcome({ thoughtId: 'target-a' }));
 
-		expect(() =>
-			recorder.recordVerification(makeOutcome({ thoughtId: 'target-b', thoughtNumber: 7 }))
-		).not.toThrow();
+		expect(() => recorder.recordVerification(makeOutcome({ thoughtId: 'target-b' }))).not.toThrow();
 	});
 
 	it('records outcome when enabled', () => {
@@ -93,7 +90,6 @@ describe('OutcomeRecorder', () => {
 		expect(outcomes).toHaveLength(1);
 		expect(outcomes[0]).toMatchObject({
 			thoughtId: 't1',
-			thoughtNumber: 1,
 			sessionId: 'session-a',
 			predicted: 0.8,
 			actual: 1,

@@ -1,4 +1,4 @@
-import { asBranchId, asSessionId, asThoughtId, GLOBAL_SESSION_ID } from '../../contracts/ids.js';
+import { asBranchId, asSessionId, asThoughtId } from '../../contracts/ids.js';
 /**
  * Tests for flag-gated DAG edge emission in HistoryManager.
  *
@@ -15,9 +15,12 @@ import { generateUlid } from '../../core/ids.js';
 import { createTestThought } from '../helpers/factories.js';
 import type { ThoughtData } from '../../core/thought.js';
 
+const SESSION_ID = asSessionId('dag-session');
+
 function makeThought(num: number, overrides?: Partial<ThoughtData>): ThoughtData {
 	return createTestThought({
 		id: generateUlid(),
+		session_id: SESSION_ID,
 		thought_number: num,
 		total_thoughts: 10,
 		thought: `t${num}`,
@@ -55,7 +58,7 @@ describe('HistoryManager DAG edge emission', () => {
 				manager.addThought(makeThought(i));
 			}
 			// Nothing to assert beyond "no throw" — there is no store to inspect.
-			expect(manager.getHistoryLength()).toBe(3);
+			expect(manager.getHistoryLength(SESSION_ID)).toBe(3);
 		});
 
 		it('defaults dagEdges to true when omitted', () => {
@@ -77,7 +80,7 @@ describe('HistoryManager DAG edge emission', () => {
 			manager.addThought(t2);
 			manager.addThought(t3);
 
-			const edges = edgeStore.edgesForSession(asSessionId('__global__'));
+			const edges = edgeStore.edgesForSession(SESSION_ID);
 			expect(edges).toHaveLength(2);
 			expect(edges.every((e) => e.kind === 'sequence')).toBe(true);
 			expect(edges[0]!.from).toBe(t1.id);
@@ -103,9 +106,7 @@ describe('HistoryManager DAG edge emission', () => {
 			manager.addThought(t2);
 			manager.addThought(t3);
 
-			const branchEdges = edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((e) => e.kind === 'branch');
+			const branchEdges = edgeStore.edgesForSession(SESSION_ID).filter((e) => e.kind === 'branch');
 			expect(branchEdges).toHaveLength(1);
 			expect(branchEdges[0]!.from).toBe(t2.id);
 			expect(branchEdges[0]!.to).toBe(t3.id);
@@ -124,9 +125,7 @@ describe('HistoryManager DAG edge emission', () => {
 			manager.addThought(t3);
 			manager.addThought(t4);
 
-			const mergeEdges = edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((e) => e.kind === 'merge');
+			const mergeEdges = edgeStore.edgesForSession(SESSION_ID).filter((e) => e.kind === 'merge');
 			expect(mergeEdges).toHaveLength(2);
 			const fromIds = mergeEdges.map((e) => e.from).sort();
 			expect(fromIds).toEqual([t1.id, t3.id].sort());
@@ -145,9 +144,7 @@ describe('HistoryManager DAG edge emission', () => {
 			});
 			manager.addThought(verifier);
 
-			const verifies = edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((e) => e.kind === 'verifies');
+			const verifies = edgeStore.edgesForSession(SESSION_ID).filter((e) => e.kind === 'verifies');
 			expect(verifies).toHaveLength(1);
 			expect(verifies[0]!.from).toBe(verifier.id);
 			expect(verifies[0]!.to).toBe(targets[3]!.id);
@@ -165,9 +162,7 @@ describe('HistoryManager DAG edge emission', () => {
 			});
 			manager.addThought(critic);
 
-			const critiques = edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((e) => e.kind === 'critiques');
+			const critiques = edgeStore.edgesForSession(SESSION_ID).filter((e) => e.kind === 'critiques');
 			expect(critiques).toHaveLength(1);
 			expect(critiques[0]!.from).toBe(critic.id);
 			expect(critiques[0]!.to).toBe(targets[3]!.id);
@@ -188,7 +183,7 @@ describe('HistoryManager DAG edge emission', () => {
 			manager.addThought(synth);
 
 			const derives = edgeStore
-				.edgesForSession(asSessionId('__global__'))
+				.edgesForSession(SESSION_ID)
 				.filter((e) => e.kind === 'derives_from');
 			expect(derives).toHaveLength(2);
 			const fromIds = derives.map((e) => e.from).sort();
@@ -209,9 +204,7 @@ describe('HistoryManager DAG edge emission', () => {
 			manager.addThought(t3);
 			manager.addThought(rev);
 
-			const revises = edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((e) => e.kind === 'revises');
+			const revises = edgeStore.edgesForSession(SESSION_ID).filter((e) => e.kind === 'revises');
 			expect(revises).toHaveLength(1);
 			expect(revises[0]!.from).toBe(rev.id);
 			expect(revises[0]!.to).toBe(t3.id);
@@ -227,9 +220,7 @@ describe('HistoryManager DAG edge emission', () => {
 				manager.addThought(makeThought(2, { merge_from_thoughts: [999] }))
 			).not.toThrow();
 
-			const merges = edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((e) => e.kind === 'merge');
+			const merges = edgeStore.edgesForSession(SESSION_ID).filter((e) => e.kind === 'merge');
 			expect(merges).toHaveLength(0);
 		});
 
@@ -255,7 +246,7 @@ describe('HistoryManager DAG edge emission', () => {
 			manager.addThought(t2);
 			manager.addThought(t3);
 
-			const all = edgeStore.edgesForSession(asSessionId('__global__'));
+			const all = edgeStore.edgesForSession(SESSION_ID);
 			// t1->t2 sequence + t1->t3 branch (no t2->t3 sequence).
 			expect(all).toHaveLength(2);
 			expect(all.filter((e) => e.kind === 'sequence')).toHaveLength(1);
@@ -287,9 +278,7 @@ describe('HistoryManager DAG edge emission', () => {
 			manager.addThought(t2);
 			manager.addThought(t3);
 
-			const branchEdges = edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((e) => e.kind === 'branch');
+			const branchEdges = edgeStore.edgesForSession(SESSION_ID).filter((e) => e.kind === 'branch');
 			expect(branchEdges).toHaveLength(2);
 			const t3BranchEdge = branchEdges.find((e) => e.to === t3.id);
 			expect(t3BranchEdge).toBeDefined();
@@ -302,7 +291,7 @@ describe('EdgeEmitter mutation reporting', () => {
 	it('returns true when a relational edge is added', () => {
 		// Given
 		const edgeStore = new EdgeStore();
-		const emitter = new EdgeEmitter({ edgeStore, defaultSessionId: GLOBAL_SESSION_ID });
+		const emitter = new EdgeEmitter({ edgeStore, dagEdges: true });
 		const parentId = asThoughtId('parent');
 		const child = makeThought(2, {
 			id: asThoughtId('child'),
@@ -317,13 +306,13 @@ describe('EdgeEmitter mutation reporting', () => {
 
 		// Then
 		expect(added).toBe(true);
-		expect(edgeStore.edgesForSession(GLOBAL_SESSION_ID)[0]?.kind).toBe('branch');
+		expect(edgeStore.edgesForSession(SESSION_ID)[0]?.kind).toBe('branch');
 	});
 
 	it('returns true when a sequence edge is added', () => {
 		// Given
 		const edgeStore = new EdgeStore();
-		const emitter = new EdgeEmitter({ edgeStore, defaultSessionId: GLOBAL_SESSION_ID });
+		const emitter = new EdgeEmitter({ edgeStore, dagEdges: true });
 		const first = makeThought(1, { id: asThoughtId('first') });
 		const second = makeThought(2, { id: asThoughtId('second') });
 
@@ -335,13 +324,13 @@ describe('EdgeEmitter mutation reporting', () => {
 
 		// Then
 		expect(added).toBe(true);
-		expect(edgeStore.edgesForSession(GLOBAL_SESSION_ID)[0]?.kind).toBe('sequence');
+		expect(edgeStore.edgesForSession(SESSION_ID)[0]?.kind).toBe('sequence');
 	});
 
 	it('returns false when the sequence edge is a duplicate', () => {
 		// Given
 		const edgeStore = new EdgeStore();
-		const emitter = new EdgeEmitter({ edgeStore, defaultSessionId: GLOBAL_SESSION_ID });
+		const emitter = new EdgeEmitter({ edgeStore, dagEdges: true });
 		const first = makeThought(1, { id: asThoughtId('first') });
 		const second = makeThought(2, { id: asThoughtId('second') });
 		const session = { thought_history: [first, second], branches: {} };
@@ -352,13 +341,13 @@ describe('EdgeEmitter mutation reporting', () => {
 
 		// Then
 		expect(added).toBe(false);
-		expect(edgeStore.size(GLOBAL_SESSION_ID)).toBe(1);
+		expect(edgeStore.size(SESSION_ID)).toBe(1);
 	});
 
 	it('returns false when a relational edge is a duplicate', () => {
 		// Given
 		const edgeStore = new EdgeStore();
-		const emitter = new EdgeEmitter({ edgeStore, defaultSessionId: GLOBAL_SESSION_ID });
+		const emitter = new EdgeEmitter({ edgeStore, dagEdges: true });
 		const parent = makeThought(1, { id: asThoughtId('parent') });
 		const child = makeThought(2, {
 			id: asThoughtId('child'),
@@ -374,7 +363,7 @@ describe('EdgeEmitter mutation reporting', () => {
 
 		// Then
 		expect(added).toBe(false);
-		expect(edgeStore.edgesForSession(GLOBAL_SESSION_ID)).toHaveLength(1);
+		expect(edgeStore.edgesForSession(SESSION_ID)).toHaveLength(1);
 	});
 
 	it('returns false when edge emission is disabled', () => {
@@ -383,7 +372,6 @@ describe('EdgeEmitter mutation reporting', () => {
 		const emitter = new EdgeEmitter({
 			edgeStore,
 			dagEdges: false,
-			defaultSessionId: GLOBAL_SESSION_ID,
 		});
 		const thought = makeThought(1, { id: asThoughtId('thought') });
 
@@ -395,14 +383,14 @@ describe('EdgeEmitter mutation reporting', () => {
 
 		// Then
 		expect(added).toBe(false);
-		expect(edgeStore.size(GLOBAL_SESSION_ID)).toBe(0);
+		expect(edgeStore.size(SESSION_ID)).toBe(0);
 	});
 
 	it('returns false when the current thought has no id', () => {
 		// Given
 		const edgeStore = new EdgeStore();
-		const emitter = new EdgeEmitter({ edgeStore, defaultSessionId: GLOBAL_SESSION_ID });
-		const thought = createTestThought({ thought_number: 1 });
+		const emitter = new EdgeEmitter({ edgeStore, dagEdges: true });
+		const thought = createTestThought({ thought_number: 1, session_id: SESSION_ID });
 
 		// When
 		const added = emitter.emitEdgesForThought(
@@ -412,13 +400,13 @@ describe('EdgeEmitter mutation reporting', () => {
 
 		// Then
 		expect(added).toBe(false);
-		expect(edgeStore.size(GLOBAL_SESSION_ID)).toBe(0);
+		expect(edgeStore.size(SESSION_ID)).toBe(0);
 	});
 
 	it('returns false when the candidate edge is invalid', () => {
 		// Given
 		const edgeStore = new EdgeStore();
-		const emitter = new EdgeEmitter({ edgeStore, defaultSessionId: GLOBAL_SESSION_ID });
+		const emitter = new EdgeEmitter({ edgeStore, dagEdges: true });
 		const sharedId = asThoughtId('same-thought');
 		const first = makeThought(1, { id: sharedId });
 		const second = makeThought(2, { id: sharedId });
@@ -431,6 +419,6 @@ describe('EdgeEmitter mutation reporting', () => {
 
 		// Then
 		expect(added).toBe(false);
-		expect(edgeStore.size(GLOBAL_SESSION_ID)).toBe(0);
+		expect(edgeStore.size(SESSION_ID)).toBe(0);
 	});
 });

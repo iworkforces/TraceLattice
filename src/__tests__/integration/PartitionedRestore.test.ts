@@ -6,7 +6,6 @@ import {
 	asSessionId,
 	asSummaryId,
 	asThoughtId,
-	GLOBAL_SESSION_ID,
 	type BranchId,
 	type SessionId,
 } from '../../contracts/ids.js';
@@ -26,12 +25,12 @@ import type { ThoughtData } from '../../core/thought.js';
 import { SessionAccessDeniedError } from '../../core/SessionErrors.js';
 import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { FilePersistence } from '../../persistence/FilePersistence.js';
-import { PersistenceCapabilityError } from '../../persistence/PersistenceErrors.js';
 import { SqlitePersistence } from '../../persistence/SqlitePersistence.js';
 import { createTestThought } from '../helpers/factories.js';
 import { StatefulSqliteDatabase } from '../helpers/StatefulSqliteDatabase.js';
 
 const managers = new Set<HistoryManager>();
+const TEST_SESSION_ID = asSessionId('restore-session');
 
 function thought(
 	sessionId: SessionId,
@@ -40,7 +39,7 @@ function thought(
 ): ThoughtData {
 	return createTestThought({
 		id: `${sessionId}-thought-${number}`,
-		session_id: sessionId === GLOBAL_SESSION_ID ? undefined : sessionId,
+		session_id: sessionId,
 		thought_number: number,
 		thought: `${sessionId}-${number}`,
 		available_mcp_tools: undefined,
@@ -106,21 +105,6 @@ class RecordingPersistence extends MemoryPersistence {
 		return await super.listSessions();
 	}
 
-	override async loadHistory(): Promise<ThoughtData[]> {
-		this.calls.push('loadHistory');
-		return await super.loadHistory();
-	}
-
-	override async listBranches(): Promise<BranchId[]> {
-		this.calls.push('listBranches');
-		return await super.listBranches();
-	}
-
-	override async listEdgeSessions(): Promise<SessionId[]> {
-		this.calls.push('listEdgeSessions');
-		return await super.listEdgeSessions();
-	}
-
 	override async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {
 		this.calls.push(`history:${sessionId}`);
 		return await super.loadHistoryForSession(sessionId);
@@ -178,9 +162,9 @@ class RecordingPersistence extends MemoryPersistence {
 		await super.saveSummaries(sessionId, values);
 	}
 
-	override async clear(): Promise<void> {
-		this.calls.push('clear');
-		await super.clear();
+	override async clearAll(): Promise<void> {
+		this.calls.push('clearAll');
+		await super.clearAll();
 	}
 
 	override async clearSession(sessionId: SessionId): Promise<void> {
@@ -208,38 +192,8 @@ class FailedResetPersistence extends MemoryPersistence {
 		throw new Error(`clear failed for ${sessionId}`);
 	}
 
-	override async clear(): Promise<void> {
+	override async clearAll(): Promise<void> {
 		throw new Error('clear all failed');
-	}
-}
-
-class LegacyOnlyPersistence implements PersistenceBackend {
-	async saveThought(): Promise<void> {}
-	async loadHistory(): Promise<ThoughtData[]> {
-		return [];
-	}
-	async saveBranch(): Promise<void> {}
-	async loadBranch(): Promise<ThoughtData[] | undefined> {
-		return undefined;
-	}
-	async listBranches(): Promise<BranchId[]> {
-		return [];
-	}
-	async healthy(): Promise<boolean> {
-		return true;
-	}
-	async clear(): Promise<void> {}
-	async close(): Promise<void> {}
-	async saveEdges(): Promise<void> {}
-	async loadEdges(): Promise<Edge[]> {
-		return [];
-	}
-	async listEdgeSessions(): Promise<SessionId[]> {
-		return [];
-	}
-	async saveSummaries(): Promise<void> {}
-	async loadSummaries(): Promise<Summary[]> {
-		return [];
 	}
 }
 
@@ -303,11 +257,17 @@ describe('Task 10 partitioned startup restore', () => {
 
 		expect(admitted.isError).toBeUndefined();
 		expect(recorder.getOutcomes(sessionId)).toEqual([
-			expect.objectContaining({ actual: 1, predicted: 0.99, thoughtNumber: 1 }),
+			expect.objectContaining({
+				thoughtId: asThoughtId('verification-restore-thought-1'),
+				sessionId,
+				type: 'hypothesis',
+				actual: 1,
+				predicted: 0.99,
+			}),
 		]);
 	});
 
-	it('T10-R01/R02/R03 restores the authoritative global/A/B namespace union', async () => {
+	it('T10-R01/R02/R03 restores the authoritative named namespace union', async () => {
 		// Given
 		const persistence = new MemoryPersistence();
 		const sessionA = asSessionId('A');
@@ -316,7 +276,7 @@ describe('Task 10 partitioned startup restore', () => {
 		const summaryOnly = asSessionId('summary-only');
 		const shared = asBranchId('shared');
 		const empty = asBranchId('empty');
-		await persistence.saveThought(thought(GLOBAL_SESSION_ID, 1));
+		await persistence.saveThoughtForSession(TEST_SESSION_ID, thought(TEST_SESSION_ID, 1));
 		await persistence.saveThoughtForSession(sessionA, thought(sessionA, 1));
 		await persistence.saveThoughtForSession(sessionB, thought(sessionB, 1));
 		await persistence.saveBranchForSession(sessionA, shared, [
@@ -339,11 +299,11 @@ describe('Task 10 partitioned startup restore', () => {
 		expect(history.getSessionIds().sort()).toEqual([
 			'A',
 			'B',
-			'__global__',
 			'edge-only',
+			'restore-session',
 			'summary-only',
 		]);
-		expect(history.getHistory(GLOBAL_SESSION_ID)).toHaveLength(1);
+		expect(history.getHistory(TEST_SESSION_ID)).toHaveLength(1);
 		expect(history.getHistory(sessionA)).toHaveLength(1);
 		expect(history.getHistory(sessionB)).toHaveLength(1);
 		expect(history.getBranch(shared, sessionA)?.[0]?.session_id).toBe(sessionA);
@@ -353,7 +313,7 @@ describe('Task 10 partitioned startup restore', () => {
 		expect(summaryStore.forSession(summaryOnly)).toHaveLength(1);
 	});
 
-	it('T10-R04 uses scoped listSessions once and never calls legacy or durable mutation APIs', async () => {
+	it('T10-R04 uses scoped listSessions once and never calls durable mutation APIs', async () => {
 		// Given
 		const persistence = new RecordingPersistence();
 		const sessionA = asSessionId('A');
@@ -658,25 +618,23 @@ describe('Task 10 partitioned startup restore', () => {
 		expect(history.getSessionIds()).toEqual([]);
 	});
 
-	it('T10-R07 allows a missing thought id only in the global partition', async () => {
+	it('T10-R07 rejects a missing nested thought session before mutation', async () => {
 		// Given
-		const globalWithoutId = thought(GLOBAL_SESSION_ID, 1);
-		Reflect.deleteProperty(globalWithoutId, 'id');
+		const thoughtWithoutSession = thought(TEST_SESSION_ID, 1);
+		Reflect.deleteProperty(thoughtWithoutSession, 'session_id');
 		const persistence = new (class extends MemoryPersistence {
 			override async listSessions(): Promise<SessionId[]> {
-				return [GLOBAL_SESSION_ID];
+				return [TEST_SESSION_ID];
 			}
 			override async loadHistoryForSession(): Promise<ThoughtData[]> {
-				return [globalWithoutId];
+				return [thoughtWithoutSession];
 			}
 		})();
 		const history = manager(persistence);
 
-		// When
-		await history.loadFromPersistence();
-
-		// Then
-		expect(history.getHistory(GLOBAL_SESSION_ID)).toEqual([globalWithoutId]);
+		// When / Then
+		await expect(history.loadFromPersistence()).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+		expect(history.getSessionIds()).toEqual([]);
 	});
 
 	it('T10-R08 rejects a missing thought id in a named partition before mutation', async () => {
@@ -706,34 +664,25 @@ describe('Task 10 partitioned startup restore', () => {
 		const sessionA = asSessionId('A');
 		const sessionB = asSessionId('B');
 		const persistence = new FailingPartitionPersistence(sessionB);
-		await persistence.saveThought(thought(GLOBAL_SESSION_ID, 1));
+		await persistence.saveThoughtForSession(TEST_SESSION_ID, thought(TEST_SESSION_ID, 1));
 		await persistence.saveThoughtForSession(sessionA, thought(sessionA, 1));
 		await persistence.saveThoughtForSession(sessionB, thought(sessionB, 1));
 		const edgeStore = new EdgeStore();
 		const summaryStore = new InMemorySummaryStore();
 		const history = manager(persistence, { edgeStore, summaryStore });
-		const liveThought = thought(GLOBAL_SESSION_ID, 99);
-		const liveEdge = edge(GLOBAL_SESSION_ID, 'live-edge');
-		const liveSummary = summary(GLOBAL_SESSION_ID, 'live-summary');
+		const liveThought = thought(TEST_SESSION_ID, 99);
+		const liveEdge = edge(TEST_SESSION_ID, 'live-edge');
+		const liveSummary = summary(TEST_SESSION_ID, 'live-summary');
 		history.addThought(liveThought);
 		edgeStore.addEdge(liveEdge);
 		summaryStore.add(liveSummary);
 
 		// When / Then
 		await expect(history.loadFromPersistence()).rejects.toThrow('read failed for B');
-		expect(history.getHistory(GLOBAL_SESSION_ID)).toEqual([liveThought]);
-		expect(history.getSessionIds()).toEqual([GLOBAL_SESSION_ID]);
-		expect(edgeStore.edgesForSession(GLOBAL_SESSION_ID)).toEqual([liveEdge]);
-		expect(summaryStore.forSession(GLOBAL_SESSION_ID)).toEqual([liveSummary]);
-	});
-
-	it('T10-R10 rejects a backend without the complete scoped capability', async () => {
-		// Given
-		const history = manager(new LegacyOnlyPersistence());
-
-		// When / Then
-		await expect(history.loadFromPersistence()).rejects.toBeInstanceOf(PersistenceCapabilityError);
-		expect(history.getSessionIds()).toEqual([]);
+		expect(history.getHistory(TEST_SESSION_ID)).toEqual([liveThought]);
+		expect(history.getSessionIds()).toEqual([TEST_SESSION_ID]);
+		expect(edgeStore.edgesForSession(TEST_SESSION_ID)).toEqual([liveEdge]);
+		expect(summaryStore.forSession(TEST_SESSION_ID)).toEqual([liveSummary]);
 	});
 
 	it('T10-R11 rejects malformed listed session identities before live mutation', async () => {
@@ -750,6 +699,48 @@ describe('Task 10 partitioned startup restore', () => {
 		// When / Then
 		await expect(history.loadFromPersistence()).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
 		expect(history.getSessionIds()).toEqual([]);
+	});
+
+	it('rejects a retired listed session identity before replacing live state', async () => {
+		// Given
+		const liveSession = asSessionId('live-session');
+		const liveThought = thought(liveSession, 1);
+		const persistence = new (class extends MemoryPersistence {
+			override async listSessions(): Promise<SessionId[]> {
+				const sessions: SessionId[] = [];
+				Array.prototype.push.call(sessions, '__global__');
+				return sessions;
+			}
+		})();
+		const history = manager(persistence);
+		history.addThought(liveThought);
+
+		// When / Then
+		await expect(history.loadFromPersistence()).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+		expect(history.getHistory(liveSession)).toEqual([liveThought]);
+	});
+
+	it('rejects a retired nested thought session before replacing live state', async () => {
+		// Given
+		const restoredSession = asSessionId('restored-session');
+		const liveSession = asSessionId('live-session');
+		const liveThought = thought(liveSession, 1);
+		const retiredThought = thought(restoredSession, 1);
+		Reflect.set(retiredThought, 'session_id', '__global__');
+		const persistence = new (class extends MemoryPersistence {
+			override async listSessions(): Promise<SessionId[]> {
+				return [restoredSession];
+			}
+			override async loadHistoryForSession(): Promise<ThoughtData[]> {
+				return [retiredThought];
+			}
+		})();
+		const history = manager(persistence);
+		history.addThought(liveThought);
+
+		// When / Then
+		await expect(history.loadFromPersistence()).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+		expect(history.getHistory(liveSession)).toEqual([liveThought]);
 	});
 
 	it('T10-I01 rejects a listed branch that disappears during staging', async () => {
@@ -972,12 +963,12 @@ describe('Task 10 partitioned startup restore', () => {
 		expect(history.getHistory(sessionA)).toHaveLength(1);
 	});
 
-	it('T10-O04 rejects owner-aware global, edge-only, and summary-only restored namespaces', async () => {
+	it('T10-O04 rejects owner-aware named, edge-only, and summary-only restored namespaces', async () => {
 		// Given
 		const persistence = new MemoryPersistence();
 		const edgeOnly = asSessionId('edge-only');
 		const summaryOnly = asSessionId('summary-only');
-		await persistence.saveThought(thought(GLOBAL_SESSION_ID, 1));
+		await persistence.saveThoughtForSession(TEST_SESSION_ID, thought(TEST_SESSION_ID, 1));
 		await persistence.saveEdges(edgeOnly, [edge(edgeOnly, 'edge-id')]);
 		await persistence.saveSummaries(summaryOnly, [summary(summaryOnly, 'summary-id')]);
 		const edgeStore = new EdgeStore();
@@ -990,10 +981,10 @@ describe('Task 10 partitioned startup restore', () => {
 
 		// When / Then
 		await runWithContext({ requestId: 'owner-edge', owner: 'network-owner' }, async () => {
-			expect(() => history.getHistory()).toThrow(SessionAccessDeniedError);
+			expect(() => history.getHistory(TEST_SESSION_ID)).toThrow(SessionAccessDeniedError);
 			expect(() => history.getHistory(edgeOnly)).toThrow(SessionAccessDeniedError);
 			expect(() => history.getHistory(summaryOnly)).toThrow(SessionAccessDeniedError);
-			await expect(history.resetSession(GLOBAL_SESSION_ID)).rejects.toBeInstanceOf(
+			await expect(history.resetSession(TEST_SESSION_ID)).rejects.toBeInstanceOf(
 				SessionAccessDeniedError
 			);
 			await expect(history.resetSession(edgeOnly)).rejects.toBeInstanceOf(SessionAccessDeniedError);
@@ -1001,7 +992,7 @@ describe('Task 10 partitioned startup restore', () => {
 				SessionAccessDeniedError
 			);
 		});
-		expect(history.getHistory()).toHaveLength(1);
+		expect(history.getHistory(TEST_SESSION_ID)).toHaveLength(1);
 		expect(edgeStore.edgesForSession(edgeOnly)).toEqual([]);
 		expect(summaryStore.forSession(summaryOnly)).toHaveLength(1);
 	});

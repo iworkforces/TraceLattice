@@ -3,9 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
 	PersistenceConfig,
-	SessionScopedPersistenceBackend,
+	PersistenceBackend,
 } from '../contracts/PersistenceBackend.js';
-import { asSessionId, GLOBAL_SESSION_ID, type BranchId, type SessionId } from '../contracts/ids.js';
+import { asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { ThoughtData } from '../core/thought.js';
@@ -39,7 +39,7 @@ type ValidatedThoughtState = {
 	readonly branches: ReadonlyMap<BranchId, ThoughtData[]>;
 };
 
-export class SqlitePersistence implements SessionScopedPersistenceBackend {
+export class SqlitePersistence implements PersistenceBackend {
 	private constructor(
 		private readonly _db: SqliteDatabase,
 		private readonly _sourcePath: string,
@@ -93,11 +93,6 @@ export class SqlitePersistence implements SessionScopedPersistenceBackend {
 		}
 	}
 
-	public async saveThought(thought: ThoughtData): Promise<void> {
-		assertThoughtScope('saveThought', GLOBAL_SESSION_ID, thought);
-		this._saveThought(GLOBAL_SESSION_ID, thought);
-	}
-
 	public async saveThoughtForSession(sessionId: SessionId, thought: ThoughtData): Promise<void> {
 		const validatedSessionId = asSessionId(sessionId);
 		assertThoughtScope('saveThoughtForSession', validatedSessionId, thought);
@@ -128,22 +123,12 @@ export class SqlitePersistence implements SessionScopedPersistenceBackend {
 		});
 	}
 
-	public async loadHistory(): Promise<ThoughtData[]> {
-		return await this.loadHistoryForSession(GLOBAL_SESSION_ID);
-	}
-
 	public async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {
 		const validatedSessionId = asSessionId(sessionId);
 		return runSqliteReadTransaction(
 			this._db,
 			() => this._loadValidatedThoughtState(validatedSessionId).history
 		);
-	}
-
-	public async saveBranch(branchId: BranchId, thoughts: ThoughtData[]): Promise<void> {
-		const validatedBranchId = parsePersistenceBranchId(branchId, `${this._sourcePath}:branches`);
-		assertBranchScope('saveBranch', GLOBAL_SESSION_ID, validatedBranchId, thoughts);
-		this._saveBranch(GLOBAL_SESSION_ID, validatedBranchId, thoughts);
 	}
 
 	public async saveBranchForSession(
@@ -177,10 +162,6 @@ export class SqlitePersistence implements SessionScopedPersistenceBackend {
 		});
 	}
 
-	public async deleteBranch(branchId: BranchId): Promise<void> {
-		await this.deleteBranchForSession(GLOBAL_SESSION_ID, branchId);
-	}
-
 	public async deleteBranchForSession(sessionId: SessionId, branchId: BranchId): Promise<void> {
 		if (!this._persistBranches) return;
 		const validatedSessionId = asSessionId(sessionId);
@@ -190,10 +171,6 @@ export class SqlitePersistence implements SessionScopedPersistenceBackend {
 				.prepare('DELETE FROM branches WHERE session_id = ? AND branch_id = ?')
 				.run(validatedSessionId, validatedBranchId);
 		});
-	}
-
-	public async loadBranch(branchId: BranchId): Promise<ThoughtData[] | undefined> {
-		return await this.loadBranchForSession(GLOBAL_SESSION_ID, branchId);
 	}
 
 	public async loadBranchForSession(
@@ -206,10 +183,6 @@ export class SqlitePersistence implements SessionScopedPersistenceBackend {
 		return runSqliteReadTransaction(this._db, () =>
 			this._loadValidatedThoughtState(validatedSessionId).branches.get(validatedBranchId)
 		);
-	}
-
-	public async listBranches(): Promise<BranchId[]> {
-		return await this.listBranchesForSession(GLOBAL_SESSION_ID);
 	}
 
 	public async listBranchesForSession(sessionId: SessionId): Promise<BranchId[]> {
@@ -232,7 +205,7 @@ export class SqlitePersistence implements SessionScopedPersistenceBackend {
 			.sort(compareCodePoint);
 	}
 
-	public async clear(): Promise<void> {
+	public async clearAll(): Promise<void> {
 		runSqliteTransaction(this._db, () => {
 			for (const table of ['thoughts', 'branches', 'edges', 'summaries'])
 				this._db.exec(`DELETE FROM ${table}`);
@@ -277,13 +250,6 @@ export class SqlitePersistence implements SessionScopedPersistenceBackend {
 			)
 			.all(validatedSessionId)
 			.map((row, index) => decodeEdgeRow(row, `${this._sourcePath}:edges:${index}`));
-	}
-
-	public async listEdgeSessions(): Promise<SessionId[]> {
-		return this._db
-			.prepare('SELECT DISTINCT session_id FROM edges ORDER BY session_id ASC')
-			.all()
-			.map((row) => asSessionId(stringField(row, 'session_id', this._sourcePath)));
 	}
 
 	public async saveSummaries(sessionId: SessionId, summaries: readonly Summary[]): Promise<void> {

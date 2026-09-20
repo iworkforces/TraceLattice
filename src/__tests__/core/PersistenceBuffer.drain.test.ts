@@ -1,12 +1,8 @@
 // allow: SIZE_OK - Task 8's contract matrix is intentionally colocated in its one authorized test file.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-	PersistenceBackend,
-	SessionScopedPersistenceBackend,
-} from '../../contracts/PersistenceBackend.js';
+import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
 import {
-	GLOBAL_SESSION_ID,
 	asBranchId,
 	asEdgeId,
 	asSessionId,
@@ -16,12 +12,7 @@ import {
 } from '../../contracts/ids.js';
 import type { Summary } from '../../core/compression/Summary.js';
 import type { Edge } from '../../core/graph/Edge.js';
-import { EdgeStore } from '../../core/graph/EdgeStore.js';
-import {
-	PersistenceBuffer,
-	type BufferedSession,
-	type PersistenceEventEmitter,
-} from '../../core/PersistenceBuffer.js';
+import { PersistenceBuffer, type PersistenceEventEmitter } from '../../core/PersistenceBuffer.js';
 import { PersistenceWorkQueue } from '../../core/PersistenceWorkQueue.js';
 import { PersistenceWriter, type PersistenceDelay } from '../../core/PersistenceWriter.js';
 import type { ThoughtData } from '../../core/thought.js';
@@ -37,18 +28,18 @@ type PromiseOutcome =
 	{ readonly status: 'fulfilled' } | { readonly status: 'rejected'; readonly reason: unknown };
 
 interface ThoughtWrite {
-	readonly sessionId: SessionId | undefined;
+	readonly sessionId: SessionId;
 	readonly thought: ThoughtData;
 }
 
 interface BranchWrite {
-	readonly sessionId: SessionId | undefined;
+	readonly sessionId: SessionId;
 	readonly branchId: BranchId;
 	readonly thoughts: readonly ThoughtData[];
 }
 
 interface BranchDelete {
-	readonly sessionId: SessionId | undefined;
+	readonly sessionId: SessionId;
 	readonly branchId: BranchId;
 }
 
@@ -80,25 +71,16 @@ class CoordinatorFault extends Error {
 	}
 }
 
-class RecordingPersistence implements SessionScopedPersistenceBackend {
+class RecordingPersistence implements PersistenceBackend {
 	public readonly thoughtWrites: ThoughtWrite[] = [];
 	public readonly branchWrites: BranchWrite[] = [];
 	public readonly branchDeletes: BranchDelete[] = [];
 	public readonly edgeWrites: SnapshotWrite<Edge>[] = [];
 	public readonly summaryWrites: SnapshotWrite<Summary>[] = [];
-	public readonly legacyThoughts: ThoughtData[] = [];
 	public readonly scopedThoughts: ThoughtWrite[] = [];
-	public readonly legacyBranches: BranchWrite[] = [];
 	public readonly scopedBranches: BranchWrite[] = [];
 
 	public constructor(private readonly _handlers: PersistenceHandlers = {}) {}
-
-	public async saveThought(thought: ThoughtData): Promise<void> {
-		const write = { sessionId: undefined, thought };
-		this.legacyThoughts.push(thought);
-		this.thoughtWrites.push(write);
-		await this._handlers.thought?.(write);
-	}
 
 	public async saveThoughtForSession(sessionId: SessionId, thought: ThoughtData): Promise<void> {
 		const write = { sessionId, thought };
@@ -107,19 +89,8 @@ class RecordingPersistence implements SessionScopedPersistenceBackend {
 		await this._handlers.thought?.(write);
 	}
 
-	public async loadHistory(): Promise<ThoughtData[]> {
-		return [];
-	}
-
 	public async loadHistoryForSession(_sessionId: SessionId): Promise<ThoughtData[]> {
 		return [];
-	}
-
-	public async saveBranch(branchId: BranchId, thoughts: ThoughtData[]): Promise<void> {
-		const write = { sessionId: undefined, branchId, thoughts: [...thoughts] };
-		this.legacyBranches.push(write);
-		this.branchWrites.push(write);
-		await this._handlers.branch?.(write);
 	}
 
 	public async saveBranchForSession(
@@ -133,20 +104,10 @@ class RecordingPersistence implements SessionScopedPersistenceBackend {
 		await this._handlers.branch?.(write);
 	}
 
-	public async deleteBranch(branchId: BranchId): Promise<void> {
-		const write = { sessionId: undefined, branchId };
-		this.branchDeletes.push(write);
-		await this._handlers.branchDelete?.(write);
-	}
-
 	public async deleteBranchForSession(sessionId: SessionId, branchId: BranchId): Promise<void> {
 		const write = { sessionId, branchId };
 		this.branchDeletes.push(write);
 		await this._handlers.branchDelete?.(write);
-	}
-
-	public async loadBranch(_branchId: BranchId): Promise<ThoughtData[] | undefined> {
-		return undefined;
 	}
 
 	public async loadBranchForSession(
@@ -154,10 +115,6 @@ class RecordingPersistence implements SessionScopedPersistenceBackend {
 		_branchId: BranchId
 	): Promise<ThoughtData[] | undefined> {
 		return undefined;
-	}
-
-	public async listBranches(): Promise<BranchId[]> {
-		return [];
 	}
 
 	public async listBranchesForSession(_sessionId: SessionId): Promise<BranchId[]> {
@@ -172,7 +129,7 @@ class RecordingPersistence implements SessionScopedPersistenceBackend {
 		return true;
 	}
 
-	public async clear(): Promise<void> {}
+	public async clearAll(): Promise<void> {}
 
 	public async clearSession(sessionId: SessionId): Promise<void> {
 		await this._handlers.clearSession?.(sessionId);
@@ -190,10 +147,6 @@ class RecordingPersistence implements SessionScopedPersistenceBackend {
 		return [];
 	}
 
-	public async listEdgeSessions(): Promise<SessionId[]> {
-		return [];
-	}
-
 	public async saveSummaries(sessionId: SessionId, summaries: readonly Summary[]): Promise<void> {
 		const write = { sessionId, snapshot: [...summaries] };
 		this.summaryWrites.push(write);
@@ -206,9 +159,7 @@ class RecordingPersistence implements SessionScopedPersistenceBackend {
 }
 
 interface Harness {
-	readonly buffer: PersistenceBuffer<BufferedSession>;
-	readonly sessions: Map<SessionId, BufferedSession>;
-	readonly edgeStore: EdgeStore;
+	readonly buffer: PersistenceBuffer;
 }
 
 interface HarnessOptions {
@@ -216,14 +167,13 @@ interface HarnessOptions {
 	readonly maxRetries?: number;
 	readonly bufferSize?: number;
 	readonly flushInterval?: number;
-	readonly edgeStore?: EdgeStore;
 	readonly eventEmitter?: PersistenceEventEmitter;
-	readonly getSessions?: () => Map<SessionId, BufferedSession>;
 	readonly delay?: PersistenceDelay;
 }
 
-const activeBuffers: PersistenceBuffer<BufferedSession>[] = [];
+const activeBuffers: PersistenceBuffer[] = [];
 const deferredReleases: Array<() => void> = [];
+const TEST_SESSION_ID = asSessionId('test-session');
 
 function createDeferred(): Deferred {
 	let release = (): void => {};
@@ -235,44 +185,23 @@ function createDeferred(): Deferred {
 }
 
 function createHarness(options: HarnessOptions): Harness {
-	const sessions = new Map<SessionId, BufferedSession>();
-	sessions.set(GLOBAL_SESSION_ID, { writeBuffer: [] });
-	const edgeStore = options.edgeStore ?? new EdgeStore();
-	const buffer = new PersistenceBuffer<BufferedSession>({
+	const buffer = new PersistenceBuffer({
 		persistence: options.persistence,
 		bufferSize: options.bufferSize ?? 100,
 		flushInterval: options.flushInterval ?? 1_000,
 		maxRetries: options.maxRetries ?? 0,
-		defaultSessionId: GLOBAL_SESSION_ID,
-		getSessions: options.getSessions ?? (() => sessions),
-		getDefaultSession: () => getSession(sessions, GLOBAL_SESSION_ID),
-		edgeStore,
 		eventEmitter: options.eventEmitter,
 		delay: options.delay,
 	});
 	activeBuffers.push(buffer);
-	return { buffer, sessions, edgeStore };
+	return { buffer };
 }
 
-function getSession(
-	sessions: Map<SessionId, BufferedSession>,
-	sessionId: SessionId
-): BufferedSession {
-	const existing = sessions.get(sessionId);
-	if (existing !== undefined) return existing;
-	const created = { writeBuffer: [] };
-	sessions.set(sessionId, created);
-	return created;
-}
-
-function drain(buffer: PersistenceBuffer<BufferedSession>): Promise<void> {
+function drain(buffer: PersistenceBuffer): Promise<void> {
 	return buffer.drain();
 }
 
-function drainSession(
-	buffer: PersistenceBuffer<BufferedSession>,
-	sessionId: SessionId
-): Promise<void> {
+function drainSession(buffer: PersistenceBuffer, sessionId: SessionId): Promise<void> {
 	return buffer.drainSession(sessionId);
 }
 
@@ -290,7 +219,7 @@ function acceptThoughtData(harness: Harness, sessionId: SessionId, thought: Thou
 }
 
 function acceptBranch(
-	buffer: PersistenceBuffer<BufferedSession>,
+	buffer: PersistenceBuffer,
 	sessionId: SessionId,
 	branchId: BranchId,
 	thoughts: readonly ThoughtData[]
@@ -299,7 +228,7 @@ function acceptBranch(
 }
 
 function acceptBranchDelete(
-	buffer: PersistenceBuffer<BufferedSession>,
+	buffer: PersistenceBuffer,
 	sessionId: SessionId,
 	branchId: BranchId
 ): void {
@@ -311,7 +240,7 @@ function acceptEdges(harness: Harness, sessionId: SessionId, edges: readonly Edg
 }
 
 function acceptSummaries(
-	buffer: PersistenceBuffer<BufferedSession>,
+	buffer: PersistenceBuffer,
 	sessionId: SessionId,
 	summaries: readonly Summary[]
 ): void {
@@ -386,7 +315,7 @@ describe('PersistenceBuffer joinable drain generation', () => {
 		const gate = createDeferred();
 		const persistence = new RecordingPersistence({ thought: async () => gate.promise });
 		const harness = createHarness({ persistence });
-		acceptThought(harness, GLOBAL_SESSION_ID, 1);
+		acceptThought(harness, TEST_SESSION_ID, 1);
 
 		// When
 		const first = drain(harness.buffer);
@@ -408,7 +337,7 @@ describe('PersistenceBuffer joinable drain generation', () => {
 		const gate = createDeferred();
 		const persistence = new RecordingPersistence({ thought: async () => gate.promise });
 		const harness = createHarness({ persistence });
-		acceptThought(harness, GLOBAL_SESSION_ID, 1);
+		acceptThought(harness, TEST_SESSION_ID, 1);
 
 		// When
 		const first = drain(harness.buffer);
@@ -437,7 +366,7 @@ describe('PersistenceBuffer joinable drain generation', () => {
 		const harness = createHarness({ persistence });
 		acceptThoughtData(
 			harness,
-			GLOBAL_SESSION_ID,
+			TEST_SESSION_ID,
 			createTestThought({ id: 'shared-acceptance-id', thought_number: 1 })
 		);
 
@@ -446,7 +375,7 @@ describe('PersistenceBuffer joinable drain generation', () => {
 		await flushMicrotasks();
 		acceptThoughtData(
 			harness,
-			GLOBAL_SESSION_ID,
+			TEST_SESSION_ID,
 			createTestThought({ id: 'shared-acceptance-id', thought_number: 2 })
 		);
 		gate.resolve();
@@ -490,7 +419,7 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 			},
 		});
 		const queue = new PersistenceWorkQueue();
-		const work = queue.enqueueThought(GLOBAL_SESSION_ID, createTestThought({ thought_number: 1 }));
+		const work = queue.enqueueThought(TEST_SESSION_ID, createTestThought({ thought_number: 1 }));
 
 		// When
 		const outcome = await writer.write(work);
@@ -558,7 +487,6 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 			sessionId,
 			sessionId,
 		]);
-		expect(persistence.legacyThoughts).toHaveLength(0);
 	});
 
 	it('rejects with a typed failure after exactly maxRetries plus one attempts and retains work', async () => {
@@ -684,7 +612,6 @@ describe('PersistenceBuffer auxiliary-only work', () => {
 
 		// Then
 		expect(persistence.scopedBranches).toHaveLength(1);
-		expect(persistence.legacyBranches).toHaveLength(0);
 		expect(outcome).toMatchObject({
 			status: 'rejected',
 			reason: {

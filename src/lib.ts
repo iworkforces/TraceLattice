@@ -5,7 +5,7 @@
 import { EventEmitter } from 'node:events';
 import type * as v from 'valibot';
 import type { ThoughtData } from './core/thought.js';
-import type { BranchId } from './contracts/ids.js';
+import { asSessionId, type BranchId } from './contracts/ids.js';
 import type { SequentialThinkingSchema } from './schema.js';
 import { SEQUENTIAL_THINKING_TOOL } from './schema.js';
 import type { IDisposable } from './types/disposable.js';
@@ -137,11 +137,12 @@ export interface IToolAwareSequentialThinkingServer extends IDisposable {
 	refreshDiscovery(): Promise<{ tools: number; skills: number }>;
 
 	/**
-	 * Get all branches from the history manager.
+	 * Get all branches for one explicit thought session.
 	 *
+	 * @param sessionId - Valid thought-session identifier
 	 * @returns Map of branch IDs to thought arrays
 	 */
-	getBranches(): Record<string, ThoughtData[]>;
+	getBranches(sessionId: string): Record<string, ThoughtData[]>;
 
 	/**
 	 * Process a thought through the configured pipeline.
@@ -166,11 +167,6 @@ export interface IToolAwareSequentialThinkingServer extends IDisposable {
 	 * Stop the server and clean up watchers, suspension stores, and persistence.
 	 */
 	stop(): Promise<void>;
-
-	/**
-	 * Clear all server state (history, tools, skills).
-	 */
-	clear(): void;
 
 	/** Awaitably reset one session and all matching auxiliary state. */
 	resetSession(sessionId: string): Promise<void>;
@@ -276,8 +272,8 @@ export class ToolAwareSequentialThinkingServer
 	 * Direct access to the history manager
 	 * @example
 	 * ```typescript
-	 * server.history.getHistory();
-	 * server.history.clear();
+	 * server.history.getHistory('analysis-session');
+	 * await server.resetAll();
 	 * ```
 	 */
 	public readonly history: HistoryManager;
@@ -286,8 +282,8 @@ export class ToolAwareSequentialThinkingServer
 	 * Direct access to the tool registry
 	 * @example
 	 * ```typescript
-	 * server.tools.addTool(tool);
-	 * server.tools.getTool('my-tool');
+	 * server.tools.add(tool);
+	 * server.tools.get('my-tool');
 	 * ```
 	 */
 	public readonly tools: ToolRegistry;
@@ -296,8 +292,8 @@ export class ToolAwareSequentialThinkingServer
 	 * Direct access to the skill registry
 	 * @example
 	 * ```typescript
-	 * server.skills.addSkill(skill);
-	 * server.skills.getSkill('my-skill');
+	 * server.skills.add(skill);
+	 * server.skills.get('my-skill');
 	 * ```
 	 */
 	public readonly skills: SkillRegistry;
@@ -337,7 +333,7 @@ export class ToolAwareSequentialThinkingServer
 		this.config = this._config;
 
 		// Always include the sequential thinking tool
-		this.tools.addTool(SEQUENTIAL_THINKING_TOOL);
+		this.tools.add(SEQUENTIAL_THINKING_TOOL);
 
 		// Initialize watchers if enabled
 		if (options.enableWatcher) {
@@ -668,11 +664,12 @@ export class ToolAwareSequentialThinkingServer
 	}
 
 	/**
-	 * Get all branches from the history manager
+	 * Get all branches for one explicit thought session.
+	 * @param sessionId - Valid thought-session identifier
 	 * @returns Record<string, ThoughtData[]> - Map of branch IDs to thought arrays
 	 */
-	public getBranches(): Record<BranchId, ThoughtData[]> {
-		return this._historyManager.getBranches();
+	public getBranches(sessionId: string): Record<BranchId, ThoughtData[]> {
+		return this._historyManager.getBranches(asSessionId(sessionId));
 	}
 
 	// Main processing method - delegate to ThoughtProcessor
@@ -774,15 +771,6 @@ export class ToolAwareSequentialThinkingServer
 			this._logger.info('Server stopped, watchers cleaned up');
 		});
 		return this._stopPromise;
-	}
-
-	/**
-	 * Clear all server state (history, tools, skills)
-	 * Useful for testing to reset state between tests
-	 */
-	public clear(): void {
-		this._historyManager.clear();
-		this._logger.info('Server state cleared');
 	}
 
 	/** Awaitably resets one session and matching processor-owned state. */

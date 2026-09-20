@@ -9,11 +9,7 @@
  * @module contracts/ids
  */
 
-import {
-	generateUlid,
-	MAX_SESSION_ID_LENGTH,
-	SESSION_ID_PATTERN,
-} from '../core/ids.js';
+import { generateUlid, MAX_SESSION_ID_LENGTH, SESSION_ID_PATTERN } from '../core/ids.js';
 import { ValidationError } from '../errors.js';
 
 declare const __brand: unique symbol;
@@ -48,29 +44,25 @@ export type SummaryId = Brand<string, 'SummaryId'>;
  * Validate and brand a string as a {@link SessionId}.
  *
  * Enforces {@link SESSION_ID_PATTERN} and {@link MAX_SESSION_ID_LENGTH}.
- * The reserved global session sentinel `__global__` is always accepted.
+ * The retired global session sentinel `__global__` is rejected.
  *
  * @throws {ValidationError} when the input is not a valid session id.
  */
 export function asSessionId(value: string): SessionId {
 	if (value === '__global__') {
-		// eslint-disable-next-line no-restricted-syntax -- branding constructor, cannot self-reference
-		return value as SessionId;
+		throw new ValidationError(
+			'session_id',
+			"reserved value '__global__' is retired; use an explicit named session"
+		);
 	}
 	if (typeof value !== 'string' || value.length === 0) {
 		throw new ValidationError('session_id', 'must be a non-empty string');
 	}
 	if (value.length > MAX_SESSION_ID_LENGTH) {
-		throw new ValidationError(
-			'session_id',
-			`exceeds max length of ${MAX_SESSION_ID_LENGTH}`,
-		);
+		throw new ValidationError('session_id', `exceeds max length of ${MAX_SESSION_ID_LENGTH}`);
 	}
 	if (!SESSION_ID_PATTERN.test(value)) {
-		throw new ValidationError(
-			'session_id',
-			'must match alphanumeric, hyphens, underscores',
-		);
+		throw new ValidationError('session_id', 'must match alphanumeric, hyphens, underscores');
 	}
 	// eslint-disable-next-line no-restricted-syntax -- branding constructor, cannot self-reference
 	return value as SessionId;
@@ -120,11 +112,3 @@ export function generateSuspensionToken(): SuspensionToken {
 export function generateSummaryId(): SummaryId {
 	return generateUlid() as SummaryId;
 }
-
-/**
- * Reserved sentinel session id used when callers omit `session_id`.
- *
- * Branded once here so production and test code share one constant
- * instead of casting `'__global__'` ad-hoc.
- */
-export const GLOBAL_SESSION_ID: SessionId = asSessionId('__global__');
