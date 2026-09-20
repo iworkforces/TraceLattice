@@ -331,8 +331,8 @@ describe('watcher cleanup ownership', () => {
 			autoDiscover: true,
 			loadFromPersistence: false,
 		});
-		expect(first.skills.getSkill('restart-skill')?.description).toBe('first');
-		expect(first.tools.getTool('restart-tool')?.description).toBe('first');
+		expect(first.skills.get('restart-skill')?.description).toBe('first');
+		expect(first.tools.get('restart-tool')?.description).toBe('first');
 		await first.dispose();
 
 		await Promise.all([
@@ -346,8 +346,8 @@ describe('watcher cleanup ownership', () => {
 			loadFromPersistence: false,
 		});
 		try {
-			expect(second.skills.getSkill('restart-skill')?.description).toBe('second');
-			expect(second.tools.getTool('restart-tool')?.description).toBe('second');
+			expect(second.skills.get('restart-skill')?.description).toBe('second');
+			expect(second.tools.get('restart-tool')?.description).toBe('second');
 		} finally {
 			await second.dispose();
 		}

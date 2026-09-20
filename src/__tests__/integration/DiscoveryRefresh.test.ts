@@ -118,7 +118,7 @@ describe('Discovery refresh integration', () => {
 		refreshed = nextRefresh();
 		await writeFile(alphaPath, skillDocument('alpha', 'updated'), 'utf8');
 		await withDeadline(refreshed, 'skill change refresh');
-		expect(registry.getSkill('alpha')?.description).toBe('updated');
+		expect(registry.get('alpha')?.description).toBe('updated');
 
 		// When/Then: unlink
 		refreshed = nextRefresh();
@@ -147,7 +147,7 @@ describe('Discovery refresh integration', () => {
 		await withDeadline(refreshed, 'malformed skill refresh');
 
 		// Then
-		expect(registry.getSkill('alpha')?.description).toBe('stable');
+		expect(registry.get('alpha')?.description).toBe('stable');
 		expect(logger.warn).toHaveBeenCalledWith(
 			'Invalid skill discovery file',
 			expect.objectContaining({ retainedLastKnownGood: true })
@@ -176,7 +176,7 @@ describe('Discovery refresh integration', () => {
 		refreshed = nextRefresh();
 		await writeFile(toolPath, toolDocument('search', 'updated'), 'utf8');
 		await withDeadline(refreshed, 'tool change refresh');
-		expect(registry.getTool('search')?.description).toBe('updated');
+		expect(registry.get('search')?.description).toBe('updated');
 		expect(registry.size()).toBe(1);
 
 		// When/Then: unlink
@@ -223,7 +223,7 @@ describe('Discovery refresh integration', () => {
 		expect(stopCompleted).toBe(false);
 		releaseRefresh?.();
 		await withDeadline(stopping, 'watcher stop');
-		expect(registry.hasSkill('before-stop')).toBe(true);
+		expect(registry.has('before-stop')).toBe(true);
 
 		const observer = watch(skillDir, { ignoreInitial: true });
 		await withDeadline(
@@ -280,8 +280,8 @@ describe('Discovery refresh integration', () => {
 			withDeadline(skillRefreshed, 'factory skill add refresh'),
 			withDeadline(toolRefreshed, 'factory tool add refresh'),
 		]);
-		expect(server.skills.getSkill('factory-skill')?.description).toBe('first');
-		expect(server.tools.getTool('factory-tool')?.description).toBe('first');
+		expect(server.skills.get('factory-skill')?.description).toBe('first');
+		expect(server.tools.get('factory-tool')?.description).toBe('first');
 
 		skillRefreshed = nextSkillRefresh();
 		toolRefreshed = nextToolRefresh();
@@ -293,8 +293,8 @@ describe('Discovery refresh integration', () => {
 			withDeadline(skillRefreshed, 'factory skill change refresh'),
 			withDeadline(toolRefreshed, 'factory tool change refresh'),
 		]);
-		expect(server.skills.getSkill('factory-skill')?.description).toBe('updated');
-		expect(server.tools.getTool('factory-tool')?.description).toBe('updated');
+		expect(server.skills.get('factory-skill')?.description).toBe('updated');
+		expect(server.tools.get('factory-tool')?.description).toBe('updated');
 
 		skillRefreshed = nextSkillRefresh();
 		toolRefreshed = nextToolRefresh();
@@ -303,8 +303,8 @@ describe('Discovery refresh integration', () => {
 			withDeadline(skillRefreshed, 'factory skill unlink refresh'),
 			withDeadline(toolRefreshed, 'factory tool unlink refresh'),
 		]);
-		expect(server.skills.hasSkill('factory-skill')).toBe(false);
-		expect(server.tools.hasTool('factory-tool')).toBe(false);
+		expect(server.skills.has('factory-skill')).toBe(false);
+		expect(server.tools.has('factory-tool')).toBe(false);
 	});
 
 	it('retains both last-known-good items after malformed configured watcher changes', async () => {
@@ -340,8 +340,8 @@ describe('Discovery refresh integration', () => {
 			withDeadline(toolRefreshed, 'malformed configured tool change'),
 		]);
 
-		expect(server.skills.getSkill('stable-skill')?.description).toBe('stable');
-		expect(server.tools.getTool('stable-tool')?.description).toBe('stable');
+		expect(server.skills.get('stable-skill')?.description).toBe('stable');
+		expect(server.tools.get('stable-tool')?.description).toBe('stable');
 	});
 
 	it('refreshes real files with lazy startup and watchers disabled', async () => {
@@ -350,7 +350,11 @@ describe('Discovery refresh integration', () => {
 		const toolDir = join(rootDir, 'lazy-tools');
 		await Promise.all([mkdir(skillDir), mkdir(toolDir)]);
 		await Promise.all([
-			writeFile(join(skillDir, 'filesystem.md'), skillDocument('filesystem-skill', 'fresh'), 'utf8'),
+			writeFile(
+				join(skillDir, 'filesystem.md'),
+				skillDocument('filesystem-skill', 'fresh'),
+				'utf8'
+			),
 			writeFile(
 				join(toolDir, 'filesystem.tool.md'),
 				toolDocument('filesystem-tool', 'fresh'),
@@ -369,16 +373,16 @@ describe('Discovery refresh integration', () => {
 			loadFromPersistence: false,
 		});
 		activeServers.push(server);
-		expect(server.skills.hasSkill('filesystem-skill')).toBe(false);
-		expect(server.tools.hasTool('filesystem-tool')).toBe(false);
+		expect(server.skills.has('filesystem-skill')).toBe(false);
+		expect(server.tools.has('filesystem-tool')).toBe(false);
 
 		// When
 		const result = await server.refreshDiscovery();
 
 		// Then
 		expect(result).toEqual({ tools: 1, skills: 1 });
-		expect(server.skills.getSkill('filesystem-skill')?.description).toBe('fresh');
-		expect(server.tools.getTool('filesystem-tool')?.description).toBe('fresh');
+		expect(server.skills.get('filesystem-skill')?.description).toBe('fresh');
+		expect(server.tools.get('filesystem-tool')?.description).toBe('fresh');
 	});
 
 	it('preserves last-known-good, manual precedence, and the built-in while reporting file counts', async () => {
@@ -392,11 +396,7 @@ describe('Discovery refresh integration', () => {
 			writeFile(stableSkillPath, skillDocument('stable-skill', 'stable'), 'utf8'),
 			writeFile(join(skillDir, 'manual.md'), skillDocument('manual-skill', 'filesystem'), 'utf8'),
 			writeFile(stableToolPath, toolDocument('stable-tool', 'stable'), 'utf8'),
-			writeFile(
-				join(toolDir, 'manual.tool.md'),
-				toolDocument('manual-tool', 'filesystem'),
-				'utf8'
-			),
+			writeFile(join(toolDir, 'manual.tool.md'), toolDocument('manual-tool', 'filesystem'), 'utf8'),
 			writeFile(
 				join(toolDir, 'built-in.tool.md'),
 				toolDocument('sequentialthinking_tools', 'filesystem'),
@@ -414,12 +414,12 @@ describe('Discovery refresh integration', () => {
 			loadFromPersistence: false,
 		});
 		activeServers.push(server);
-		server.skills.addSkill({
+		server.skills.add({
 			name: 'manual-skill',
 			description: 'manual',
 			user_invocable: false,
 		});
-		server.tools.addTool({ name: 'manual-tool', description: 'manual', inputSchema: {} });
+		server.tools.add({ name: 'manual-tool', description: 'manual', inputSchema: {} });
 		await expect(server.refreshDiscovery()).resolves.toEqual({ tools: 1, skills: 1 });
 		await Promise.all([
 			writeFile(stableSkillPath, '---\n: invalid: [yaml\n---\n# Body', 'utf8'),
@@ -431,12 +431,12 @@ describe('Discovery refresh integration', () => {
 
 		// Then
 		expect(result).toEqual({ tools: 1, skills: 1 });
-		expect(server.skills.getSkill('stable-skill')?.description).toBe('stable');
-		expect(server.tools.getTool('stable-tool')?.description).toBe('stable');
-		expect(server.skills.getSkill('manual-skill')?.description).toBe('manual');
-		expect(server.tools.getTool('manual-tool')?.description).toBe('manual');
-		expect(server.tools.hasTool('sequentialthinking_tools')).toBe(true);
-		expect(server.tools.getTool('sequentialthinking_tools')?.description).not.toBe('filesystem');
+		expect(server.skills.get('stable-skill')?.description).toBe('stable');
+		expect(server.tools.get('stable-tool')?.description).toBe('stable');
+		expect(server.skills.get('manual-skill')?.description).toBe('manual');
+		expect(server.tools.get('manual-tool')?.description).toBe('manual');
+		expect(server.tools.has('sequentialthinking_tools')).toBe(true);
+		expect(server.tools.get('sequentialthinking_tools')?.description).not.toBe('filesystem');
 	});
 });
 
