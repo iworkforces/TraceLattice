@@ -25,15 +25,16 @@ describe('ConfigLoader', () => {
 	});
 
 	afterEach(() => {
-		delete process.env.MAX_HISTORY_SIZE;
-		delete process.env.MAX_BRANCHES;
-		delete process.env.MAX_BRANCH_SIZE;
-		delete process.env.LOG_LEVEL;
-		delete process.env.PRETTY_LOG;
-		delete process.env.SKILL_DIRS;
-		delete process.env.TOOL_DIRS;
-		delete process.env.DISCOVERY_CACHE_TTL;
-		delete process.env.DISCOVERY_CACHE_MAX_SIZE;
+		delete process.env.TRACELATTICE_CONFIG;
+		delete process.env.TRACELATTICE_MAX_HISTORY_SIZE;
+		delete process.env.TRACELATTICE_MAX_BRANCHES;
+		delete process.env.TRACELATTICE_MAX_BRANCH_SIZE;
+		delete process.env.TRACELATTICE_LOG_LEVEL;
+		delete process.env.TRACELATTICE_PRETTY_LOG;
+		delete process.env.TRACELATTICE_SKILL_DIRS;
+		delete process.env.TRACELATTICE_TOOL_DIRS;
+		delete process.env.TRACELATTICE_DISCOVERY_CACHE_TTL;
+		delete process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE;
 	});
 
 	describe('constructor', () => {
@@ -51,6 +52,16 @@ describe('ConfigLoader', () => {
 			const config = loader.load();
 			expect(config).not.toBeNull();
 			expect(config!.maxHistorySize).toBe(500);
+		});
+
+		it('should use the namespaced environment config path', () => {
+			process.env.TRACELATTICE_CONFIG = '/environment/config.yaml';
+			mockExistsSync.mockImplementation((path: string) => path === '/environment/config.yaml');
+			mockReadFileSync.mockReturnValue('maxHistorySize: 600');
+
+			const config = new ConfigLoader().load();
+
+			expect(config?.maxHistorySize).toBe(600);
 		});
 	});
 
@@ -242,7 +253,7 @@ describe('ConfigLoader', () => {
 
 	describe('environment variable overrides', () => {
 		it('should override maxHistorySize from env', () => {
-			process.env.MAX_HISTORY_SIZE = '500';
+			process.env.TRACELATTICE_MAX_HISTORY_SIZE = '500';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -251,7 +262,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should override maxBranches from env', () => {
-			process.env.MAX_BRANCHES = '25';
+			process.env.TRACELATTICE_MAX_BRANCHES = '25';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -260,7 +271,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should override maxBranchSize from env', () => {
-			process.env.MAX_BRANCH_SIZE = '200';
+			process.env.TRACELATTICE_MAX_BRANCH_SIZE = '200';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -269,7 +280,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should override logLevel from env (valid values only)', () => {
-			process.env.LOG_LEVEL = 'debug';
+			process.env.TRACELATTICE_LOG_LEVEL = 'debug';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -278,7 +289,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should ignore invalid logLevel from env', () => {
-			process.env.LOG_LEVEL = 'trace';
+			process.env.TRACELATTICE_LOG_LEVEL = 'trace';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -286,8 +297,8 @@ describe('ConfigLoader', () => {
 			expect(config!.logLevel).toBeUndefined();
 		});
 
-		it('should set prettyLog to false when PRETTY_LOG=false', () => {
-			process.env.PRETTY_LOG = 'false';
+		it('should set prettyLog to false when TRACELATTICE_PRETTY_LOG=false', () => {
+			process.env.TRACELATTICE_PRETTY_LOG = 'false';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -295,8 +306,8 @@ describe('ConfigLoader', () => {
 			expect(config!.prettyLog).toBe(false);
 		});
 
-		it('should not set prettyLog when PRETTY_LOG has other value', () => {
-			process.env.PRETTY_LOG = 'true';
+		it('should not set prettyLog when TRACELATTICE_PRETTY_LOG has other value', () => {
+			process.env.TRACELATTICE_PRETTY_LOG = 'true';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -304,8 +315,8 @@ describe('ConfigLoader', () => {
 			expect(config!.prettyLog).toBeUndefined();
 		});
 
-		it('should parse SKILL_DIRS from colon-separated env', () => {
-			process.env.SKILL_DIRS = '/skills/a:/skills/b:/skills/c';
+		it('should parse TRACELATTICE_SKILL_DIRS from colon-separated env', () => {
+			process.env.TRACELATTICE_SKILL_DIRS = '/skills/a:/skills/b:/skills/c';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -313,8 +324,8 @@ describe('ConfigLoader', () => {
 			expect(config!.skillDirs).toEqual(['/skills/a', '/skills/b', '/skills/c']);
 		});
 
-		it('should parse TOOL_DIRS from colon-separated env', () => {
-			process.env.TOOL_DIRS = '/tools/a:/tools/b:/tools/c';
+		it('should parse TRACELATTICE_TOOL_DIRS from colon-separated env', () => {
+			process.env.TRACELATTICE_TOOL_DIRS = '/tools/a:/tools/b:/tools/c';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -323,8 +334,8 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should let explicit empty root environments disable file roots', () => {
-			process.env.SKILL_DIRS = '';
-			process.env.TOOL_DIRS = '';
+			process.env.TRACELATTICE_SKILL_DIRS = '';
+			process.env.TRACELATTICE_TOOL_DIRS = '';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockReturnValue(
@@ -359,8 +370,8 @@ describe('ConfigLoader', () => {
 			expect(config.toolDirs).not.toBe(toolDirs);
 		});
 
-		it('should convert DISCOVERY_CACHE_TTL from seconds to ms', () => {
-			process.env.DISCOVERY_CACHE_TTL = '60';
+		it('should convert TRACELATTICE_DISCOVERY_CACHE_TTL from seconds to ms', () => {
+			process.env.TRACELATTICE_DISCOVERY_CACHE_TTL = '60';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -369,8 +380,8 @@ describe('ConfigLoader', () => {
 			expect(config!.discoveryCache!.ttl).toBe(60000);
 		});
 
-		it('should set DISCOVERY_CACHE_MAX_SIZE from env', () => {
-			process.env.DISCOVERY_CACHE_MAX_SIZE = '200';
+		it('should set TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE from env', () => {
+			process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE = '200';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -380,7 +391,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should merge discoveryCache env vars with file config', () => {
-			process.env.DISCOVERY_CACHE_TTL = '120';
+			process.env.TRACELATTICE_DISCOVERY_CACHE_TTL = '120';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockReturnValue(JSON.stringify({ discoveryCache: { maxSize: 50 } }));
@@ -391,7 +402,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should override file values with env vars', () => {
-			process.env.MAX_HISTORY_SIZE = '999';
+			process.env.TRACELATTICE_MAX_HISTORY_SIZE = '999';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockReturnValue(
@@ -411,7 +422,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should reject non-numeric values in numeric env vars', () => {
-			process.env.MAX_HISTORY_SIZE = 'not-a-number';
+			process.env.TRACELATTICE_MAX_HISTORY_SIZE = 'not-a-number';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockReturnValue(JSON.stringify({ maxHistorySize: 100 }));
@@ -420,7 +431,7 @@ describe('ConfigLoader', () => {
 		});
 
 		it('should reject Infinity values in numeric env vars', () => {
-			process.env.MAX_HISTORY_SIZE = 'Infinity';
+			process.env.TRACELATTICE_MAX_HISTORY_SIZE = 'Infinity';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -485,24 +496,24 @@ describe('ConfigLoader', () => {
 	});
 
 	describe('uncovered branch coverage', () => {
-		it('should reject NaN MAX_BRANCH_SIZE from env', () => {
-			process.env.MAX_BRANCH_SIZE = 'not-a-number';
+		it('should reject NaN TRACELATTICE_MAX_BRANCH_SIZE from env', () => {
+			process.env.TRACELATTICE_MAX_BRANCH_SIZE = 'not-a-number';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
 			expect(() => loader.load()).toThrow(ConfigurationError);
 		});
 
-		it('should reject NaN DISCOVERY_CACHE_TTL from env', () => {
-			process.env.DISCOVERY_CACHE_TTL = 'invalid';
+		it('should reject NaN TRACELATTICE_DISCOVERY_CACHE_TTL from env', () => {
+			process.env.TRACELATTICE_DISCOVERY_CACHE_TTL = 'invalid';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
 			expect(() => loader.load()).toThrow(ConfigurationError);
 		});
 
-		it('should reject NaN DISCOVERY_CACHE_MAX_SIZE from env', () => {
-			process.env.DISCOVERY_CACHE_MAX_SIZE = 'invalid';
+		it('should reject NaN TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE from env', () => {
+			process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE = 'invalid';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
@@ -527,32 +538,32 @@ describe('ConfigLoader', () => {
 			consoleSpy.mockRestore();
 		});
 
-		it('should reject Infinity MAX_BRANCHES from env', () => {
-			process.env.MAX_BRANCHES = 'Infinity';
+		it('should reject Infinity TRACELATTICE_MAX_BRANCHES from env', () => {
+			process.env.TRACELATTICE_MAX_BRANCHES = 'Infinity';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
 			expect(() => loader.load()).toThrow(ConfigurationError);
 		});
 
-		it('should reject Infinity MAX_BRANCH_SIZE from env', () => {
-			process.env.MAX_BRANCH_SIZE = 'Infinity';
+		it('should reject Infinity TRACELATTICE_MAX_BRANCH_SIZE from env', () => {
+			process.env.TRACELATTICE_MAX_BRANCH_SIZE = 'Infinity';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
 			expect(() => loader.load()).toThrow(ConfigurationError);
 		});
 
-		it('should reject Infinity DISCOVERY_CACHE_TTL from env', () => {
-			process.env.DISCOVERY_CACHE_TTL = 'Infinity';
+		it('should reject Infinity TRACELATTICE_DISCOVERY_CACHE_TTL from env', () => {
+			process.env.TRACELATTICE_DISCOVERY_CACHE_TTL = 'Infinity';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
 			expect(() => loader.load()).toThrow(ConfigurationError);
 		});
 
-		it('should reject Infinity DISCOVERY_CACHE_MAX_SIZE from env', () => {
-			process.env.DISCOVERY_CACHE_MAX_SIZE = 'Infinity';
+		it('should reject Infinity TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE from env', () => {
+			process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE = 'Infinity';
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
