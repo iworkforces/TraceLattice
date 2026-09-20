@@ -6,8 +6,6 @@
 
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
 import type { PersistenceWork, PersistenceWorkFailure } from '../contracts/persistence-work.js';
-import { GLOBAL_SESSION_ID } from '../contracts/ids.js';
-import { requireSessionScopedPersistence } from '../persistence/SessionScopedPersistence.js';
 import { assertNever } from '../utils.js';
 
 const DEFAULT_RETRY_DELAYS = [100, 500, 2000] as const;
@@ -98,29 +96,12 @@ export class PersistenceWriter {
 	private async _dispatch(work: PersistenceWork): Promise<void> {
 		switch (work.kind) {
 			case 'thought':
-				if (work.sessionId === GLOBAL_SESSION_ID) {
-					return this._persistence.saveThought(work.thought);
-				}
-				return requireSessionScopedPersistence(
-					this._persistence,
-					'saveThoughtForSession'
-				).saveThoughtForSession(work.sessionId, work.thought);
+				return this._persistence.saveThoughtForSession(work.sessionId, work.thought);
 			case 'branch':
 				if (work.operation === 'delete') {
-					const persistence = requireSessionScopedPersistence(
-						this._persistence,
-						work.sessionId === GLOBAL_SESSION_ID ? 'deleteBranch' : 'deleteBranchForSession'
-					);
-					return work.sessionId === GLOBAL_SESSION_ID
-						? persistence.deleteBranch(work.key)
-						: persistence.deleteBranchForSession(work.sessionId, work.key);
+					return this._persistence.deleteBranchForSession(work.sessionId, work.key);
 				}
-				if (work.sessionId === GLOBAL_SESSION_ID)
-					return this._persistence.saveBranch(work.key, [...work.snapshot]);
-				return requireSessionScopedPersistence(
-					this._persistence,
-					'saveBranchForSession'
-				).saveBranchForSession(work.sessionId, work.key, work.snapshot);
+				return this._persistence.saveBranchForSession(work.sessionId, work.key, work.snapshot);
 			case 'edge':
 				return this._persistence.saveEdges(work.sessionId, work.snapshot);
 			case 'summary':
