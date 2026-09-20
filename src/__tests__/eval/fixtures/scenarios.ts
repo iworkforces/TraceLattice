@@ -1,4 +1,4 @@
-import { asBranchId } from '../../../contracts/ids.js';
+import { asBranchId, asSessionId, asThoughtId } from '../../../contracts/ids.js';
 /**
  * Eval fixture scenarios — handcrafted thought sequences exercising
  * different reasoning trajectories (convergence, plateau, divergence, …).
@@ -11,7 +11,8 @@ import { asBranchId } from '../../../contracts/ids.js';
  */
 
 import type { ThoughtData } from '../../../core/thought.js';
-import { asThoughtId } from '../../../contracts/ids.js';
+
+const EVAL_FIXTURE_SESSION = asSessionId('eval-fixture-session');
 
 /**
  * Behavior expected of the Tree-of-Thought strategy on a given scenario.
@@ -46,6 +47,7 @@ function t(
 	overrides: Partial<ThoughtData> = {}
 ): ThoughtData {
 	return {
+		session_id: EVAL_FIXTURE_SESSION,
 		id: asThoughtId(`t-${idx}`),
 		thought,
 		thought_number: idx,
