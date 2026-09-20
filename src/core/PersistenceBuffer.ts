@@ -7,7 +7,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
-import type { IEdgeStore } from '../contracts/interfaces.js';
 import type { BranchId, SessionId } from '../contracts/ids.js';
 import type { PersistenceWork, PersistenceWorkToken } from '../contracts/persistence-work.js';
 import {
@@ -24,11 +23,6 @@ import { PersistenceWorkQueue, type PersistenceSelectionMode } from './Persisten
 import { PersistenceWriter, type PersistenceDelay } from './PersistenceWriter.js';
 import type { ThoughtData } from './thought.js';
 
-/** Minimal compatibility view for legacy callers that own a `writeBuffer`. */
-export interface BufferedSession {
-	writeBuffer: ThoughtData[];
-}
-
 /** Event emitter contract for persistence error events. */
 export interface PersistenceEventEmitter {
 	emit(event: 'persistenceError', payload: { operation: string; error: Error }): boolean;
@@ -38,18 +32,11 @@ export interface PersistenceEventEmitter {
 export type SessionEvictionState = 'quiescent' | 'pending' | 'failed' | 'barrier';
 
 /** Configuration options for {@link PersistenceBuffer}. */
-export interface PersistenceBufferConfig<S extends BufferedSession> {
+export interface PersistenceBufferConfig {
 	readonly persistence: PersistenceBackend;
 	readonly bufferSize: number;
 	readonly flushInterval: number;
 	readonly maxRetries: number;
-	readonly defaultSessionId: SessionId;
-	/** Compatibility-only session source retained until producer wiring is migrated. */
-	readonly getSessions: () => Map<SessionId, S>;
-	/** Compatibility-only default session retained until producer wiring is migrated. */
-	readonly getDefaultSession: () => S;
-	/** Compatibility-only edge source retained until producers register snapshots. */
-	readonly edgeStore?: IEdgeStore;
 	/** Optional emitter for `persistenceError` events. */
 	readonly eventEmitter?: PersistenceEventEmitter | null;
 	readonly logger?: Logger;
@@ -90,10 +77,9 @@ type SessionQuiescence =
  * Accepted work is owned by a queue independent of live session state. Explicit
  * callers can join and upgrade a background generation without starting another writer.
  */
-export class PersistenceBuffer<S extends BufferedSession> {
+export class PersistenceBuffer {
 	private readonly _bufferSize: number;
 	private readonly _flushInterval: number;
-	private readonly _defaultSessionId: SessionId;
 	private readonly _queue = new PersistenceWorkQueue();
 	private readonly _writer: PersistenceWriter;
 	private _eventEmitter: PersistenceEventEmitter | null;
@@ -115,10 +101,9 @@ export class PersistenceBuffer<S extends BufferedSession> {
 	 *
 	 * @param config - Persistence dependencies, trigger thresholds, and retry policy.
 	 */
-	public constructor(config: PersistenceBufferConfig<S>) {
+	public constructor(config: PersistenceBufferConfig) {
 		this._bufferSize = config.bufferSize;
 		this._flushInterval = config.flushInterval;
-		this._defaultSessionId = config.defaultSessionId;
 		this._eventEmitter = config.eventEmitter ?? null;
 		this._logger = config.logger ?? new NullLogger();
 		this._writer = new PersistenceWriter({
@@ -155,17 +140,10 @@ export class PersistenceBuffer<S extends BufferedSession> {
 	/**
 	 * Accepts a thought with authoritative session attribution.
 	 *
-	 * The legacy session overload derives attribution from `thought.session_id` and
-	 * falls back to the configured default session without using the live write buffer.
-	 *
 	 * @param sessionId - Session that owns the accepted thought.
 	 * @param thought - Thought to persist.
 	 */
-	public bufferThought(sessionId: SessionId, thought: ThoughtData): void;
-	public bufferThought(session: BufferedSession, thought: ThoughtData): void;
-	public bufferThought(source: SessionId | BufferedSession, thought: ThoughtData): void {
-		const sessionId =
-			typeof source === 'string' ? source : (thought.session_id ?? this._defaultSessionId);
+	public bufferThought(sessionId: SessionId, thought: ThoughtData): void {
 		this._assertSessionAdmissionOpen(sessionId);
 		if (this._queue.pendingThoughtCount >= this._bufferSize && this.isFlushing) {
 			this._logger.info('Write buffer full and flush in progress, applying backpressure', {
