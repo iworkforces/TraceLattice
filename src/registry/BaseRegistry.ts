@@ -40,6 +40,18 @@ export interface BaseRegistryOptions {
 	lazyDiscovery?: boolean;
 }
 
+interface DiscoveryWarning {
+	readonly message: string;
+	readonly meta: Record<string, unknown>;
+}
+
+interface DiscoveryScan<T> {
+	readonly itemsByPath: Map<string, T>;
+	readonly claimedNames: Set<string>;
+	readonly previousItemsByPath: ReadonlyMap<string, T>;
+	readonly warnings: DiscoveryWarning[];
+}
+
 /**
  * Abstract base registry for managing named items with discovery and caching.
  *
@@ -69,7 +81,10 @@ export abstract class BaseRegistry<T extends { name: string }> {
 
 	/** Promise for in-progress discovery (null if not in progress). */
 	protected _discoveryPromise: Promise<number> | null = null;
-	private _refreshRequested = false;
+	private _activeDiscoveryEpoch: number | null = null;
+	private _queuedRefreshEpoch: number | null = null;
+	private _replacementEpoch = 0;
+	private _discoveredCount = 0;
 
 	/** File extensions to match during discovery. */
 	protected abstract readonly _fileExtensions: string[];
@@ -169,11 +184,13 @@ export abstract class BaseRegistry<T extends { name: string }> {
 		if (!this._items.has(name)) {
 			throw this._createNotFoundError(name, 'remove');
 		}
-		this._items.delete(name);
-		this._manualItems.delete(name);
-		for (const [filePath, item] of this._discoveredItemsByPath) {
-			if (item.name === name) this._discoveredItemsByPath.delete(filePath);
+		const removedManualItem = this._manualItems.delete(name);
+		if (!removedManualItem) {
+			for (const [filePath, item] of this._discoveredItemsByPath) {
+				if (item.name === name) this._discoveredItemsByPath.delete(filePath);
+			}
 		}
+		this._rebuildVisibleItems();
 		this.log(`Removed ${this._entityName}: ${name}`, { [`${this._entityName}Name`]: name });
 		// Invalidate cache when removing an item
 		this._cache?.invalidate('all');
@@ -192,7 +209,7 @@ export abstract class BaseRegistry<T extends { name: string }> {
 			throw this._createNotFoundError(name, 'update');
 		}
 		const existing = this._items.get(name)!;
-		const updated = { ...existing, ...updates };
+		const updated = { ...existing, ...updates, name };
 		this._items.set(name, updated);
 		if (this._manualItems.has(name)) this._manualItems.set(name, updated);
 		for (const [filePath, item] of this._discoveredItemsByPath) {
@@ -259,12 +276,8 @@ export abstract class BaseRegistry<T extends { name: string }> {
 	 * Clears all items from the registry.
 	 */
 	public clear(): void {
-		this._items.clear();
-		this._manualItems.clear();
-		this._discoveredItemsByPath.clear();
+		this._beginReplacement();
 		this.log(`Cleared all ${this._entityName}s`);
-		// Invalidate cache when clearing all items
-		this._cache?.clear();
 	}
 
 	/**
@@ -286,12 +299,17 @@ export abstract class BaseRegistry<T extends { name: string }> {
 	 */
 	public async discoverAsync(): Promise<number> {
 		if (this._discoveryPromise) {
+			if (
+				!this._discovered &&
+				this._activeDiscoveryEpoch !== this._replacementEpoch
+			) {
+				this._queuedRefreshEpoch = this._replacementEpoch;
+			}
 			return this._discoveryPromise;
 		}
 
 		if (this._discovered) {
-			const cached = this._cache.get('all');
-			return cached?.length ?? 0;
+			return this._discoveredCount;
 		}
 
 		return this._beginDiscovery();
@@ -306,28 +324,39 @@ export abstract class BaseRegistry<T extends { name: string }> {
 	 * @returns A Promise resolving to the number of discovered filesystem items
 	 */
 	public async refreshAsync(): Promise<number> {
-		this._refreshRequested = true;
-		return this._discoveryPromise ?? this._beginDiscovery();
+		if (this._discoveryPromise) {
+			this._queuedRefreshEpoch = this._replacementEpoch;
+			return this._discoveryPromise;
+		}
+		return this._beginDiscovery();
 	}
 
 	private _beginDiscovery(): Promise<number> {
 		const operation = this._runDiscoveryLoop();
 		this._discoveryPromise = operation;
-		const clearOperation = (): void => {
-			if (this._discoveryPromise === operation) this._discoveryPromise = null;
-		};
-		operation.then(clearOperation, clearOperation);
 		return operation;
 	}
 
 	private async _runDiscoveryLoop(): Promise<number> {
-		this._refreshRequested = false;
-		let count = await this._performDiscovery();
-		while (this._refreshRequested) {
-			this._refreshRequested = false;
-			count = await this._performDiscovery();
+		let passEpoch = this._replacementEpoch;
+		try {
+			while (true) {
+				this._activeDiscoveryEpoch = passEpoch;
+				let count: number;
+				try {
+					count = await this._performDiscovery(passEpoch);
+				} finally {
+					this._activeDiscoveryEpoch = null;
+				}
+
+				const queuedEpoch = this._queuedRefreshEpoch;
+				this._queuedRefreshEpoch = null;
+				if (queuedEpoch === null) return count;
+				passEpoch = queuedEpoch;
+			}
+		} finally {
+			this._discoveryPromise = null;
 		}
-		return count;
 	}
 
 	/**
@@ -338,100 +367,113 @@ export abstract class BaseRegistry<T extends { name: string }> {
 	 *
 	 * @returns A Promise resolving to the number of items discovered
 	 */
-	protected async _performDiscovery(): Promise<number> {
-		const discoveredItems = new Map<string, T>();
-		const claimedNames = new Set(this._manualItems.keys());
-
+	protected async _performDiscovery(epoch = this._replacementEpoch): Promise<number> {
+		const scan: DiscoveryScan<T> = {
+			itemsByPath: new Map(),
+			claimedNames: new Set(),
+			previousItemsByPath: new Map(this._discoveredItemsByPath),
+			warnings: [],
+		};
 		for (const dir of this._searchDirs) {
-			try {
-				if (!existsSync(dir)) {
-					continue;
-				}
+			await this._scanDirectory(dir, scan);
+		}
+		return this._publishDiscovery(epoch, scan);
+	}
 
-				const entries = await readdir(dir, { withFileTypes: true });
-				for (const entry of entries) {
-					if (this._shouldSkipFile(entry.name)) {
-						continue;
-					}
+	private async _scanDirectory(directory: string, scan: DiscoveryScan<T>): Promise<void> {
+		try {
+			if (!existsSync(directory)) return;
+			const entries = await readdir(directory, { withFileTypes: true });
+			for (const entry of entries) {
+				if (this._shouldSkipFile(entry.name) || !entry.isFile()) continue;
+				if (!this._fileExtensions.some((extension) => entry.name.endsWith(extension))) continue;
+				await this._scanFile(join(directory, entry.name), scan);
+			}
+		} catch (error) {
+			scan.warnings.push({
+				message: `Failed to scan ${this._entityName} directory`,
+				meta: { directory, error: getErrorMessage(error) },
+			});
+			this._retainDirectory(directory, scan);
+		}
+	}
 
-					if (entry.isFile() && this._fileExtensions.some((ext) => entry.name.endsWith(ext))) {
-						const filePath = join(dir, entry.name);
-						try {
-							const content = await readFile(filePath, 'utf-8');
-							const parsed = this._parseFrontmatter(content);
-							if (parsed._error) {
-								this._retainLastKnownGood(filePath, parsed._error, discoveredItems, claimedNames);
-								continue;
-							}
-							if (parsed.name) {
-								const item = this._buildItem(parsed);
-								if (item && !claimedNames.has(item.name)) {
-									discoveredItems.set(filePath, item);
-									claimedNames.add(item.name);
-								}
-							}
-						} catch (readError) {
-							this._retainLastKnownGood(
-								filePath,
-								getErrorMessage(readError),
-								discoveredItems,
-								claimedNames
-							);
-						}
-					}
-				}
-			} catch (error) {
-				this._logger.warn(`Failed to scan ${this._entityName} directory`, {
-					directory: dir,
-					error: getErrorMessage(error),
-				});
-				this._retainDirectory(dir, discoveredItems, claimedNames);
+	private async _scanFile(filePath: string, scan: DiscoveryScan<T>): Promise<void> {
+		try {
+			const content = await readFile(filePath, 'utf-8');
+			const parsed = this._parseFrontmatter(content);
+			if (parsed._error) {
+				this._retainLastKnownGood(filePath, parsed._error, scan);
+				return;
+			}
+			if (!parsed.name) return;
+			const item = this._buildItem(parsed);
+			if (item && !scan.claimedNames.has(item.name)) {
+				scan.itemsByPath.set(filePath, item);
+				scan.claimedNames.add(item.name);
+			}
+		} catch (error) {
+			this._retainLastKnownGood(filePath, getErrorMessage(error), scan);
+		}
+	}
+
+	private _retainLastKnownGood(filePath: string, reason: string, scan: DiscoveryScan<T>): void {
+		const previous = scan.previousItemsByPath.get(filePath);
+		if (previous && !scan.claimedNames.has(previous.name)) {
+			scan.itemsByPath.set(filePath, previous);
+			scan.claimedNames.add(previous.name);
+		}
+		scan.warnings.push({
+			message: `Invalid ${this._entityName} discovery file`,
+			meta: { filePath, reason, retainedLastKnownGood: previous !== undefined },
+		});
+	}
+
+	private _retainDirectory(directory: string, scan: DiscoveryScan<T>): void {
+		for (const [filePath, item] of scan.previousItemsByPath) {
+			if (dirname(filePath) === directory && !scan.claimedNames.has(item.name)) {
+				scan.itemsByPath.set(filePath, item);
+				scan.claimedNames.add(item.name);
 			}
 		}
+	}
 
-		this._discoveredItemsByPath = discoveredItems;
-		this._items = new Map(this._manualItems);
-		for (const item of discoveredItems.values()) {
-			if (!this._items.has(item.name)) this._items.set(item.name, item);
-		}
+	private _publishDiscovery(epoch: number, scan: DiscoveryScan<T>): number {
+		if (epoch !== this._replacementEpoch) return this._discoveredCount;
+
+		this._discoveredItemsByPath = scan.itemsByPath;
+		this._rebuildVisibleItems();
 		this._discovered = true;
 		this._cache.clear();
 		this._cache.set('all', Array.from(this._items.values()));
-		this.log(`Discovery complete: found ${discoveredItems.size} ${this._entityName}s`, {
-			discoveredCount: discoveredItems.size,
+		for (const warning of scan.warnings) this._logger.warn(warning.message, warning.meta);
+		this.log(`Discovery complete: found ${this._discoveredCount} ${this._entityName}s`, {
+			discoveredCount: this._discoveredCount,
 		});
-		return discoveredItems.size;
+		return this._discoveredCount;
 	}
 
-	private _retainLastKnownGood(
-		filePath: string,
-		reason: string,
-		discoveredItems: Map<string, T>,
-		claimedNames: Set<string>
-	): void {
-		const previous = this._discoveredItemsByPath.get(filePath);
-		if (previous && !claimedNames.has(previous.name)) {
-			discoveredItems.set(filePath, previous);
-			claimedNames.add(previous.name);
+	private _rebuildVisibleItems(): void {
+		const visibleItems = new Map(this._manualItems);
+		let visibleDiscoveredCount = 0;
+		for (const item of this._discoveredItemsByPath.values()) {
+			if (visibleItems.has(item.name)) continue;
+			visibleItems.set(item.name, item);
+			visibleDiscoveredCount++;
 		}
-		this._logger.warn(`Invalid ${this._entityName} discovery file`, {
-			filePath,
-			reason,
-			retainedLastKnownGood: previous !== undefined,
-		});
+		this._items = visibleItems;
+		this._discoveredCount = visibleDiscoveredCount;
 	}
 
-	private _retainDirectory(
-		directory: string,
-		discoveredItems: Map<string, T>,
-		claimedNames: Set<string>
-	): void {
-		for (const [filePath, item] of this._discoveredItemsByPath) {
-			if (dirname(filePath) === directory && !claimedNames.has(item.name)) {
-				discoveredItems.set(filePath, item);
-				claimedNames.add(item.name);
-			}
-		}
+	private _beginReplacement(): void {
+		this._replacementEpoch++;
+		this._queuedRefreshEpoch = null;
+		this._items.clear();
+		this._manualItems.clear();
+		this._discoveredItemsByPath.clear();
+		this._discovered = false;
+		this._discoveredCount = 0;
+		this._cache.clear();
 	}
 
 	/**
@@ -458,7 +500,7 @@ export abstract class BaseRegistry<T extends { name: string }> {
 	 * @param items - Array of items from an external source
 	 */
 	public setAll(items: T[]): void {
-		this.clear();
+		this._beginReplacement();
 		for (const item of items) {
 			try {
 				this.add(item);
