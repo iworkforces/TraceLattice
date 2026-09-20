@@ -18,6 +18,7 @@ function createTestThought(overrides?: Partial<ThoughtData>): ThoughtData {
 		thought_number: 1,
 		total_thoughts: 1,
 		next_thought_needed: false,
+		session_id: asSessionId('tool-suite'),
 		...overrides,
 	};
 }
@@ -90,8 +91,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('1. Basic Functionality Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('1.1 Minimal Thought Processing - should validate basic thought processing with minimal required fields', async () => {
@@ -123,7 +124,7 @@ describe('tracelattice MCP Tool', () => {
 			expect(response.next_thought_needed).toBe(true);
 			expect(response.thought_history_length).toBe(1);
 			expect(response.strategy_hint?.action).toBe('continue');
-			expect(server.history.getHistoryLength()).toBe(1);
+			expect(server.history.getHistoryLength(asSessionId('tool-suite'))).toBe(1);
 		});
 
 		it('1.3 Full Field Thought Processing - should validate all fields are properly processed and returned', async () => {
@@ -182,8 +183,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('2. Tool & Skill Recommendation Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('2.1 Current Step with Tool Recommendations - should validate tool recommendation structure and return', async () => {
@@ -361,8 +362,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('3. History Management Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('3.1 Sequential Thought Processing - should validate multiple thoughts processed in sequence', async () => {
@@ -377,9 +378,9 @@ describe('tracelattice MCP Tool', () => {
 				await server.processThought(thought);
 			}
 
-			expect(server.history.getHistoryLength()).toBe(3);
+			expect(server.history.getHistoryLength(asSessionId('tool-suite'))).toBe(3);
 
-			const history = server.history.getHistory();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
 			expect(history[0]!.thought).toBe('Thought 1');
 			expect(history[1]!.thought).toBe('Thought 2');
 			expect(history[2]!.thought).toBe('Thought 3');
@@ -401,10 +402,10 @@ describe('tracelattice MCP Tool', () => {
 			}
 
 			// History should be trimmed to maxHistorySize (3)
-			expect(smallServer.history.getHistoryLength()).toBe(3);
+			expect(smallServer.history.getHistoryLength(asSessionId('tool-suite'))).toBe(3);
 
 			// The oldest thoughts should be removed, keeping the 3 most recent
-			const history = smallServer.history.getHistory();
+			const history = smallServer.history.getHistory(asSessionId('tool-suite'));
 			expect(history[0]!.thought).toBe('Thought 3');
 			expect(history[1]!.thought).toBe('Thought 4');
 			expect(history[2]!.thought).toBe('Thought 5');
@@ -438,7 +439,7 @@ describe('tracelattice MCP Tool', () => {
 			}
 
 			// All thoughts should be accessible via history manager
-			const history = server.history.getHistory();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
 			expect(history).toHaveLength(3);
 			expect(history[0]!.thought).toBe('First thought');
 			expect(history[1]!.thought).toBe('Second thought');
@@ -447,8 +448,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('4. Branching Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('4.1 Single Branch Creation - should validate creating a branch from an existing thought', async () => {
@@ -474,7 +475,7 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const branches = server.history.getBranches();
+			const branches = server.history.getBranches(asSessionId('tool-suite'));
 			expect(branches[asBranchId('branch-a')]).toHaveLength(1);
 			expect(branches[asBranchId('branch-a')]![0]!.thought).toBe('Branch thought');
 		});
@@ -513,7 +514,7 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const branches = server.history.getBranches();
+			const branches = server.history.getBranches(asSessionId('tool-suite'));
 			expect(branches[asBranchId('branch-a')]).toHaveLength(1);
 			expect(branches[asBranchId('branch-b')]).toHaveLength(1);
 			expect(branches[asBranchId('branch-a')]![0]!.thought).toBe('Branch A thought');
@@ -546,7 +547,7 @@ describe('tracelattice MCP Tool', () => {
 				);
 			}
 
-			const branches = server.history.getBranches();
+			const branches = server.history.getBranches(asSessionId('tool-suite'));
 			expect(Object.keys(branches)).toHaveLength(validBranchIds.length);
 		});
 
@@ -577,7 +578,7 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const branches = server.history.getBranches();
+			const branches = server.history.getBranches(asSessionId('tool-suite'));
 			expect(branches[asBranchId('valid-branch_123')]).toBeDefined();
 		});
 
@@ -616,7 +617,7 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const branches = server.history.getBranches();
+			const branches = server.history.getBranches(asSessionId('tool-suite'));
 			expect(branches[asBranchId('a')]).toBeDefined();
 			expect(branches[asBranchId(fiftyCharId)]).toBeDefined();
 
@@ -626,8 +627,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('5. Revision Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('5.1 Simple Revision Flag - should validate is_revision flag is preserved', async () => {
@@ -650,7 +651,7 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const history = server.history.getHistory();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
 
 			// The revision metadata should be preserved in history
 			expect(history[1]!.is_revision).toBe(true);
@@ -677,7 +678,7 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const history = server.history.getHistory();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
 			expect(history[1]!.is_revision).toBe(true);
 			expect(history[1]!.revises_thought).toBe(1);
 		});
@@ -705,8 +706,8 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const history = server.history.getHistory();
-			const branches = server.history.getBranches();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
+			const branches = server.history.getBranches(asSessionId('tool-suite'));
 
 			// Both sets of metadata should be preserved
 			expect(history[1]!.branch_from_thought).toBe(1);
@@ -720,8 +721,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('6. Edge Case Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('6.1 Thought Number Exceeds Total - should validate auto-adjustment when thought_number > total_thoughts', async () => {
@@ -761,7 +762,7 @@ describe('tracelattice MCP Tool', () => {
 				})
 			);
 
-			const history = server.history.getHistory();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
 
 			// Thought should be preserved without truncation
 			expect(history[0]!.thought).toHaveLength(10000);
@@ -788,7 +789,7 @@ describe('tracelattice MCP Tool', () => {
 			});
 
 			await server.processThought(thought);
-			const history = server.history.getHistory();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
 
 			// Flag should be preserved in history
 			expect(history[0]!.needs_more_thoughts).toBe(true);
@@ -796,8 +797,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('7. Error Handling Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('7.1 Invalid Thought Number (Negative) - should validate handling of negative thought_number', async () => {
@@ -900,8 +901,8 @@ describe('tracelattice MCP Tool', () => {
 	});
 
 	describe('8. Integration Tests', () => {
-		beforeEach(() => {
-			server.clear();
+		beforeEach(async () => {
+			await server.resetAll();
 		});
 
 		it('8.1 End-to-End Thinking Session - should validate complete multi-step thinking session', async () => {
@@ -976,8 +977,8 @@ describe('tracelattice MCP Tool', () => {
 			);
 
 			const finalResponse = parseProcessThoughtResult(finalResult);
-			const history = server.history.getHistory();
-			const branches = server.history.getBranches();
+			const history = server.history.getHistory(asSessionId('tool-suite'));
+			const branches = server.history.getBranches(asSessionId('tool-suite'));
 
 			// Verify coherent state maintained throughout
 			expect(history).toHaveLength(5);
@@ -1011,10 +1012,14 @@ describe('tracelattice MCP Tool', () => {
 			);
 
 			// Verify state isolation
-			expect(server1.history.getHistoryLength()).toBe(1);
-			expect(server2.history.getHistoryLength()).toBe(1);
-			expect(server1.history.getHistory()[0]!.thought).toBe('Server 1 thought');
-			expect(server2.history.getHistory()[0]!.thought).toBe('Server 2 thought');
+			expect(server1.history.getHistoryLength(asSessionId('tool-suite'))).toBe(1);
+			expect(server2.history.getHistoryLength(asSessionId('tool-suite'))).toBe(1);
+			expect(server1.history.getHistory(asSessionId('tool-suite'))[0]!.thought).toBe(
+				'Server 1 thought'
+			);
+			expect(server2.history.getHistory(asSessionId('tool-suite'))[0]!.thought).toBe(
+				'Server 2 thought'
+			);
 
 			// Create branches on each server
 			await server1.processThought(
@@ -1040,8 +1045,8 @@ describe('tracelattice MCP Tool', () => {
 			);
 
 			// Verify branch isolation
-			const branches1 = server1.history.getBranches();
-			const branches2 = server2.history.getBranches();
+			const branches1 = server1.history.getBranches(asSessionId('tool-suite'));
+			const branches2 = server2.history.getBranches(asSessionId('tool-suite'));
 
 			expect(branches1[asBranchId('server1-branch')]).toBeDefined();
 			expect(branches2[asBranchId('server2-branch')]).toBeDefined();
@@ -1051,14 +1056,14 @@ describe('tracelattice MCP Tool', () => {
 
 		it('8.3 Available Tools/Skills Registration - should validate available_mcp_tools and available_skills reflect registry', async () => {
 			// Register custom tools
-			server.tools.addTool({
+			server.tools.add({
 				name: 'custom-tool',
 				description: 'A custom tool',
 				inputSchema: {},
 			});
 
 			// Register custom skills
-			server.skills.addSkill({
+			server.skills.add({
 				name: 'custom-skill',
 				description: 'A custom skill',
 			});
@@ -1113,6 +1118,7 @@ describe('tracelattice MCP Tool', () => {
 				branches: string[];
 				thought_history_length: number;
 				session_id?: string;
+				status?: string;
 				confidence_signals?: {
 					reasoning_depth: number;
 					revision_count: number;
@@ -1140,7 +1146,6 @@ describe('tracelattice MCP Tool', () => {
 		});
 
 		it('9.1 Chain B does not inherit Chain A thought_history_length', async () => {
-			// Chain A: process 3 thoughts WITHOUT session_id (global)
 			for (let i = 1; i <= 3; i++) {
 				await server.processThought(
 					createTestThought({
@@ -1293,34 +1298,20 @@ describe('tracelattice MCP Tool', () => {
 			expect(response.confidence_signals?.average_confidence).toBe(0.99);
 		});
 
-		it('9.5 backward compatible — omitting session_id preserves global behavior', async () => {
-			// 3 thoughts without session_id
-			for (let i = 1; i <= 3; i++) {
-				await server.processThought(
-					createTestThought({
-						thought: `Global thought ${i}`,
-						thought_number: i,
-						total_thoughts: 4,
-						next_thought_needed: true,
-					})
-				);
-			}
+		it('9.5 rejects omitted session_id instead of creating global state', async () => {
+			const omittedSessionInput = {
+				thought: 'Missing explicit session',
+				thought_number: 1,
+				total_thoughts: 1,
+				next_thought_needed: false,
+			};
 
-			// 4th thought also without session_id — should see all 4
-			const result = await server.processThought(
-				createTestThought({
-					thought: 'Global thought 4',
-					thought_number: 4,
-					total_thoughts: 4,
-					next_thought_needed: false,
-				})
-			);
-
+			const result = await Reflect.apply(server.processThought, server, [omittedSessionInput]);
 			const response = parseResponse(result);
 
-			// All 4 thoughts share the global session
-			expect(response.thought_history_length).toBe(4);
-			expect(response.session_id).toBeUndefined();
+			expect(result.isError).toBe(true);
+			expect(response.status).toBe('failed');
+			expect(server.history.getSessionIds()).toEqual([]);
 		});
 
 		it('9.6 reset_state clears session and starts fresh', async () => {
@@ -1356,35 +1347,22 @@ describe('tracelattice MCP Tool', () => {
 			expect(response.session_id).toBe('task-a');
 		});
 
-		it('9.7 reset_state without session_id clears global state', async () => {
-			// 3 thoughts without session_id
-			for (let i = 1; i <= 3; i++) {
-				await server.processThought(
-					createTestThought({
-						thought: `Global thought ${i}`,
-						thought_number: i,
-						total_thoughts: 3,
-						next_thought_needed: i < 3,
-					})
-				);
-			}
-
-			// 4th thought with reset_state=true (no session_id)
-			const result = await server.processThought(
-				createTestThought({
-					thought: 'Fresh global start',
+		it('9.7 rejects retired global session identity', async () => {
+			const result = await Reflect.apply(server.processThought, server, [
+				{
+					thought: 'Retired global session',
 					thought_number: 1,
 					total_thoughts: 1,
 					next_thought_needed: false,
+					session_id: '__global__',
 					reset_state: true,
-				})
-			);
-
+				},
+			]);
 			const response = parseResponse(result);
 
-			// After reset, only the new thought exists
-			expect(response.thought_history_length).toBe(1);
-			expect(response.session_id).toBeUndefined();
+			expect(result.isError).toBe(true);
+			expect(response.status).toBe('failed');
+			expect(server.history.getSessionIds()).toEqual([]);
 		});
 	});
 });
