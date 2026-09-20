@@ -1,34 +1,38 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { Tool } from '../types/tool.js';
 import { ToolRegistry } from '../registry/ToolRegistry.js';
 import { ConfigLoader } from '../config/ConfigLoader.js';
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 describe('Tool Registration', () => {
 	it('should add tool successfully', () => {
 		const toolRegistry = new ToolRegistry();
 		const tool: Tool = { name: 'test-tool', description: 'Test tool', inputSchema: {} };
-		toolRegistry.addTool(tool);
-		expect(toolRegistry.hasTool('test-tool')).toBe(true);
+		toolRegistry.add(tool);
+		expect(toolRegistry.has('test-tool')).toBe(true);
 	});
 
 	it('should throw error for duplicate tool', () => {
 		const toolRegistry = new ToolRegistry();
 		const tool = { name: 'test-tool', description: 'Test tool', inputSchema: {} };
-		toolRegistry.addTool(tool);
-		expect(() => toolRegistry.addTool(tool)).toThrow("tool 'test-tool' already exists");
+		toolRegistry.add(tool);
+		expect(() => toolRegistry.add(tool)).toThrow("tool 'test-tool' already exists");
 	});
 
 	it('should remove tool successfully', () => {
 		const toolRegistry = new ToolRegistry();
 		const tool = { name: 'test-tool', description: 'Test tool', inputSchema: {} };
-		toolRegistry.addTool(tool);
-		toolRegistry.removeTool('test-tool');
-		expect(toolRegistry.hasTool('test-tool')).toBe(false);
+		toolRegistry.add(tool);
+		toolRegistry.remove('test-tool');
+		expect(toolRegistry.has('test-tool')).toBe(false);
 	});
 
 	it('should throw error for removing non-existent tool', () => {
 		const toolRegistry = new ToolRegistry();
-		expect(() => toolRegistry.removeTool('non-existent')).toThrow(
+		expect(() => toolRegistry.remove('non-existent')).toThrow(
 			"Tool 'non-existent' not found, cannot remove"
 		);
 	});
@@ -36,9 +40,9 @@ describe('Tool Registration', () => {
 	it('should update tool successfully', () => {
 		const toolRegistry = new ToolRegistry();
 		const tool = { name: 'test-tool', description: 'Test tool', inputSchema: {} };
-		toolRegistry.addTool(tool);
-		toolRegistry.updateTool('test-tool', { description: 'Updated test tool' });
-		const updated = toolRegistry.getTool('test-tool');
+		toolRegistry.add(tool);
+		toolRegistry.update('test-tool', { description: 'Updated test tool' });
+		const updated = toolRegistry.get('test-tool');
 		expect(updated?.description).toBe('Updated test tool');
 	});
 
@@ -46,8 +50,8 @@ describe('Tool Registration', () => {
 		const toolRegistry = new ToolRegistry();
 		const tool1 = { name: 'tool1', description: 'Tool 1', inputSchema: {} };
 		const tool2 = { name: 'tool2', description: 'Tool 2', inputSchema: {} };
-		toolRegistry.addTool(tool1);
-		toolRegistry.addTool(tool2);
+		toolRegistry.add(tool1);
+		toolRegistry.add(tool2);
 		const tools = toolRegistry.getAll();
 		expect(tools).toHaveLength(2);
 	});
@@ -55,15 +59,15 @@ describe('Tool Registration', () => {
 	it('should get tool by name', () => {
 		const toolRegistry = new ToolRegistry();
 		const tool = { name: 'my-tool', description: 'My tool', inputSchema: {} };
-		toolRegistry.addTool(tool);
-		const retrieved = toolRegistry.getTool('my-tool');
+		toolRegistry.add(tool);
+		const retrieved = toolRegistry.get('my-tool');
 		expect(retrieved).toEqual(tool);
 	});
 
 	it('should clear all tools', () => {
 		const toolRegistry = new ToolRegistry();
 		const tool1 = { name: 'tool1', description: 'Tool 1', inputSchema: {} };
-		toolRegistry.addTool(tool1);
+		toolRegistry.add(tool1);
 		toolRegistry.clear();
 		expect(toolRegistry.size()).toBe(0);
 	});
@@ -71,7 +75,7 @@ describe('Tool Registration', () => {
 
 describe('Environment Variable Overrides', () => {
 	it('should override maxHistorySize from env variable', async () => {
-		process.env.MAX_HISTORY_SIZE = '500';
+		vi.stubEnv('TRACELATTICE_MAX_HISTORY_SIZE', '500');
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();
@@ -80,7 +84,7 @@ describe('Environment Variable Overrides', () => {
 	});
 
 	it('should override logLevel from env variable', async () => {
-		process.env.LOG_LEVEL = 'debug';
+		vi.stubEnv('TRACELATTICE_LOG_LEVEL', 'debug');
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();
@@ -89,7 +93,7 @@ describe('Environment Variable Overrides', () => {
 	});
 
 	it('should override prettyLog from env variable', async () => {
-		process.env.PRETTY_LOG = 'false';
+		vi.stubEnv('TRACELATTICE_PRETTY_LOG', 'false');
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();
@@ -98,7 +102,7 @@ describe('Environment Variable Overrides', () => {
 	});
 
 	it('should override skillDirs from env variable', async () => {
-		process.env.SKILL_DIRS = '/custom/skills:/fallback/skills';
+		vi.stubEnv('TRACELATTICE_SKILL_DIRS', '/custom/skills:/fallback/skills');
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();
@@ -107,7 +111,7 @@ describe('Environment Variable Overrides', () => {
 	});
 
 	it('should parse colon-separated paths correctly', async () => {
-		process.env.SKILL_DIRS = 'path1:path2:path3';
+		vi.stubEnv('TRACELATTICE_SKILL_DIRS', 'path1:path2:path3');
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();
@@ -116,7 +120,7 @@ describe('Environment Variable Overrides', () => {
 	});
 
 	it('should not override if env variable is not set', async () => {
-		delete process.env.MAX_HISTORY_SIZE;
+		vi.stubEnv('TRACELATTICE_MAX_HISTORY_SIZE', undefined);
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();
@@ -128,7 +132,7 @@ describe('Environment Variable Overrides', () => {
 describe('Discovery Cache Configuration', () => {
 	it('should override cache TTL from env variable', async () => {
 		// DISCOVERY_CACHE_TTL is in seconds, converted to milliseconds by ConfigLoader
-		process.env.DISCOVERY_CACHE_TTL = '60';
+		vi.stubEnv('TRACELATTICE_DISCOVERY_CACHE_TTL', '60');
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();
@@ -138,7 +142,7 @@ describe('Discovery Cache Configuration', () => {
 	});
 
 	it('should override cache maxSize from env variable', async () => {
-		process.env.DISCOVERY_CACHE_MAX_SIZE = '50';
+		vi.stubEnv('TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE', '50');
 
 		const configLoader = new ConfigLoader();
 		const config = configLoader.load();

@@ -52,8 +52,7 @@ export interface ToolRegistryOptions {
 /**
  * Registry for managing MCP tool operations.
  *
- * Extends `BaseRegistry<Tool>` with tool-specific frontmatter parsing
- * and backward-compatible aliases (`addTool`, `removeTool`, etc.).
+ * Extends `BaseRegistry<Tool>` with tool-specific frontmatter parsing.
  */
 export class ToolRegistry extends BaseRegistry<Tool> {
 	protected override readonly _fileExtensions = ['.tool.md'];
@@ -135,35 +134,5 @@ export class ToolRegistry extends BaseRegistry<Tool> {
 			}
 		}
 		return this._items.get(name);
-	}
-
-	// --- Backward-compatible aliases ---
-
-	public addTool(tool: Tool): void {
-		this.add(tool);
-	}
-
-	public removeTool(name: string): void {
-		this.remove(name);
-	}
-
-	public updateTool(name: string, updates: Partial<Tool>): void {
-		this.update(name, updates);
-	}
-
-	public hasTool(name: string): boolean {
-		return this.has(name);
-	}
-
-	public getTool(name: string): Tool | undefined {
-		return this.get(name);
-	}
-
-	public list(): string[] {
-		return this.getNames();
-	}
-
-	public setTools(tools: Tool[]): void {
-		this.setAll(tools);
 	}
 }
