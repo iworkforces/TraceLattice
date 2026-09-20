@@ -6,6 +6,11 @@ import { PackedCliError, appendCleanupDiagnostics } from './packed-cli-cleanup.m
 import { cleanupPackedPackage, inspectPackedPackage } from './packed-cli-package.mjs';
 import { verifyPackedRuntime } from './packed-cli-runtime.mjs';
 import { verifyPackedLibraryApi } from './packed-library-api.mjs';
+import {
+	verifyBuildCurrentContract,
+	verifyPackedCurrentContract,
+	verifySourceCurrentContract,
+} from './current-contract.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -114,7 +119,10 @@ async function run() {
 	let artifact;
 	let verificationSucceeded = false;
 	try {
+		await verifySourceCurrentContract(repositoryRoot);
+		await verifyBuildCurrentContract(packageDirectory);
 		artifact = await inspectPackedPackage(packageDirectory);
+		await verifyPackedCurrentContract(artifact.packageRoot);
 		await verifyPackedLibraryApi(artifact, repositoryRoot);
 		const runtime = await verifyPackedRuntime(artifact);
 		verificationSucceeded = true;
