@@ -1,9 +1,4 @@
-import {
-	asBranchId,
-	asEdgeId,
-	asSessionId,
-	asThoughtId,
-} from '../../contracts/ids.js';
+import { asBranchId, asEdgeId, asSessionId, asThoughtId } from '../../contracts/ids.js';
 /**
  * End-to-end integration tests for the {@link TreeOfThoughtStrategy}.
  *
@@ -25,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
+import type { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { HistoryManager } from '../../core/HistoryManager.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import { generateUlid } from '../../core/ids.js';
@@ -39,6 +34,9 @@ import type {
 	StrategyDecision,
 } from '../../contracts/strategy.js';
 import { createTestThought } from '../helpers/factories.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
+
+const TOT_SESSION = asSessionId('test-session');
 
 interface ParsedResponse {
 	thought_number: number;
@@ -88,7 +86,7 @@ describe('TreeOfThoughtStrategy Integration (ThoughtProcessor + ToT + DAG)', () 
 		manager = built.manager;
 		edgeStore = built.edgeStore;
 		formatter = new ThoughtFormatter();
-		evaluator = new ThoughtEvaluator();
+		evaluator = createDisabledThoughtEvaluator();
 		logger = new NullLogger();
 	});
 
@@ -172,7 +170,9 @@ describe('TreeOfThoughtStrategy Integration (ThoughtProcessor + ToT + DAG)', () 
 		);
 
 		// Then
-		expect(manager.getHistory().map((thought) => thought.thought_number)).toEqual([2, 3]);
+		expect(manager.getHistory(TOT_SESSION).map((thought) => thought.thought_number)).toEqual([
+			2, 3,
+		]);
 		expect(parseResponse(result.content[0]!.text).strategy_hint).toEqual({
 			action: 'terminate',
 			reason: 'depth cap',
@@ -209,7 +209,7 @@ describe('TreeOfThoughtStrategy Integration (ThoughtProcessor + ToT + DAG)', () 
 			from: asThoughtId('cycle-b'),
 			to: asThoughtId('cycle-a'),
 			kind: 'revises',
-			sessionId: asSessionId('__global__'),
+			sessionId: TOT_SESSION,
 			createdAt: 10,
 		});
 
@@ -564,6 +564,6 @@ describe('TreeOfThoughtStrategy Integration (ThoughtProcessor + ToT + DAG)', () 
 		expect(parsed.thought_number).toBe(1);
 		expect(parsed.next_thought_needed).toBe(false);
 		// History was still updated despite strategy failure.
-		expect(manager.getHistoryLength()).toBe(1);
+		expect(manager.getHistoryLength(TOT_SESSION)).toBe(1);
 	});
 });
