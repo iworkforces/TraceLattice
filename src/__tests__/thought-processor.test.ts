@@ -1,4 +1,4 @@
-import { asBranchId, type BranchId } from '../contracts/ids.js';
+import { asBranchId, type BranchId, type SessionId } from '../contracts/ids.js';
 /**
  * Comprehensive tests for ThoughtProcessor.
  *
@@ -17,8 +17,9 @@ import { MockHistoryManager } from './helpers/factories.js';
 import type { ThoughtData } from '../core/thought.js';
 import { asSessionId } from '../contracts/ids.js';
 import type { HistorySessionSnapshot, IHistoryManager } from '../core/IHistoryManager.js';
-import { ThoughtEvaluator } from '../core/ThoughtEvaluator.js';
+import type { ThoughtEvaluator } from '../core/ThoughtEvaluator.js';
 import { createTestThought, createHypothesisThought } from './helpers/factories.js';
+import { createDisabledThoughtEvaluator as createEvaluator } from './helpers/evaluator.js';
 
 describe('ThoughtProcessor', () => {
 	let processor: ThoughtProcessor;
@@ -30,7 +31,7 @@ describe('ThoughtProcessor', () => {
 		mockHistory = new MockHistoryManager();
 		formatter = new ThoughtFormatter();
 		logger = new StructuredLogger({ context: 'Test', pretty: false });
-		processor = new ThoughtProcessor(mockHistory, formatter, new ThoughtEvaluator(), logger);
+		processor = new ThoughtProcessor(mockHistory, formatter, createEvaluator(), logger);
 	});
 
 	describe('Input Validation', () => {
@@ -40,6 +41,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 10,
 				total_thoughts: 5,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -55,6 +57,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 3,
 				total_thoughts: 5,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -70,6 +73,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 5,
 				total_thoughts: 5,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -88,12 +92,13 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			await processor.process(input);
 
-			expect(mockHistory.getHistoryLength()).toBe(1);
-			expect(mockHistory.getHistory()[0]).toMatchObject(input);
+			expect(mockHistory.getHistoryLength(asSessionId('test-session'))).toBe(1);
+			expect(mockHistory.getHistory(asSessionId('test-session'))[0]).toMatchObject(input);
 		});
 
 		it('should respect max history size through HistoryManager', async () => {
@@ -104,11 +109,12 @@ describe('ThoughtProcessor', () => {
 					thought_number: i,
 					total_thoughts: 5,
 					next_thought_needed: i < 5,
+					session_id: asSessionId('test-session'),
 				};
 				await processor.process(input);
 			}
 
-			expect(mockHistory.getHistoryLength()).toBe(5);
+			expect(mockHistory.getHistoryLength(asSessionId('test-session'))).toBe(5);
 		});
 
 		it('should report correct thought_history_length in response', async () => {
@@ -117,6 +123,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 2,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 			};
 
 			await processor.process(input1);
@@ -126,6 +133,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 2,
 				total_thoughts: 2,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			});
 
 			const parsed = JSON.parse(result1.content[0]!.text);
@@ -140,6 +148,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 3,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				available_mcp_tools: ['tool1', 'tool2'],
 				available_skills: ['skill1'],
 			};
@@ -166,6 +175,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				available_mcp_tools: ['Read', 'Write', 'Grep'],
 			};
 
@@ -181,6 +191,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				available_skills: ['commit', 'review-pr'],
 			};
 
@@ -196,6 +207,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				current_step: {
 					step_description: 'Analyze code',
 					recommended_tools: [
@@ -233,6 +245,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -249,6 +262,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -258,34 +272,36 @@ describe('ThoughtProcessor', () => {
 		it('should return error response when processing fails', async () => {
 			// Create a HistoryManager that throws on addThought
 			class ThrowingHistoryManager implements IHistoryManager {
-				resolveThoughtReference() {
+				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
 					return { kind: 'missing' as const };
 				}
 				addThought(): void {
 					throw new Error('Database error');
 				}
-				getHistory(): ThoughtData[] {
+				getHistory(_sessionId: string): ThoughtData[] {
 					return [];
 				}
-				getHistoryLength(): number {
+				getHistoryLength(_sessionId: string): number {
 					return 0;
 				}
-				getBranches(): Record<BranchId, ThoughtData[]> {
+				getBranches(_sessionId: string): Record<BranchId, ThoughtData[]> {
 					return {};
 				}
-				getBranchIds(): BranchId[] {
+				getBranchIds(_sessionId: string): BranchId[] {
 					return [];
 				}
-				registerBranch(): void {}
-				branchExists(): boolean {
+				registerBranch(_sessionId: string, _branchId: BranchId): void {}
+				branchExists(_sessionId: string, _branchId: BranchId): boolean {
 					return false;
 				}
-				clear(): void {}
-				async resetSession(): Promise<void> {}
-				async resetSessionWithinExclusive(): Promise<void> {}
+				async resetSession(_sessionId: string, _clearAuxiliaryState?: () => void): Promise<void> {}
+				async resetSessionWithinExclusive(
+					_sessionId: SessionId,
+					_clearAuxiliaryState?: () => void
+				): Promise<void> {}
 				async resetAll(): Promise<void> {}
 				async resetAllWithinExclusive(): Promise<void> {}
-				inspectSession(): HistorySessionSnapshot {
+				inspectSession(_sessionId: string): HistorySessionSnapshot {
 					return {
 						history: [],
 						branches: {},
@@ -297,10 +313,10 @@ describe('ThoughtProcessor', () => {
 				getSessionIds(): string[] {
 					return [];
 				}
-				getAvailableMcpTools(): string[] | undefined {
+				getAvailableMcpTools(_sessionId: string): string[] | undefined {
 					return undefined;
 				}
-				getAvailableSkills(): string[] | undefined {
+				getAvailableSkills(_sessionId: string): string[] | undefined {
 					return undefined;
 				}
 				getEdgeStore(): undefined {
@@ -312,7 +328,7 @@ describe('ThoughtProcessor', () => {
 			const throwingProcessor = new ThoughtProcessor(
 				throwingHistory,
 				formatter,
-				new ThoughtEvaluator(),
+				createEvaluator(),
 				logger
 			);
 
@@ -321,6 +337,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await throwingProcessor.process(input);
@@ -335,6 +352,7 @@ describe('ThoughtProcessor', () => {
 			// TypeScript should catch this at compile time, but test runtime behavior
 			const input = {
 				thought: 'Test thought',
+				session_id: asSessionId('test-session'),
 			} as unknown as ThoughtData;
 
 			// The processor should handle this gracefully
@@ -351,6 +369,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -364,6 +383,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -376,6 +396,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -388,6 +409,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 999999,
 				total_thoughts: 5,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processor.process(input);
@@ -400,6 +422,7 @@ describe('ThoughtProcessor', () => {
 				thought: 'Test thought',
 				thought_number: 1,
 				total_thoughts: 1,
+				session_id: asSessionId('test-session'),
 			} as ThoughtData;
 
 			const result = await processor.process(input);
@@ -413,6 +436,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				available_mcp_tools: ['tool1', 'tool2', 'tool3'],
 				available_skills: ['skill1', 'skill2'],
 				current_step: {
@@ -467,6 +491,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			await processor.process(input);
@@ -478,7 +503,7 @@ describe('ThoughtProcessor', () => {
 			const processorWithoutLogger = new ThoughtProcessor(
 				mockHistory,
 				formatter,
-				new ThoughtEvaluator()
+				createEvaluator()
 			);
 
 			const input: ThoughtData = {
@@ -486,6 +511,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			};
 
 			const result = await processorWithoutLogger.process(input);
@@ -503,6 +529,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 2,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				available_skills: ['vercel-react-native-skills', 'agent-browser'],
 			});
 			const parsed1 = JSON.parse(result1.content[0]!.text);
@@ -514,6 +541,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 2,
 				total_thoughts: 2,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			});
 			const parsed2 = JSON.parse(result2.content[0]!.text);
 			expect(parsed2.available_skills).toEqual(['vercel-react-native-skills', 'agent-browser']);
@@ -526,6 +554,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 2,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				available_mcp_tools: ['Read', 'Grep', 'Glob'],
 			});
 			const parsed1 = JSON.parse(result1.content[0]!.text);
@@ -537,6 +566,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 2,
 				total_thoughts: 2,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			});
 			const parsed2 = JSON.parse(result2.content[0]!.text);
 			expect(parsed2.available_mcp_tools).toEqual(['Read', 'Grep', 'Glob']);
@@ -549,6 +579,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 3,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				available_skills: ['skill-a', 'skill-b'],
 			});
 
@@ -558,6 +589,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 2,
 				total_thoughts: 3,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				available_skills: ['skill-c'],
 			});
 
@@ -567,6 +599,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 3,
 				total_thoughts: 3,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			});
 			const parsed3 = JSON.parse(result3.content[0]!.text);
 			expect(parsed3.available_skills).toEqual(['skill-c']);
@@ -578,6 +611,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			});
 			const parsed = JSON.parse(result.content[0]!.text);
 			expect(parsed.available_skills).toBeUndefined();
@@ -589,7 +623,7 @@ describe('ThoughtProcessor', () => {
 		let processorWithEvaluator: ThoughtProcessor;
 
 		beforeEach(() => {
-			evaluator = new ThoughtEvaluator();
+			evaluator = createEvaluator();
 			processorWithEvaluator = new ThoughtProcessor(mockHistory, formatter, evaluator, logger);
 		});
 
@@ -599,6 +633,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 3,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				thought_type: 'hypothesis',
 				quality_score: 0.85,
 				confidence: 0.7,
@@ -1111,6 +1146,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				verification_target: 1,
 				register_branch_id: 'future',
 			});
@@ -1119,7 +1155,7 @@ describe('ThoughtProcessor', () => {
 			expect(JSON.parse(result.content[0]!.text).warnings).toEqual([
 				'Dropped dangling verification_target: 1 (history has 0 thoughts)',
 			]);
-			expect(mockHistory.getBranchIds()).toEqual([asBranchId('future')]);
+			expect(mockHistory.getBranchIds(asSessionId('test-session'))).toEqual([asBranchId('future')]);
 		});
 
 		it('filters dangling thought-list references before branch registration', async () => {
@@ -1128,6 +1164,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				synthesis_sources: [1],
 				register_branch_id: 'future',
 			});
@@ -1136,7 +1173,7 @@ describe('ThoughtProcessor', () => {
 			expect(JSON.parse(result.content[0]!.text).warnings).toEqual([
 				'Filtered dangling synthesis_sources: [1] (history has 0 thoughts)',
 			]);
-			expect(mockHistory.getBranchIds()).toEqual([asBranchId('future')]);
+			expect(mockHistory.getBranchIds(asSessionId('test-session'))).toEqual([asBranchId('future')]);
 		});
 
 		it('rejects dangling branch references before branch registration', async () => {
@@ -1145,6 +1182,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				merge_branch_ids: [asBranchId('missing')],
 				register_branch_id: 'future',
 			});
@@ -1154,7 +1192,7 @@ describe('ThoughtProcessor', () => {
 				code: 'VALIDATION_ERROR',
 				status: 'failed',
 			});
-			expect(mockHistory.getBranchIds()).toEqual([]);
+			expect(mockHistory.getBranchIds(asSessionId('test-session'))).toEqual([]);
 		});
 
 		it('should drop verification_target referencing non-existent thought', async () => {
@@ -1165,6 +1203,7 @@ describe('ThoughtProcessor', () => {
 					thought_number: i,
 					total_thoughts: 5,
 					next_thought_needed: true,
+					session_id: asSessionId('test-session'),
 				});
 			}
 
@@ -1173,6 +1212,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 4,
 				total_thoughts: 5,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				thought_type: 'verification',
 				verification_target: 999,
 			});
@@ -1192,6 +1232,7 @@ describe('ThoughtProcessor', () => {
 					thought_number: i,
 					total_thoughts: 7,
 					next_thought_needed: true,
+					session_id: asSessionId('test-session'),
 				});
 			}
 
@@ -1200,6 +1241,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 6,
 				total_thoughts: 7,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				thought_type: 'synthesis',
 				synthesis_sources: [1, 999],
 			});
@@ -1218,6 +1260,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				merge_branch_ids: ['nonexistent'].map(asBranchId),
 			});
 
@@ -1235,6 +1278,7 @@ describe('ThoughtProcessor', () => {
 					thought_number: i,
 					total_thoughts: 7,
 					next_thought_needed: true,
+					session_id: asSessionId('test-session'),
 				});
 			}
 
@@ -1243,6 +1287,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 6,
 				total_thoughts: 7,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				is_revision: true,
 				revises_thought: 50,
 			});
@@ -1261,6 +1306,7 @@ describe('ThoughtProcessor', () => {
 					thought_number: i,
 					total_thoughts: 5,
 					next_thought_needed: true,
+					session_id: asSessionId('test-session'),
 				});
 			}
 
@@ -1269,6 +1315,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 4,
 				total_thoughts: 5,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				thought_type: 'verification',
 				verification_target: 2,
 				synthesis_sources: [1, 3],
@@ -1284,6 +1331,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				verification_target: 5,
 				revises_thought: 3,
 				branch_from_thought: 2,
@@ -1303,6 +1351,7 @@ describe('ThoughtProcessor', () => {
 					thought_number: i,
 					total_thoughts: 5,
 					next_thought_needed: true,
+					session_id: asSessionId('test-session'),
 				});
 			}
 
@@ -1311,6 +1360,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 4,
 				total_thoughts: 5,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 				merge_from_thoughts: [1, 2, 100, 200],
 			});
 
@@ -1338,7 +1388,7 @@ describe('ThoughtProcessor', () => {
 			const proc = new ThoughtProcessor(
 				mockHistoryManager,
 				new ThoughtFormatter(),
-				new ThoughtEvaluator(),
+				createEvaluator(),
 				mockLogger
 			);
 
@@ -1347,6 +1397,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 99,
 				total_thoughts: 3,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 			});
 
 			// Verify auto-adjust occurred
@@ -1387,7 +1438,7 @@ describe('ThoughtProcessor', () => {
 			const proc = new ThoughtProcessor(
 				mockHistoryManager,
 				new ThoughtFormatter(),
-				new ThoughtEvaluator(),
+				createEvaluator(),
 				mockLogger
 			);
 
@@ -1396,6 +1447,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 3,
 				total_thoughts: 5,
 				next_thought_needed: true,
+				session_id: asSessionId('test-session'),
 			});
 
 			const response = JSON.parse(result.content[0]!.text);
@@ -1415,7 +1467,7 @@ describe('ThoughtProcessor', () => {
 	describe('session isolation', () => {
 		it('passes session_id to historyManager.getHistory()', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 			const spy = vi.spyOn(mockHM, 'getHistory');
 
 			await proc.process({
@@ -1431,7 +1483,7 @@ describe('ThoughtProcessor', () => {
 
 		it('passes session_id to historyManager.getBranches()', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 			const spy = vi.spyOn(mockHM, 'getBranches');
 
 			await proc.process({
@@ -1447,7 +1499,7 @@ describe('ThoughtProcessor', () => {
 
 		it('passes session_id to historyManager.getHistoryLength()', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 			const spy = vi.spyOn(mockHM, 'getHistoryLength');
 
 			await proc.process({
@@ -1463,7 +1515,7 @@ describe('ThoughtProcessor', () => {
 
 		it('passes session_id to historyManager.getBranchIds()', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 			const spy = vi.spyOn(mockHM, 'getBranchIds');
 
 			await proc.process({
@@ -1479,7 +1531,7 @@ describe('ThoughtProcessor', () => {
 
 		it('uses a non-mutating session snapshot for cached MCP tools', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 			const spy = vi.spyOn(mockHM, 'inspectSession');
 
 			await proc.process({
@@ -1495,7 +1547,7 @@ describe('ThoughtProcessor', () => {
 
 		it('uses a non-mutating session snapshot for cached skills', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 			const spy = vi.spyOn(mockHM, 'inspectSession');
 
 			await proc.process({
@@ -1521,20 +1573,24 @@ describe('ThoughtProcessor', () => {
 			expect(parsed.session_id).toBe('my-session');
 		});
 
-		it('omits session_id from response when not provided', async () => {
-			const result = await processor.process({
-				thought: 'Test',
-				thought_number: 1,
-				total_thoughts: 1,
-				next_thought_needed: false,
-			});
+		it('rejects processing when session_id is omitted', async () => {
+			const result = await Reflect.apply(processor.process, processor, [
+				{
+					thought: 'Test',
+					thought_number: 1,
+					total_thoughts: 1,
+					next_thought_needed: false,
+				},
+			]);
 			const parsed = JSON.parse(result.content[0]!.text);
-			expect(parsed.session_id).toBeUndefined();
+			expect(result.isError).toBe(true);
+			expect(parsed.status).toBe('failed');
+			expect(mockHistory.getSessionIds()).toEqual([]);
 		});
 
 		it('uses session-scoped history for cross-reference validation', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 
 			// Add 2 thoughts to session 'alpha'
 			for (let i = 1; i <= 2; i++) {
@@ -1568,7 +1624,7 @@ describe('ThoughtProcessor', () => {
 		it('delegates a direct reset without a session lock', async () => {
 			const mockHM = new MockHistoryManager();
 			const resetSpy = vi.spyOn(mockHM, 'resetSessionWithinExclusive');
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 
 			await proc.resetSession('direct-reset');
 
@@ -1581,7 +1637,7 @@ describe('ThoughtProcessor', () => {
 			const proc = new ThoughtProcessor(
 				mockHM,
 				formatter,
-				new ThoughtEvaluator(),
+				createEvaluator(),
 				logger,
 				new SequentialStrategy(),
 				undefined,
@@ -1598,9 +1654,9 @@ describe('ThoughtProcessor', () => {
 
 		it('validates identity and full input before reset or branch registration', async () => {
 			const mockHM = new MockHistoryManager();
-			const resetSpy = vi.spyOn(mockHM, 'resetSession');
+			const resetSpy = vi.spyOn(mockHM, 'resetSessionWithinExclusive');
 			const registrationSpy = vi.spyOn(mockHM, 'registerBranch');
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 			const malformed = {
 				thought: 'must not reset',
 				thought_number: 1,
@@ -1623,7 +1679,7 @@ describe('ThoughtProcessor', () => {
 			expect(invalidResult).toMatchObject({ isError: true });
 			expect(resetSpy).not.toHaveBeenCalled();
 			expect(registrationSpy).not.toHaveBeenCalled();
-			expect(mockHM.getHistoryLength()).toBe(0);
+			expect(mockHM.getHistoryLength(asSessionId('valid-session'))).toBe(0);
 		});
 
 		it('awaits reset then registers the branch before admitting the replacement', async () => {
@@ -1638,7 +1694,7 @@ describe('ThoughtProcessor', () => {
 			vi.spyOn(mockHM, 'addThought').mockImplementation((thought) => {
 				events.push(`add:${thought.session_id}:${thought.thought}`);
 			});
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 
 			await proc.process({
 				thought: 'replacement',
@@ -1660,7 +1716,7 @@ describe('ThoughtProcessor', () => {
 		it('awaits exclusive reset work when reset_state is true', async () => {
 			const mockHM = new MockHistoryManager();
 			const spy = vi.spyOn(mockHM, 'resetSessionWithinExclusive');
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 
 			await proc.process({
 				thought: 'Test',
@@ -1674,10 +1730,10 @@ describe('ThoughtProcessor', () => {
 			expect(spy).toHaveBeenCalledWith('my-session', expect.any(Function));
 		});
 
-		it('does not call clear when reset_state is false', async () => {
+		it('does not reset when reset_state is false', async () => {
 			const mockHM = new MockHistoryManager();
-			const spy = vi.spyOn(mockHM, 'clear');
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const spy = vi.spyOn(mockHM, 'resetSessionWithinExclusive');
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 
 			await proc.process({
 				thought: 'Test',
@@ -1691,10 +1747,10 @@ describe('ThoughtProcessor', () => {
 			expect(spy).not.toHaveBeenCalled();
 		});
 
-		it('does not call clear when reset_state is omitted', async () => {
+		it('does not reset when reset_state is omitted', async () => {
 			const mockHM = new MockHistoryManager();
-			const spy = vi.spyOn(mockHM, 'clear');
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const spy = vi.spyOn(mockHM, 'resetSessionWithinExclusive');
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 
 			await proc.process({
 				thought: 'Test',
@@ -1709,7 +1765,7 @@ describe('ThoughtProcessor', () => {
 
 		it('processes thought as first after reset (history_length = 1)', async () => {
 			const mockHM = new MockHistoryManager();
-			const proc = new ThoughtProcessor(mockHM, formatter, new ThoughtEvaluator(), logger);
+			const proc = new ThoughtProcessor(mockHM, formatter, createEvaluator(), logger);
 
 			// Add 3 thoughts to the session
 			for (let i = 1; i <= 3; i++) {
@@ -1742,6 +1798,7 @@ describe('ThoughtProcessor', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				reset_state: true,
 			});
 			const parsed = JSON.parse(result.content[0]!.text);
@@ -1760,7 +1817,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 		mockHistory = new MockHistoryManager();
 		formatter = new ThoughtFormatter();
 		logger = new StructuredLogger({ context: 'Test', pretty: false });
-		processor = new ThoughtProcessor(mockHistory, formatter, new ThoughtEvaluator(), logger);
+		processor = new ThoughtProcessor(mockHistory, formatter, createEvaluator(), logger);
 	});
 
 	describe('_generateHints max 3 break (line 172)', () => {
@@ -1774,7 +1831,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 			const proc = new ThoughtProcessor(
 				new MockHistoryManager(),
 				formatter,
-				new ThoughtEvaluator(),
+				createEvaluator(),
 				logger
 			);
 
@@ -1790,6 +1847,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 					thought_number: i,
 					total_thoughts: 15,
 					next_thought_needed: true,
+					session_id: asSessionId('hint-cap'),
 					thought_type: 'regular',
 					confidence: 1.0 - i * 0.05,
 				});
@@ -1800,6 +1858,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 				thought_number: 11,
 				total_thoughts: 15,
 				next_thought_needed: true,
+				session_id: asSessionId('hint-cap'),
 				thought_type: 'regular',
 				confidence: 0.3,
 			});
@@ -1815,34 +1874,36 @@ describe('ThoughtProcessor — uncovered branches', () => {
 		it('should handle non-Error thrown in process catch branch', async () => {
 			// Create a HistoryManager that throws a non-Error value
 			class StringThrowingHistoryManager implements IHistoryManager {
-				resolveThoughtReference() {
+				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
 					return { kind: 'missing' as const };
 				}
 				addThought(): void {
 					throw 'string failure';
 				}
-				getHistory(): ThoughtData[] {
+				getHistory(_sessionId: string): ThoughtData[] {
 					return [];
 				}
-				getHistoryLength(): number {
+				getHistoryLength(_sessionId: string): number {
 					return 0;
 				}
-				getBranches(): Record<BranchId, ThoughtData[]> {
+				getBranches(_sessionId: string): Record<BranchId, ThoughtData[]> {
 					return {};
 				}
-				getBranchIds(): BranchId[] {
+				getBranchIds(_sessionId: string): BranchId[] {
 					return [];
 				}
-				registerBranch(): void {}
-				branchExists(): boolean {
+				registerBranch(_sessionId: string, _branchId: BranchId): void {}
+				branchExists(_sessionId: string, _branchId: BranchId): boolean {
 					return false;
 				}
-				clear(): void {}
-				async resetSession(): Promise<void> {}
-				async resetSessionWithinExclusive(): Promise<void> {}
+				async resetSession(_sessionId: string, _clearAuxiliaryState?: () => void): Promise<void> {}
+				async resetSessionWithinExclusive(
+					_sessionId: SessionId,
+					_clearAuxiliaryState?: () => void
+				): Promise<void> {}
 				async resetAll(): Promise<void> {}
 				async resetAllWithinExclusive(): Promise<void> {}
-				inspectSession(): HistorySessionSnapshot {
+				inspectSession(_sessionId: string): HistorySessionSnapshot {
 					return {
 						history: [],
 						branches: {},
@@ -1854,10 +1915,10 @@ describe('ThoughtProcessor — uncovered branches', () => {
 				getSessionIds(): string[] {
 					return [];
 				}
-				getAvailableMcpTools(): string[] | undefined {
+				getAvailableMcpTools(_sessionId: string): string[] | undefined {
 					return undefined;
 				}
-				getAvailableSkills(): string[] | undefined {
+				getAvailableSkills(_sessionId: string): string[] | undefined {
 					return undefined;
 				}
 				getEdgeStore(): undefined {
@@ -1869,7 +1930,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 			const throwingProcessor = new ThoughtProcessor(
 				throwingHistory,
 				formatter,
-				new ThoughtEvaluator(),
+				createEvaluator(),
 				logger
 			);
 
@@ -1878,6 +1939,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 			});
 
 			expect(result.isError).toBe(true);
@@ -1894,6 +1956,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				thought_type: 'synthesis',
 				synthesis_sources: [100, 200, 300],
 			});
@@ -1912,6 +1975,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('test-session'),
 				merge_from_thoughts: [500, 600],
 			});
 
