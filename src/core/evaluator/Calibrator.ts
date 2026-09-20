@@ -40,9 +40,6 @@ import { ALL_THOUGHT_TYPES } from './internals.js';
 /** Number of bins used by ECE (10-bin → 0.1 increments). */
 const ECE_BINS = 10;
 
-/** Sentinel used in the per-session temperature map for global state. */
-const GLOBAL_KEY: unique symbol = Symbol('global calibration temperature');
-
 /**
  * Build per-type empirical means + counts from a list of outcomes.
  *
@@ -169,7 +166,7 @@ function emptyMetrics(): CalibrationMetrics {
 export class Calibrator implements ICalibrator {
 	public readonly enabled: boolean;
 	private readonly _recorder: IOutcomeRecorder;
-	private readonly _temperatures = new Map<SessionId | typeof GLOBAL_KEY, number>();
+	private readonly _temperatures = new Map<SessionId, number>();
 
 	constructor(outcomeRecorder: IOutcomeRecorder, enabled: boolean) {
 		this._recorder = outcomeRecorder;
@@ -192,8 +189,7 @@ export class Calibrator implements ICalibrator {
 		const observedMean = typeStats?.mean ?? 0.5;
 		const priorWeight = 1 / (1 + n / 10);
 		const shrunk = priorWeight * observedMean + (1 - priorWeight) * raw;
-		const temperature =
-			this._temperatures.get(sessionId) ?? this._temperatures.get(GLOBAL_KEY) ?? 1.0;
+		const temperature = this._temperatures.get(sessionId) ?? 1.0;
 		const calibrated =
 			outcomes.length >= MIN_OUTCOMES_FOR_TEMPERATURE
 				? applyTemperature(shrunk, temperature)
@@ -215,14 +211,9 @@ export class Calibrator implements ICalibrator {
 		};
 	}
 
-	public refit(sessionId?: SessionId): void {
+	public refit(sessionId: SessionId): void {
 		if (!this.enabled) return;
-		const key = sessionId ?? GLOBAL_KEY;
-		const outcomes =
-			sessionId === undefined
-				? this._recorder.getAllOutcomes()
-				: this._recorder.getOutcomes(sessionId);
-		this._temperatures.set(key, fitTemperature(outcomes));
+		this._temperatures.set(sessionId, fitTemperature(this._recorder.getOutcomes(sessionId)));
 	}
 
 	public clearSession(sessionId: SessionId): void {
