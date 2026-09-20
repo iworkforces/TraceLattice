@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { supportsSessionScopedPersistence } from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -19,6 +18,7 @@ import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import type { Summary } from '../../core/compression/Summary.js';
 import { InMemorySummaryStore } from '../../core/compression/InMemorySummaryStore.js';
+import { Calibrator } from '../../core/evaluator/Calibrator.js';
 import type { Edge } from '../../core/graph/Edge.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import { OutcomeRecorder } from '../../core/reasoning/OutcomeRecorder.js';
@@ -26,7 +26,6 @@ import { InMemorySuspensionStore } from '../../core/tools/InMemorySuspensionStor
 import { ERROR_CODES } from '../../errors.js';
 import { createServer } from '../../lib.js';
 import { ServerConfig } from '../../ServerConfig.js';
-import { UnsupportedScopedPersistence } from '../helpers/UnsupportedScopedPersistence.js';
 
 function testEdge(sessionId: SessionId): Edge {
 	return {
@@ -57,10 +56,11 @@ describe('public reset surface', () => {
 		const server = await createServer({ autoDiscover: false, loadFromPersistence: false });
 		try {
 			await server.processThought({
-				thought: 'global keep',
+				thought: 'primary keep',
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: 'primary',
 			});
 			await server.processThought({
 				thought: 'A keep',
@@ -89,8 +89,8 @@ describe('public reset surface', () => {
 				status: 'failed',
 			});
 			expect(input).toEqual(before);
-			expect(server.history.getHistory().map((thought) => thought.thought)).toEqual([
-				'global keep',
+			expect(server.history.getHistory('primary').map((thought) => thought.thought)).toEqual([
+				'primary keep',
 			]);
 			expect(server.history.getHistory('A').map((thought) => thought.thought)).toEqual(['A keep']);
 			expect(server.history.branchExists('A', asBranchId('must-not-register'))).toBe(false);
@@ -99,14 +99,15 @@ describe('public reset surface', () => {
 		}
 	});
 
-	it('keeps global thought reset distinct from resetAll and rejects unsupported scoped reset', async () => {
+	it('keeps one named-session reset distinct from resetAll', async () => {
 		const server = await createServer({ autoDiscover: false, loadFromPersistence: false });
 		try {
 			await server.processThought({
-				thought: 'global old',
+				thought: 'primary old',
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: 'primary',
 			});
 			await server.processThought({
 				thought: 'named keep',
@@ -116,38 +117,25 @@ describe('public reset surface', () => {
 				session_id: 'named',
 			});
 			await server.processThought({
-				thought: 'global fresh',
+				thought: 'primary fresh',
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: 'primary',
 				reset_state: true,
 			});
-			expect(server.history.getHistory().map((thought) => thought.thought)).toEqual([
-				'global fresh',
+			expect(server.history.getHistory('primary').map((thought) => thought.thought)).toEqual([
+				'primary fresh',
 			]);
 			expect(server.history.getHistory('named').map((thought) => thought.thought)).toEqual([
 				'named keep',
 			]);
 
 			await server.resetAll();
-			expect(server.history.getHistory()).toEqual([]);
+			expect(server.history.getHistory('primary')).toEqual([]);
 			expect(server.history.getHistory('named')).toEqual([]);
 		} finally {
 			await server.stop();
-		}
-
-		const unsupported = new UnsupportedScopedPersistence();
-		const history = new HistoryManager({
-			persistence: unsupported,
-			persistenceFlushInterval: 60000,
-		});
-		try {
-			await expect(history.resetSession('named')).rejects.toMatchObject({
-				code: ERROR_CODES.PERSISTENCE_CAPABILITY_UNSUPPORTED,
-			});
-			expect(unsupported.clearCalled).toBe(false);
-		} finally {
-			await history.shutdown();
 		}
 	});
 
@@ -156,11 +144,12 @@ describe('public reset surface', () => {
 		const summaryStore = new InMemorySummaryStore();
 		const suspensionStore = new InMemorySuspensionStore();
 		const outcomeRecorder = new OutcomeRecorder({ enabled: true });
+		const calibrator = new Calibrator(outcomeRecorder, true);
 		const history = new HistoryManager({ edgeStore, summaryStore });
 		const processor = new ThoughtProcessor(
 			history,
 			new ThoughtFormatter(),
-			new ThoughtEvaluator(),
+			new ThoughtEvaluator(calibrator),
 			undefined,
 			undefined,
 			undefined,
@@ -168,7 +157,9 @@ describe('public reset surface', () => {
 			undefined,
 			undefined,
 			new SessionLock(),
-			outcomeRecorder
+			outcomeRecorder,
+			undefined,
+			calibrator
 		);
 		const orphanEdgeSession = asSessionId('edge-only-session');
 		const orphanAuxiliarySession = asSessionId('evicted-session');
@@ -184,7 +175,6 @@ describe('public reset surface', () => {
 		});
 		outcomeRecorder.recordVerification({
 			thoughtId: asThoughtId('orphan'),
-			thoughtNumber: 1,
 			sessionId: orphanAuxiliarySession,
 			predicted: 0.8,
 			actual: 1,
@@ -226,9 +216,7 @@ describe.each(['memory', 'file'] as const)(
 				config,
 			});
 			const persistence = server.getContainer().resolve('Persistence');
-			if (persistence === null || !supportsSessionScopedPersistence(persistence)) {
-				throw new Error(`${backend} backend did not expose scoped persistence`);
-			}
+			if (persistence === null) throw new Error(`${backend} persistence is unavailable`);
 			const sessionId = asSessionId('quarantined-registration');
 			const originalClearSession = persistence.clearSession.bind(persistence);
 			let failDeletion = true;
