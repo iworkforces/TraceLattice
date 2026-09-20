@@ -16,7 +16,7 @@ An MCP server that gives AI agents structured sequential thinking with tool and 
 - Tool and skill recommendations with confidence scores, rationales, and automatic discovery
 - Per-session isolation with TTL eviction and LRU caching
 - CLI transports: stdio (default) and Streamable HTTP (production). A stateless HTTP JSON-RPC transport is also available as a library transport
-- Strict TypeScript, Valibot validation, and an 18-service DI container
+- Strict TypeScript, Valibot validation, and a 20-service DI container
 
 ## Install
 
@@ -36,11 +36,11 @@ User-scoped (`~/.claude.json`) or project-scoped (`.mcp.json` in project root):
 
 ```json
 {
-  "mcpServers": {
-    "tracelattice": {
-      "command": "tracelattice"
-    }
-  }
+	"mcpServers": {
+		"tracelattice": {
+			"command": "tracelattice"
+		}
+	}
 }
 ```
 
@@ -85,21 +85,17 @@ Global (`~/.config/opencode/opencode.json`) or project-scoped (`.opencode.json`)
 
 ```json
 {
-  "mcpServers": {
-    "tracelattice": {
-      "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "@iworkforces/tracelattice"
-      ],
-      "enabled": true,
-      "environment": {
-        "MAX_HISTORY_SIZE": "10000",
-        "LOG_LEVEL": "debug"
-      }
-    }
-  }
+	"mcpServers": {
+		"tracelattice": {
+			"type": "local",
+			"command": ["npx", "-y", "@iworkforces/tracelattice"],
+			"enabled": true,
+			"environment": {
+				"TRACELATTICE_MAX_HISTORY_SIZE": "10000",
+				"TRACELATTICE_LOG_LEVEL": "debug"
+			}
+		}
+	}
 }
 ```
 
@@ -107,24 +103,25 @@ Global (`~/.config/opencode/opencode.json`) or project-scoped (`.opencode.json`)
 
 ### Server
 
-Set `LOG_LEVEL` in the process environment to `debug`, `info`, `warn`, or `error`:
+Set `TRACELATTICE_LOG_LEVEL` in the process environment to `debug`, `info`, `warn`, or `error`:
 
 ```bash
-LOG_LEVEL=debug tracelattice
+TRACELATTICE_LOG_LEVEL=debug tracelattice
 ```
 
 Environment variables override values from configuration files.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MAX_HISTORY_SIZE` | `10000` | Maximum thoughts to keep in history |
-| `MAX_BRANCHES` | `50` | Maximum number of branches |
-| `MAX_BRANCH_SIZE` | `100` | Maximum size of each branch |
-| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
-| `PRETTY_LOG` | `true` | Enable pretty log output |
-| `SESSION_MAX_PER_OWNER` | `50` | Maximum isolated sessions per owner |
-| `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS` | `60000` | Suspended tool-call token TTL in ms |
-| `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | `60000` | Expired suspension cleanup interval in ms |
+| Variable                                | Default      | Description                                 |
+| --------------------------------------- | ------------ | ------------------------------------------- |
+| `TRACELATTICE_CONFIG`                   | search paths | Explicit YAML or JSON configuration file    |
+| `TRACELATTICE_MAX_HISTORY_SIZE`         | `10000`      | Maximum thoughts to keep in history         |
+| `TRACELATTICE_MAX_BRANCHES`             | `50`         | Maximum number of branches                  |
+| `TRACELATTICE_MAX_BRANCH_SIZE`          | `100`        | Maximum size of each branch                 |
+| `TRACELATTICE_LOG_LEVEL`                | `info`       | Log level: `debug`, `info`, `warn`, `error` |
+| `TRACELATTICE_PRETTY_LOG`               | `true`       | Enable pretty log output                    |
+| `TRACELATTICE_SESSION_MAX_PER_OWNER`    | `50`         | Maximum isolated sessions per owner         |
+| `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS`   | `60000`      | Suspended tool-call token TTL in ms         |
+| `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | `60000`      | Expired suspension cleanup interval in ms   |
 
 ### Config files
 
@@ -163,46 +160,58 @@ maxSessionsPerOwner: 50
 
 All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `false` or `0` to opt out, or to `true` or `1` to opt back in.
 
-| Variable | Description |
-|----------|-------------|
-| `TRACELATTICE_FEATURES_DAG_EDGES` | Enable DAG edges for thought relationships |
-| `TRACELATTICE_FEATURES_CALIBRATION` | Enable confidence calibration with Beta(2,2) priors |
-| `TRACELATTICE_FEATURES_COMPRESSION` | Enable branch compression for cold branches |
-| `TRACELATTICE_FEATURES_TOOL_INTERLEAVE` | Enable suspend/resume for tool calls |
-| `TRACELATTICE_FEATURES_NEW_THOUGHT_TYPES` | Enable tool_call, tool_observation, assumption, decomposition, backtrack |
-| `TRACELATTICE_FEATURES_OUTCOME_RECORDING` | Enable outcome recording for tool results |
-| `TRACELATTICE_FEATURES_REASONING_STRATEGY` | Strategy: `sequential` (default) or `tot` |
+| Variable                                   | Description                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------ |
+| `TRACELATTICE_FEATURES_DAG_EDGES`          | Enable DAG edges for thought relationships                               |
+| `TRACELATTICE_FEATURES_CALIBRATION`        | Enable confidence calibration with Beta(2,2) priors                      |
+| `TRACELATTICE_FEATURES_COMPRESSION`        | Enable branch compression for cold branches                              |
+| `TRACELATTICE_FEATURES_TOOL_INTERLEAVE`    | Enable suspend/resume for tool calls                                     |
+| `TRACELATTICE_FEATURES_NEW_THOUGHT_TYPES`  | Enable tool_call, tool_observation, assumption, decomposition, backtrack |
+| `TRACELATTICE_FEATURES_OUTCOME_RECORDING`  | Enable outcome recording for tool results                                |
+| `TRACELATTICE_FEATURES_REASONING_STRATEGY` | Strategy: `sequential` (default) or `tot`                                |
 
 ### Transport
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TRANSPORT_TYPE` | `stdio` | Transport: `stdio` or `streamable-http` |
-| `STREAMABLE_HTTP_PORT` | `9007` | Port for Streamable HTTP server |
-| `STREAMABLE_HTTP_HOST` | `localhost` | Host for Streamable HTTP server |
-| `STREAMABLE_HTTP_STATEFUL` | `true` | Enable stateful session tracking |
-| `CORS_ORIGIN` | `*` | CORS origin |
-| `ENABLE_CORS` | `true` | Enable CORS preflight |
-| `ALLOWED_HOSTS` | derived from bound host | Comma-separated allowed `Host` header values |
+| Variable                                | Default                 | Description                                  |
+| --------------------------------------- | ----------------------- | -------------------------------------------- |
+| `TRACELATTICE_TRANSPORT_TYPE`           | `stdio`                 | Transport: `stdio` or `streamable-http`      |
+| `TRACELATTICE_STREAMABLE_HTTP_PORT`     | `9007`                  | Port for Streamable HTTP server              |
+| `TRACELATTICE_STREAMABLE_HTTP_HOST`     | `localhost`             | Host for Streamable HTTP server              |
+| `TRACELATTICE_STREAMABLE_HTTP_STATEFUL` | `true`                  | Enable stateful session tracking             |
+| `TRACELATTICE_CORS_ORIGIN`              | `*`                     | CORS origin                                  |
+| `TRACELATTICE_ENABLE_CORS`              | `true`                  | Enable CORS preflight                        |
+| `TRACELATTICE_ALLOWED_HOSTS`            | derived from bound host | Comma-separated allowed `Host` header values |
 
 ### Skill discovery
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SKILL_DIRS` | `.claude/skills:<home>/.claude/skills` | Colon-separated skill directories |
-| `DISCOVERY_CACHE_TTL` | `300` | Discovery cache TTL in seconds when set through env; stored internally as ms |
-| `DISCOVERY_CACHE_MAX_SIZE` | `100` | Discovery cache max entries |
+| Variable                                | Default                                | Description                                             |
+| --------------------------------------- | -------------------------------------- | ------------------------------------------------------- |
+| `TRACELATTICE_SKILL_DIRS`               | `.claude/skills:<home>/.claude/skills` | Colon-separated skill directories                       |
+| `TRACELATTICE_TOOL_DIRS`                | `.claude/tools:<home>/.claude/tools`   | Colon-separated tool directories                        |
+| `TRACELATTICE_DISCOVERY_CACHE_TTL`      | `300`                                  | Discovery cache TTL in seconds; stored internally as ms |
+| `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | `100`                                  | Discovery cache max entries                             |
+| `TRACELATTICE_WATCHER_VERBOSE`          | unset                                  | Log skill watcher events when set to `true`             |
 
 ## Transports
 
-Set `TRANSPORT_TYPE` to pick one:
+Set `TRACELATTICE_TRANSPORT_TYPE` to pick one:
 
-| Transport | When to use | Command |
-|-----------|-------------|---------|
-| `stdio` (default) | Local MCP clients | `tracelattice` |
-| `streamable-http` | Production deployments | `TRANSPORT_TYPE=streamable-http tracelattice` |
+| Transport         | When to use            | Command                                                    |
+| ----------------- | ---------------------- | ---------------------------------------------------------- |
+| `stdio` (default) | Local MCP clients      | `tracelattice`                                             |
+| `streamable-http` | Production deployments | `TRACELATTICE_TRANSPORT_TYPE=streamable-http tracelattice` |
 
-The Streamable HTTP endpoint defaults to `POST /mcp` for JSON-RPC requests and supports stateful sessions via the `Mcp-Session-Id` header. `GET /mcp` is not allowed. The library also exposes `HttpTransport` for stateless JSON-RPC over HTTP, but the CLI does not select it with `TRANSPORT_TYPE`.
+The Streamable HTTP endpoint defaults to `POST /mcp` for JSON-RPC requests and supports stateful sessions via the `Mcp-Session-Id` header. `GET /mcp` is not allowed. The library also exposes `HttpTransport` for stateless JSON-RPC over HTTP, but the CLI does not select it with `TRACELATTICE_TRANSPORT_TYPE`.
+
+### Session model
+
+TraceLattice uses separate session concepts with separate identifiers:
+
+- A **thought session** is the required `session_id` in every `sequentialthinking_tools` call. Callers choose an explicit named session, and each successful response echoes that identifier. The retired `__global__` value and omitted `session_id` are rejected. Library reads such as `getBranches(sessionId)` also require the thought session explicitly.
+- An **MCP transport session** is the Streamable HTTP connection identified by the `Mcp-Session-Id` header. It controls transport state. Request-owner identity is a separate authorization context; neither supplies or replaces a thought `session_id`.
+- An **all-session administration operation** is explicit. `resetAll()`, persistence `clearAll()`, and complete server shutdown intentionally act across every thought session. They are not fallback behavior for an omitted thought session.
+
+`ConnectionPool` slots are an optional HTTP isolation layer and are separate from both thought sessions and MCP transport sessions.
 
 ### Stateless HTTP library API
 
@@ -230,6 +239,21 @@ export async function startHttpTransport(mcpServer: McpServer): Promise<ITranspo
 ```
 
 Call and await `transport.stop()` during application shutdown.
+
+## Current v2 contract
+
+TraceLattice exposes only the current API and persistence contract. There are no compatibility aliases or data import shims.
+
+| Removed surface                                               | Current replacement                                                                                                                                                                  |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Omitted thought sessions or the retired `__global__` sentinel | Supply an explicit named `session_id` on every thought; use explicit all-session administration only when intentionally operating across every session                               |
+| Unscoped persistence operations                               | `saveThoughtForSession`, `loadHistoryForSession`, `saveBranchForSession`, `deleteBranchForSession`, `loadBranchForSession`, `listBranchesForSession`, `clearSession`, and `clearAll` |
+| Tool/skill-specific registry aliases                          | Canonical `add`, `remove`, `update`, `get`, `getAll`, `has`, and `getNames` methods                                                                                                  |
+| Synchronous server/history clearing                           | Await `resetSession(sessionId)` or `resetAll()`                                                                                                                                      |
+| Partial server cleanup                                        | Await `dispose()` to release the server and all container-owned resources                                                                                                            |
+| Unprefixed environment variables                              | The `TRACELATTICE_*` variables documented above                                                                                                                                      |
+
+File persistence accepts the strict v2 `snapshot.json` document. SQLite persistence accepts the exact v2 schema with its authoritative `schema_version` row. Invalid, unknown, or differently versioned storage fails closed; startup does not rewrite it.
 
 ## Development
 
@@ -261,9 +285,9 @@ src/
 │   ├── reasoning/      # OutcomeRecorder + strategies (Sequential, TreeOfThought, StrategyFactory)
 │   └── tools/          # InMemorySuspensionStore (suspend/resume)
 ├── contracts/          # Shared interfaces and branded ID types (cross-module coupling point)
-├── persistence/        # File, SQLite, Memory backends (with saveEdges/loadEdges)
+├── persistence/        # Session-scoped File v2, SQLite v2, and Memory sinks
 ├── transport/          # Streamable HTTP, HTTP JSON-RPC
-├── di/                 # IoC container (18 services) + ServiceRegistry
+├── di/                 # IoC container (20 services) + ServiceRegistry
 ├── registry/           # Tool/Skill discovery with frontmatter parsing and LRU cache
 ├── config/             # YAML + env var loading
 ├── cache/              # LRU+TTL discovery cache
