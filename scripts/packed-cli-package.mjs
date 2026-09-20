@@ -223,6 +223,7 @@ export async function inspectPackedPackage(packageDirectory) {
 		return {
 			packRoot,
 			consumerRoot,
+			packageRoot,
 			tarballPath: packed.tarballPath,
 			binaryPath,
 			name: manifest.name,
