@@ -111,6 +111,6 @@ describe('legacy SSE removal', () => {
 		// Given
 		const { contents } = await readIfPresent('src/cli.ts');
 		// Then
-		expect(contents).toContain("process.env.STREAMABLE_HTTP_PORT || '9007'");
+		expect(contents).toContain("process.env.TRACELATTICE_STREAMABLE_HTTP_PORT || '9007'");
 	});
 });
