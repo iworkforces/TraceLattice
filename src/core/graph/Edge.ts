@@ -45,7 +45,7 @@ export type EdgeKind =
  *   from: parentThought.id,
  *   to: childThought.id,
  *   kind: 'sequence',
- *   sessionId: '__global__',
+ *   sessionId: asSessionId('analysis-session'),
  *   createdAt: Date.now(),
  * };
  * ```

@@ -25,7 +25,7 @@ function validEdge(overrides: Record<string, unknown> = {}): Record<string, unkn
 		from: 'thought-a',
 		to: 'thought-b',
 		kind: 'sequence',
-		sessionId: '__global__',
+		sessionId: 'edge-session',
 		createdAt: Date.now(),
 		...overrides,
 	};
