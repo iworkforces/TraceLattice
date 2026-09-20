@@ -12,8 +12,8 @@ class BattleTestBlockedError extends Error {
 }
 
 describe.skipIf(!process.env.RUN_EVAL)('Battle Test', () => {
-	it('runs category regression gates', () => {
-		const report = runBattleTest();
+	it('runs category regression gates', async () => {
+		const report = await runBattleTest();
 
 		for (const category of report.categories) {
 			console.log(toJsonLine(category));
