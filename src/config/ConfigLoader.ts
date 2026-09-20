@@ -80,54 +80,55 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 export interface ConfigFileOptions {
 	/**
 	 * Maximum number of thoughts to keep in history.
-	 * Can be overridden by `MAX_HISTORY_SIZE` environment variable.
+	 * Can be overridden by `TRACELATTICE_MAX_HISTORY_SIZE` environment variable.
 	 */
 	readonly maxHistorySize?: number;
 
 	/**
 	 * Maximum number of branches to maintain.
-	 * Can be overridden by `MAX_BRANCHES` environment variable.
+	 * Can be overridden by `TRACELATTICE_MAX_BRANCHES` environment variable.
 	 */
 	readonly maxBranches?: number;
 
 	/**
 	 * Maximum size of each branch.
-	 * Can be overridden by `MAX_BRANCH_SIZE` environment variable.
+	 * Can be overridden by `TRACELATTICE_MAX_BRANCH_SIZE` environment variable.
 	 */
 	readonly maxBranchSize?: number;
 
 	/**
 	 * Logging level for the application.
-	 * Can be overridden by `LOG_LEVEL` environment variable.
+	 * Can be overridden by `TRACELATTICE_LOG_LEVEL` environment variable.
 	 */
 	readonly logLevel?: 'debug' | 'info' | 'warn' | 'error';
 
 	/**
 	 * Whether to enable pretty (formatted) logging output.
-	 * Can be overridden by `PRETTY_LOG` environment variable (set to "false" to disable).
+	 * Can be overridden by `TRACELATTICE_PRETTY_LOG` environment variable (set to "false" to disable).
 	 */
 	readonly prettyLog?: boolean;
 
 	/**
 	 * Directory paths to search for skills.
-	 * Can be overridden by `SKILL_DIRS` environment variable (colon-separated).
+	 * Can be overridden by `TRACELATTICE_SKILL_DIRS` environment variable (colon-separated).
 	 */
 	readonly skillDirs?: string[];
 
 	/**
 	 * Directory paths to search for tools.
-	 * Can be overridden by `TOOL_DIRS` environment variable (colon-separated).
+	 * Can be overridden by `TRACELATTICE_TOOL_DIRS` environment variable (colon-separated).
 	 */
 	readonly toolDirs?: string[];
 
 	/**
 	 * Discovery cache configuration.
-	 * Can be overridden by `DISCOVERY_CACHE_TTL` and `DISCOVERY_CACHE_MAX_SIZE` environment variables.
+	 * Can be overridden by `TRACELATTICE_DISCOVERY_CACHE_TTL` and
+	 * `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` environment variables.
 	 */
 	readonly discoveryCache?: {
 		/**
 		 * Time-to-live for cache entries in milliseconds.
-		 * Environment variable `DISCOVERY_CACHE_TTL` accepts seconds.
+		 * Environment variable `TRACELATTICE_DISCOVERY_CACHE_TTL` accepts seconds.
 		 */
 		readonly ttl?: number;
 		/**
@@ -168,7 +169,7 @@ export interface ConfigFileOptions {
 	/**
 	 * Maximum sessions per owner. Per-owner LRU bucket prevents one user from
 	 * consuming all session slots.
-	 * Can be overridden by `SESSION_MAX_PER_OWNER` environment variable.
+	 * Can be overridden by `TRACELATTICE_SESSION_MAX_PER_OWNER` environment variable.
 	 */
 	readonly maxSessionsPerOwner?: number;
 }
@@ -193,15 +194,15 @@ export interface ConfigFileOptions {
  * **Environment Variable Overrides:**
  * | Variable | Type | Description |
  * |----------|------|-------------|
- * | `MAX_HISTORY_SIZE` | number | Max thoughts in history |
- * | `MAX_BRANCHES` | number | Max number of branches |
- * | `MAX_BRANCH_SIZE` | number | Max size of each branch |
- * | `LOG_LEVEL` | string | Logging level (debug/info/warn/error) |
- * | `PRETTY_LOG` | string | "false" to disable pretty logging |
- * | `SKILL_DIRS` | string | Colon-separated directory paths |
- * | `TOOL_DIRS` | string | Colon-separated directory paths |
- * | `DISCOVERY_CACHE_TTL` | number | TTL in seconds (converted to ms) |
- * | `DISCOVERY_CACHE_MAX_SIZE` | number | Max cache entries |
+ * | `TRACELATTICE_MAX_HISTORY_SIZE` | number | Max thoughts in history |
+ * | `TRACELATTICE_MAX_BRANCHES` | number | Max number of branches |
+ * | `TRACELATTICE_MAX_BRANCH_SIZE` | number | Max size of each branch |
+ * | `TRACELATTICE_LOG_LEVEL` | string | Logging level (debug/info/warn/error) |
+ * | `TRACELATTICE_PRETTY_LOG` | string | "false" to disable pretty logging |
+ * | `TRACELATTICE_SKILL_DIRS` | string | Colon-separated directory paths |
+ * | `TRACELATTICE_TOOL_DIRS` | string | Colon-separated directory paths |
+ * | `TRACELATTICE_DISCOVERY_CACHE_TTL` | number | TTL in seconds (converted to ms) |
+ * | `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | number | Max cache entries |
  *
  * @example
  * ```typescript
@@ -236,8 +237,9 @@ export class ConfigLoader {
 	 * ```
 	 */
 	constructor(customPath?: string) {
-		this._configPaths = customPath
-			? [customPath]
+		const configuredPath = customPath ?? process.env.TRACELATTICE_CONFIG;
+		this._configPaths = configuredPath
+			? [configuredPath]
 			: [
 					'.claude/config.json',
 					'.claude/config.yaml',
@@ -290,19 +292,106 @@ export class ConfigLoader {
 	 *
 	 * Environment variables take precedence over file-based configuration.
 	 * Supported environment variables:
-	 * - `MAX_HISTORY_SIZE`, `MAX_BRANCHES`, `MAX_BRANCH_SIZE` (numbers)
-	 * - `LOG_LEVEL` (debug/info/warn/error)
-	 * - `PRETTY_LOG` ("false" to disable)
-	 * - `SKILL_DIRS` (colon-separated paths)
-	 * - `TOOL_DIRS` (colon-separated paths)
-	 * - `DISCOVERY_CACHE_TTL` (in seconds, converted to ms)
-	 * - `DISCOVERY_CACHE_MAX_SIZE` (number)
+	 * - `TRACELATTICE_MAX_HISTORY_SIZE`, `TRACELATTICE_MAX_BRANCHES`,
+	 *   `TRACELATTICE_MAX_BRANCH_SIZE` (numbers)
+	 * - `TRACELATTICE_LOG_LEVEL` (debug/info/warn/error)
+	 * - `TRACELATTICE_PRETTY_LOG` ("false" to disable)
+	 * - `TRACELATTICE_SKILL_DIRS` (colon-separated paths)
+	 * - `TRACELATTICE_TOOL_DIRS` (colon-separated paths)
+	 * - `TRACELATTICE_DISCOVERY_CACHE_TTL` (in seconds, converted to ms)
+	 * - `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` (number)
 	 *
 	 * @param config - The configuration to apply overrides to
 	 * @returns A new configuration object with environment overrides applied
 	 */
 	public applyEnvironmentOverrides(config: ConfigFileOptions): ConfigFileOptions {
-		const result: Mutable<ConfigFileOptions> = {
+		const result = this.cloneConfig(config);
+
+		if (process.env.TRACELATTICE_MAX_HISTORY_SIZE !== undefined) {
+			result.maxHistorySize = this.parseEnvironmentInteger(
+				'TRACELATTICE_MAX_HISTORY_SIZE',
+				process.env.TRACELATTICE_MAX_HISTORY_SIZE
+			);
+		}
+		if (process.env.TRACELATTICE_MAX_BRANCHES !== undefined) {
+			result.maxBranches = this.parseEnvironmentInteger(
+				'TRACELATTICE_MAX_BRANCHES',
+				process.env.TRACELATTICE_MAX_BRANCHES
+			);
+		}
+		if (process.env.TRACELATTICE_MAX_BRANCH_SIZE !== undefined) {
+			result.maxBranchSize = this.parseEnvironmentInteger(
+				'TRACELATTICE_MAX_BRANCH_SIZE',
+				process.env.TRACELATTICE_MAX_BRANCH_SIZE
+			);
+		}
+		if (
+			process.env.TRACELATTICE_LOG_LEVEL &&
+			['debug', 'info', 'warn', 'error'].includes(process.env.TRACELATTICE_LOG_LEVEL)
+		) {
+			result.logLevel = process.env.TRACELATTICE_LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error';
+		}
+		if (process.env.TRACELATTICE_PRETTY_LOG === 'false') {
+			result.prettyLog = false;
+		}
+		if (process.env.TRACELATTICE_SKILL_DIRS !== undefined) {
+			result.skillDirs =
+				process.env.TRACELATTICE_SKILL_DIRS === ''
+					? []
+					: process.env.TRACELATTICE_SKILL_DIRS.split(':');
+		}
+		if (process.env.TRACELATTICE_TOOL_DIRS !== undefined) {
+			result.toolDirs =
+				process.env.TRACELATTICE_TOOL_DIRS === ''
+					? []
+					: process.env.TRACELATTICE_TOOL_DIRS.split(':');
+		}
+		if (process.env.TRACELATTICE_DISCOVERY_CACHE_TTL !== undefined) {
+			const seconds = this.parseEnvironmentInteger(
+				'TRACELATTICE_DISCOVERY_CACHE_TTL',
+				process.env.TRACELATTICE_DISCOVERY_CACHE_TTL
+			);
+			const ttl = seconds * 1000;
+			if (!Number.isSafeInteger(ttl)) {
+				throw new ConfigurationError(
+					'TRACELATTICE_DISCOVERY_CACHE_TTL exceeds the safe integer range'
+				);
+			}
+			result.discoveryCache = { ...result.discoveryCache, ttl };
+		}
+		if (process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE !== undefined) {
+			const maxSize = this.parseEnvironmentInteger(
+				'TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE',
+				process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE
+			);
+			result.discoveryCache = { ...result.discoveryCache, maxSize };
+		}
+		if (process.env.TRACELATTICE_TOOL_INTERLEAVE_TTL_MS !== undefined) {
+			result.toolInterleaveTtlMs = this.parseEnvironmentInteger(
+				'TRACELATTICE_TOOL_INTERLEAVE_TTL_MS',
+				process.env.TRACELATTICE_TOOL_INTERLEAVE_TTL_MS
+			);
+		}
+		if (process.env.TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS !== undefined) {
+			result.toolInterleaveSweepMs = this.parseEnvironmentInteger(
+				'TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS',
+				process.env.TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS
+			);
+		}
+		if (process.env.TRACELATTICE_SESSION_MAX_PER_OWNER !== undefined) {
+			result.maxSessionsPerOwner = this.parseEnvironmentInteger(
+				'TRACELATTICE_SESSION_MAX_PER_OWNER',
+				process.env.TRACELATTICE_SESSION_MAX_PER_OWNER
+			);
+		}
+
+		this.applyFeatureFlagOverrides(result);
+
+		return result;
+	}
+
+	private cloneConfig(config: ConfigFileOptions): Mutable<ConfigFileOptions> {
+		return {
 			...config,
 			...(config.skillDirs === undefined ? {} : { skillDirs: [...config.skillDirs] }),
 			...(config.toolDirs === undefined ? {} : { toolDirs: [...config.toolDirs] }),
@@ -321,77 +410,6 @@ export class ConfigLoader {
 					}),
 			...(config.features === undefined ? {} : { features: { ...config.features } }),
 		};
-
-		if (process.env.MAX_HISTORY_SIZE !== undefined) {
-			result.maxHistorySize = this.parseEnvironmentInteger(
-				'MAX_HISTORY_SIZE',
-				process.env.MAX_HISTORY_SIZE
-			);
-		}
-		if (process.env.MAX_BRANCHES !== undefined) {
-			result.maxBranches = this.parseEnvironmentInteger('MAX_BRANCHES', process.env.MAX_BRANCHES);
-		}
-		if (process.env.MAX_BRANCH_SIZE !== undefined) {
-			result.maxBranchSize = this.parseEnvironmentInteger(
-				'MAX_BRANCH_SIZE',
-				process.env.MAX_BRANCH_SIZE
-			);
-		}
-		if (
-			process.env.LOG_LEVEL &&
-			['debug', 'info', 'warn', 'error'].includes(process.env.LOG_LEVEL)
-		) {
-			result.logLevel = process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error';
-		}
-		if (process.env.PRETTY_LOG === 'false') {
-			result.prettyLog = false;
-		}
-		if (process.env.SKILL_DIRS !== undefined) {
-			result.skillDirs = process.env.SKILL_DIRS === '' ? [] : process.env.SKILL_DIRS.split(':');
-		}
-		if (process.env.TOOL_DIRS !== undefined) {
-			result.toolDirs = process.env.TOOL_DIRS === '' ? [] : process.env.TOOL_DIRS.split(':');
-		}
-		if (process.env.DISCOVERY_CACHE_TTL !== undefined) {
-			const seconds = this.parseEnvironmentInteger(
-				'DISCOVERY_CACHE_TTL',
-				process.env.DISCOVERY_CACHE_TTL
-			);
-			const ttl = seconds * 1000;
-			if (!Number.isSafeInteger(ttl)) {
-				throw new ConfigurationError('DISCOVERY_CACHE_TTL exceeds the safe integer range');
-			}
-			result.discoveryCache = { ...result.discoveryCache, ttl };
-		}
-		if (process.env.DISCOVERY_CACHE_MAX_SIZE !== undefined) {
-			const maxSize = this.parseEnvironmentInteger(
-				'DISCOVERY_CACHE_MAX_SIZE',
-				process.env.DISCOVERY_CACHE_MAX_SIZE
-			);
-			result.discoveryCache = { ...result.discoveryCache, maxSize };
-		}
-		if (process.env.TRACELATTICE_TOOL_INTERLEAVE_TTL_MS !== undefined) {
-			result.toolInterleaveTtlMs = this.parseEnvironmentInteger(
-				'TRACELATTICE_TOOL_INTERLEAVE_TTL_MS',
-				process.env.TRACELATTICE_TOOL_INTERLEAVE_TTL_MS
-			);
-		}
-		if (process.env.TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS !== undefined) {
-			result.toolInterleaveSweepMs = this.parseEnvironmentInteger(
-				'TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS',
-				process.env.TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS
-			);
-		}
-		if (process.env.SESSION_MAX_PER_OWNER !== undefined) {
-			result.maxSessionsPerOwner = this.parseEnvironmentInteger(
-				'SESSION_MAX_PER_OWNER',
-				process.env.SESSION_MAX_PER_OWNER
-			);
-		}
-
-		this.applyFeatureFlagOverrides(result);
-
-		return result;
 	}
 
 	/**
