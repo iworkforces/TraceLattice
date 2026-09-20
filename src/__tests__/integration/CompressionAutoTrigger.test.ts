@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
+import type { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { HistoryManager } from '../../core/HistoryManager.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import { CompressionService } from '../../core/compression/CompressionService.js';
@@ -27,7 +27,10 @@ import type {
 	StrategyDecision,
 } from '../../contracts/strategy.js';
 import { createTestThought } from '../helpers/factories.js';
-import { asThoughtId, type EdgeId, GLOBAL_SESSION_ID } from '../../contracts/ids.js';
+import { asSessionId, asThoughtId, type EdgeId } from '../../contracts/ids.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
+
+const COMPRESSION_SESSION = asSessionId('test-session');
 
 class TerminateStrategy implements IReasoningStrategy {
 	readonly name = 'terminate-always';
@@ -71,7 +74,7 @@ function makeDeps(): Deps {
 	const summaryStore = new InMemorySummaryStore();
 	const history = new HistoryManager({ logger, edgeStore, dagEdges: true });
 	const formatter = new ThoughtFormatter();
-	const evaluator = new ThoughtEvaluator();
+	const evaluator = createDisabledThoughtEvaluator();
 	const compression = new CompressionService({
 		historyManager: history,
 		edgeStore,
@@ -122,15 +125,15 @@ describe('Compression Auto-Trigger Integration', () => {
 
 		expect(result.isError).toBeUndefined();
 
-		const summaries = deps.summaryStore.forBranch('__global__', asBranchId('alt-1'));
+		const summaries = deps.summaryStore.forBranch(COMPRESSION_SESSION, asBranchId('alt-1'));
 		expect(summaries.length).toBe(1);
 		const summary = summaries[0];
-		const branchThought = deps.history.getBranches()[asBranchId('alt-1')]?.[0];
+		const branchThought = deps.history.getBranches(COMPRESSION_SESSION)[asBranchId('alt-1')]?.[0];
 		if (summary === undefined || branchThought?.id === undefined) {
 			throw new TypeError('Expected one identified branch thought and its summary');
 		}
 		expect(summary.branchId).toBe('alt-1');
-		expect(summary.sessionId).toBe('__global__');
+		expect(summary.sessionId).toBe(COMPRESSION_SESSION);
 		expect(summary.coveredIds).toEqual([branchThought.id]);
 		expect(summary.coveredRange).toEqual([2, 2]);
 	});
@@ -310,9 +313,9 @@ describe('Compression Auto-Trigger Integration', () => {
 			readonly strategy_hint?: StrategyDecision;
 		};
 		expect(parsed.strategy_hint).toEqual({ action: 'terminate', reason: 'depth cap' });
-		expect(deps.summaryStore.forBranch(GLOBAL_SESSION_ID, asBranchId('depth-enabled'))).toHaveLength(
-			1
-		);
+		expect(
+			deps.summaryStore.forBranch(COMPRESSION_SESSION, asBranchId('depth-enabled'))
+		).toHaveLength(1);
 	});
 
 	it('does not compress a depth-capped branch when compression is disabled', async () => {
@@ -390,7 +393,7 @@ describe('Compression Auto-Trigger Integration', () => {
 				branch_id: branchId,
 			})
 		);
-		const firstSummary = deps.summaryStore.forBranch(GLOBAL_SESSION_ID, branchId)[0];
+		const firstSummary = deps.summaryStore.forBranch(COMPRESSION_SESSION, branchId)[0];
 
 		// When
 		await processor.process(
@@ -405,18 +408,16 @@ describe('Compression Auto-Trigger Integration', () => {
 		);
 
 		// Then
-		const summaries = deps.summaryStore.forBranch(GLOBAL_SESSION_ID, branchId);
+		const summaries = deps.summaryStore.forBranch(COMPRESSION_SESSION, branchId);
 		expect(summaries).toHaveLength(1);
 		expect(summaries[0]?.id).toBe(firstSummary?.id);
 	});
 
 	it('contains compression failure after a ToT depth-cap termination', async () => {
 		// Given
-		const compressBranch = vi
-			.spyOn(deps.compression, 'compressBranch')
-			.mockImplementation(() => {
-				throw new Error('depth compression failure');
-			});
+		const compressBranch = vi.spyOn(deps.compression, 'compressBranch').mockImplementation(() => {
+			throw new Error('depth compression failure');
+		});
 		const processor = new ThoughtProcessor(
 			deps.history,
 			deps.formatter,
@@ -476,7 +477,7 @@ describe('Compression → Dehydration Roundtrip', () => {
 		});
 
 		// Build 8 thoughts on branch 'b1' with explicit ids and DAG edges.
-		const sessionId = GLOBAL_SESSION_ID;
+		const sessionId = COMPRESSION_SESSION;
 		for (let i = 1; i <= 8; i++) {
 			await history.addThought(
 				createTestThought({
