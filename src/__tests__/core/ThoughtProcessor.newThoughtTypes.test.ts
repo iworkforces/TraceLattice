@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { InMemorySuspensionStore } from '../../core/tools/InMemorySuspensionStore.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import { MockHistoryManager, createMockToolRegistry } from '../helpers/factories.js';
 import type { FeatureFlags } from '../../contracts/features.js';
-import { asSuspensionToken } from '../../contracts/ids.js';
+import { asSessionId, asSuspensionToken } from '../../contracts/ids.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
 
 function makeFeatures(overrides: Partial<FeatureFlags> = {}): FeatureFlags {
 	return {
@@ -25,13 +25,13 @@ function makeProcessor(features: FeatureFlags): ThoughtProcessor {
 	return new ThoughtProcessor(
 		new MockHistoryManager(),
 		new ThoughtFormatter(),
-		new ThoughtEvaluator(),
+		createDisabledThoughtEvaluator(),
 		undefined,
 		new SequentialStrategy(),
 		undefined,
 		new InMemorySuspensionStore(),
 		createMockToolRegistry(['search', 'fetch', 'test-tool']),
-		features,
+		features
 	);
 }
 
@@ -43,6 +43,7 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
+			session_id: asSessionId('new-types'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: {},
@@ -59,12 +60,15 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
+			session_id: asSessionId('new-types'),
 			thought_type: 'tool_observation',
 			continuation_token: asSuspensionToken('tok'),
 		});
 		expect(result.isError).toBe(true);
 		const payload = JSON.parse(result.content[0]!.text);
-		expect(payload.error).toMatch(/Type 'tool_observation' requires the toolInterleave feature flag/);
+		expect(payload.error).toMatch(
+			/Type 'tool_observation' requires the toolInterleave feature flag/
+		);
 	});
 
 	it('rejects assumption when newThoughtTypes flag is OFF', async () => {
@@ -74,6 +78,7 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
+			session_id: asSessionId('new-types'),
 			thought_type: 'assumption',
 		});
 		expect(result.isError).toBe(true);
@@ -88,6 +93,7 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
+			session_id: asSessionId('new-types'),
 			thought_type: 'decomposition',
 		});
 		expect(result.isError).toBe(true);
@@ -102,6 +108,7 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: false,
+			session_id: asSessionId('new-types'),
 			thought_type: 'backtrack',
 		});
 		expect(result.isError).toBe(true);
@@ -116,6 +123,7 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 5,
 			total_thoughts: 5,
 			next_thought_needed: false,
+			session_id: asSessionId('new-types'),
 			thought_type: 'tool_call',
 			tool_arguments: {},
 		});
@@ -131,6 +139,7 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 6,
 			total_thoughts: 6,
 			next_thought_needed: false,
+			session_id: asSessionId('new-types'),
 			thought_type: 'tool_observation',
 		});
 		expect(result.isError).toBe(true);
@@ -145,6 +154,7 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 3,
 			total_thoughts: 5,
 			next_thought_needed: true,
+			session_id: asSessionId('new-types'),
 			thought_type: 'backtrack',
 			backtrack_target: 5,
 		});
@@ -161,18 +171,21 @@ describe('ThoughtProcessor — new thought type validation', () => {
 			thought_number: 1,
 			total_thoughts: 8,
 			next_thought_needed: true,
+			session_id: asSessionId('new-types'),
 		});
 		await proc.process({
 			thought: 'second',
 			thought_number: 2,
 			total_thoughts: 8,
 			next_thought_needed: true,
+			session_id: asSessionId('new-types'),
 		});
 		const result = await proc.process({
 			thought: 'going back',
 			thought_number: 5,
 			total_thoughts: 8,
 			next_thought_needed: true,
+			session_id: asSessionId('new-types'),
 			thought_type: 'backtrack',
 			backtrack_target: 2,
 		});

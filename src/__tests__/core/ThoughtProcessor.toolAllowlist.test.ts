@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { InMemorySuspensionStore } from '../../core/tools/InMemorySuspensionStore.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import { MockHistoryManager, createMockToolRegistry } from '../helpers/factories.js';
 import type { FeatureFlags } from '../../contracts/features.js';
 import type { IToolRegistry } from '../../contracts/interfaces.js';
 import { ERROR_CODES } from '../../errors.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
+import { asSessionId } from '../../contracts/ids.js';
 
 function makeFeatures(overrides: Partial<FeatureFlags> = {}): FeatureFlags {
 	return {
@@ -22,22 +23,24 @@ function makeFeatures(overrides: Partial<FeatureFlags> = {}): FeatureFlags {
 	};
 }
 
-function makeProcessor(opts: {
-	store?: InMemorySuspensionStore;
-	registry?: IToolRegistry;
-	features?: FeatureFlags;
-} = {}): ThoughtProcessor {
+function makeProcessor(
+	opts: {
+		store?: InMemorySuspensionStore;
+		registry?: IToolRegistry;
+		features?: FeatureFlags;
+	} = {}
+): ThoughtProcessor {
 	const history = new MockHistoryManager();
 	return new ThoughtProcessor(
 		history,
 		new ThoughtFormatter(),
-		new ThoughtEvaluator(),
+		createDisabledThoughtEvaluator(),
 		undefined,
 		new SequentialStrategy(),
 		undefined,
 		opts.store ?? new InMemorySuspensionStore(),
 		opts.registry,
-		opts.features ?? makeFeatures(),
+		opts.features ?? makeFeatures()
 	);
 }
 
@@ -55,6 +58,7 @@ describe('ThoughtProcessor — tool allowlist (WU-1.2)', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-allowlist'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: { q: 'x' },
@@ -72,6 +76,7 @@ describe('ThoughtProcessor — tool allowlist (WU-1.2)', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-allowlist'),
 			thought_type: 'tool_call',
 			tool_name: 'rm-rf',
 			tool_arguments: {},
@@ -90,6 +95,7 @@ describe('ThoughtProcessor — tool allowlist (WU-1.2)', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-allowlist'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: { q: 'x' },
@@ -108,6 +114,7 @@ describe('ThoughtProcessor — tool allowlist (WU-1.2)', () => {
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-allowlist'),
 			thought_type: 'tool_call',
 			tool_name: 'evil',
 			tool_arguments: {},
@@ -128,6 +135,7 @@ describe('ThoughtProcessor — tool_arguments shape enforcement (WU-1.3)', () =>
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-arguments'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: { constructor: 'evil' } as Record<string, unknown>,
@@ -146,6 +154,7 @@ describe('ThoughtProcessor — tool_arguments shape enforcement (WU-1.3)', () =>
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-arguments'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: { blob: 'x'.repeat(20_000) },
@@ -165,6 +174,7 @@ describe('ThoughtProcessor — tool_arguments shape enforcement (WU-1.3)', () =>
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-arguments'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: deep,
@@ -182,6 +192,7 @@ describe('ThoughtProcessor — tool_arguments shape enforcement (WU-1.3)', () =>
 			thought_number: 1,
 			total_thoughts: 1,
 			next_thought_needed: true,
+			session_id: asSessionId('tool-arguments'),
 			thought_type: 'tool_call',
 			tool_name: 'search',
 			tool_arguments: { q: 'hello', opts: { limit: 10 } },
