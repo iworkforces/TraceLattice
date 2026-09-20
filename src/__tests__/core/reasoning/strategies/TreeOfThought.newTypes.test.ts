@@ -2,12 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { scoreThought } from '../../../../core/reasoning/strategies/totScoring.js';
 import type { ThoughtData } from '../../../../core/thought.js';
 import type { ThoughtType } from '../../../../contracts/reasoning-types.js';
+import { asSessionId } from '../../../../contracts/ids.js';
+
+const TREE_SESSION = asSessionId('tree-new-types-session');
 
 function thoughtOf(
 	type: ThoughtType | undefined,
-	overrides: Partial<ThoughtData> = {},
+	overrides: Partial<ThoughtData> = {}
 ): ThoughtData {
 	return {
+		session_id: TREE_SESSION,
 		thought: 't',
 		thought_number: 1,
 		total_thoughts: 1,
@@ -32,9 +36,7 @@ describe('scoreThought — per-type weights for new thought types', () => {
 
 	it('decomposition with sub-maximal inputs reflects the 1.2 boost without clamping', () => {
 		// confidence=0.5, quality=0.5, weight=1.2 → 0.3
-		const score = scoreThought(
-			thoughtOf('decomposition', { confidence: 0.5, quality_score: 0.5 }),
-		);
+		const score = scoreThought(thoughtOf('decomposition', { confidence: 0.5, quality_score: 0.5 }));
 		expect(score).toBeCloseTo(0.3, 10);
 	});
 
@@ -59,7 +61,7 @@ describe('scoreThought — per-type weights for new thought types', () => {
 	it('clamps negative scores to 0 and respects the assumption weight ordering', () => {
 		// quality_score defaults to 0.5 when undefined; confidence default 0
 		const noConfidence = scoreThought(
-			thoughtOf('assumption', { confidence: undefined, quality_score: undefined }),
+			thoughtOf('assumption', { confidence: undefined, quality_score: undefined })
 		);
 		expect(noConfidence).toBe(0);
 	});
