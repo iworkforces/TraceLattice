@@ -1,5 +1,4 @@
 import { expect, vi } from 'vitest';
-import { supportsSessionScopedPersistence } from '../../contracts/PersistenceBackend.js';
 import { createServer } from '../../lib.js';
 import { ServerConfig } from '../../ServerConfig.js';
 import type { DurableBackend } from './ReliabilityPersistenceScenarios.js';
@@ -52,9 +51,7 @@ export async function assertVisibleDrainFailure(): Promise<void> {
 	let disposeFailure: Error | undefined;
 	try {
 		const persistence = server.getContainer().resolve('Persistence');
-		if (!persistence || !supportsSessionScopedPersistence(persistence)) {
-			throw new TypeError('Memory persistence lacks scoped methods');
-		}
+		if (!persistence) throw new TypeError('Memory persistence is unavailable');
 		const diagnostic = new Error('controlled storage drain failure');
 		vi.spyOn(persistence, 'saveThoughtForSession').mockRejectedValue(diagnostic);
 		const close = vi.spyOn(persistence, 'close');
@@ -121,9 +118,7 @@ export async function assertResetJoinsQueuedWrites(backend: DurableBackend): Pro
 		loadFromPersistence: false,
 	});
 	const persistence = server.getContainer().resolve('Persistence');
-	if (!persistence || !supportsSessionScopedPersistence(persistence)) {
-		throw new TypeError(`${backend} persistence lacks scoped methods`);
-	}
+	if (!persistence) throw new TypeError(`${backend} persistence is unavailable`);
 	const saveStarted = Promise.withResolvers<void>();
 	const releaseSave = Promise.withResolvers<void>();
 	const originalSave = persistence.saveThoughtForSession.bind(persistence);

@@ -114,7 +114,7 @@ export function spawnCli(environment: NodeJS.ProcessEnv): RunningProcess {
 	return captureChild(
 		spawn(process.execPath, [builtCli], {
 			cwd: repositoryRoot,
-			env: { ...process.env, PRETTY_LOG: 'false', ...environment },
+			env: { ...process.env, TRACELATTICE_PRETTY_LOG: 'false', ...environment },
 			stdio: ['pipe', 'pipe', 'pipe'] as const,
 		})
 	);
@@ -123,7 +123,7 @@ export function spawnCli(environment: NodeJS.ProcessEnv): RunningProcess {
 export function spawnFixture(mode: FixtureMode): RunningFixture {
 	const child = spawn(process.execPath, ['--unhandled-rejections=strict', fixtureScript, mode], {
 		cwd: repositoryRoot,
-		env: { ...process.env, PRETTY_LOG: 'false' },
+		env: { ...process.env, TRACELATTICE_PRETTY_LOG: 'false' },
 		stdio: ['pipe', 'pipe', 'pipe', 'ipc'] as const,
 	});
 	const running = captureChild(child);

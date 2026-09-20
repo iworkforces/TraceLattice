@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { ToolAwareSequentialThinkingServer} from '../lib.js';
+import type { ToolAwareSequentialThinkingServer } from '../lib.js';
 import { createServer } from '../lib.js';
 
-import { asBranchId } from '../contracts/ids.js';
+import { asBranchId, asSessionId } from '../contracts/ids.js';
+
+const INTEGRATION_SESSION = asSessionId('integration-session');
+
 describe('ToolAwareSequentialThinkingServer Integration', () => {
 	let server: ToolAwareSequentialThinkingServer;
 
@@ -12,6 +15,7 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 
 	it('should process complete thought sequence', async () => {
 		const result = (await server.processThought({
+			session_id: INTEGRATION_SESSION,
 			thought: 'First thought',
 			thought_number: 1,
 			total_thoughts: 3,
@@ -27,6 +31,7 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 
 	it('should handle branching thoughts', async () => {
 		await server.processThought({
+			session_id: INTEGRATION_SESSION,
 			thought: 'Original thought',
 			thought_number: 1,
 			total_thoughts: 2,
@@ -34,6 +39,7 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 		});
 
 		await server.processThought({
+			session_id: INTEGRATION_SESSION,
 			thought: 'Branch thought',
 			thought_number: 2,
 			total_thoughts: 3,
@@ -42,12 +48,13 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 			branch_id: asBranchId('branch-a'),
 		});
 
-		const branches = server.history.getBranches();
+		const branches = server.history.getBranches(INTEGRATION_SESSION);
 		expect(branches[asBranchId('branch-a')]).toHaveLength(1);
 	});
 
 	it('should handle thought revisions', async () => {
 		await server.processThought({
+			session_id: INTEGRATION_SESSION,
 			thought: 'Original thought',
 			thought_number: 1,
 			total_thoughts: 2,
@@ -55,6 +62,7 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 		});
 
 		const result = (await server.processThought({
+			session_id: INTEGRATION_SESSION,
 			thought: 'Revised thought',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -69,6 +77,7 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 
 	it('should track step recommendations', async () => {
 		const result = (await server.processThought({
+			session_id: INTEGRATION_SESSION,
 			thought: 'I need to search the codebase',
 			thought_number: 1,
 			total_thoughts: 2,
@@ -98,6 +107,7 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 		// Add 5 thoughts
 		for (let i = 1; i <= 5; i++) {
 			await smallServer.processThought({
+				session_id: INTEGRATION_SESSION,
 				thought: `Thought ${i}`,
 				thought_number: i,
 				total_thoughts: 5,
@@ -106,11 +116,12 @@ describe('ToolAwareSequentialThinkingServer Integration', () => {
 		}
 
 		// History should be trimmed to maxHistorySize
-		expect(smallServer.history.getHistory().length).toBeLessThanOrEqual(3);
+		expect(smallServer.history.getHistory(INTEGRATION_SESSION).length).toBeLessThanOrEqual(3);
 	});
 
 	it('should handle errors gracefully', async () => {
 		const result = (await server.processThought({
+			session_id: INTEGRATION_SESSION,
 			thought: 'Test',
 			thought_number: 1,
 			total_thoughts: 1,
