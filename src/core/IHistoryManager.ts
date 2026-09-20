@@ -58,18 +58,18 @@ export interface ThoughtAdmissionContext {
  * class MockHistoryManager implements IHistoryManager {
  *   private _history: ThoughtData[] = [];
  *   addThought(thought: ThoughtData): void { this._history.push(thought); }
- *   getHistory(): ThoughtData[] { return this._history; }
- *   getHistoryLength(): number { return this._history.length; }
- *   getBranches(): Record<string, ThoughtData[]> { return {}; }
- *   getBranchIds(): string[] { return []; }
- *   clear(): void { this._history = []; }
+ *   getHistory(_sessionId: string): ThoughtData[] { return this._history; }
+ *   getHistoryLength(_sessionId: string): number { return this._history.length; }
+ *   getBranches(_sessionId: string): Record<string, ThoughtData[]> { return {}; }
+ *   getBranchIds(_sessionId: string): string[] { return []; }
+ *   async resetSession(_sessionId: string): Promise<void> { this._history = []; }
  * }
  * ```
  */
 export interface IHistoryManager {
 	/**
 	 * Adds a thought to the history.
-	 * Session is determined by `thought.session_id` (defaults to global session).
+	 * Session is determined by the required `thought.session_id`.
 	 *
 	 * @param thought - The thought data to add
 	 */
@@ -81,43 +81,34 @@ export interface IHistoryManager {
 	/**
 	 * Gets the complete thought history.
 	 *
-	 * @param sessionId - Optional session ID for session-scoped results
+	 * @param sessionId - Session ID for session-scoped results
 	 * @returns An array of all thoughts in chronological order
 	 */
-	getHistory(sessionId?: string): ThoughtData[];
+	getHistory(sessionId: string): ThoughtData[];
 
 	/**
 	 * Gets the current length of the thought history.
 	 *
-	 * @param sessionId - Optional session ID for session-scoped results
+	 * @param sessionId - Session ID for session-scoped results
 	 * @returns The number of thoughts in history
 	 */
-	getHistoryLength(sessionId?: string): number;
+	getHistoryLength(sessionId: string): number;
 
 	/**
 	 * Gets all branches.
 	 *
-	 * @param sessionId - Optional session ID for session-scoped results
+	 * @param sessionId - Session ID for session-scoped results
 	 * @returns A record mapping branch IDs to their thought arrays
 	 */
-	getBranches(sessionId?: string): Record<BranchId, ThoughtData[]>;
+	getBranches(sessionId: string): Record<BranchId, ThoughtData[]>;
 
 	/**
 	 * Gets all branch IDs.
 	 *
-	 * @param sessionId - Optional session ID for session-scoped results
+	 * @param sessionId - Session ID for session-scoped results
 	 * @returns An array of branch identifiers
 	 */
-	getBranchIds(sessionId?: string): BranchId[];
-
-	/**
-	 * Clears history and branches.
-	 * If sessionId is provided, clears only that session.
-	 * If omitted, clears all sessions.
-	 *
-	 * @param sessionId - Optional session ID to clear
-	 */
-	clear(sessionId?: string): void;
+	getBranchIds(sessionId: string): BranchId[];
 
 	/** Awaitably clears one authorized live and durable session. */
 	resetSession(sessionId: string, clearAuxiliaryState?: () => void): Promise<void>;
@@ -143,37 +134,37 @@ export interface IHistoryManager {
 	/**
 	 * Gets the most recently available MCP tools from the session.
 	 *
-	 * @param sessionId - Optional session ID for session-scoped results
+	 * @param sessionId - Session ID for session-scoped results
 	 * @returns The last-seen array of MCP tool names, or undefined if never set
 	 */
-	getAvailableMcpTools(sessionId?: string): string[] | undefined;
+	getAvailableMcpTools(sessionId: string): string[] | undefined;
 
 	/**
 	 * Gets the most recently available skills from the session.
 	 *
-	 * @param sessionId - Optional session ID for session-scoped results
+	 * @param sessionId - Session ID for session-scoped results
 	 * @returns The last-seen array of skill names, or undefined if never set
 	 */
-	getAvailableSkills(sessionId?: string): string[] | undefined;
+	getAvailableSkills(sessionId: string): string[] | undefined;
 
 	/**
 	 * Pre-declares a branch ID without adding any thoughts.
 	 * Allows merge_branch_ids to reference branches that have not yet received thoughts.
 	 *
-	 * @param sessionId - Optional session ID (defaults to global session)
+	 * @param sessionId - Session ID that owns the branch
 	 * @param branchId - The branch identifier to register
 	 * @throws ValidationError if branchId is empty or already exists
 	 */
-	registerBranch(sessionId: string | undefined, branchId: BranchId): void;
+	registerBranch(sessionId: string, branchId: BranchId): void;
 
 	/**
 	 * Checks whether a branch exists (has thoughts OR was pre-declared).
 	 *
-	 * @param sessionId - Optional session ID (defaults to global session)
+	 * @param sessionId - Session ID that owns the branch
 	 * @param branchId - The branch identifier to check
 	 * @returns true if the branch exists or has been registered
 	 */
-	branchExists(sessionId: string | undefined, branchId: BranchId): boolean;
+	branchExists(sessionId: string, branchId: BranchId): boolean;
 
 	/**
 	 * Access the EdgeStore, if configured.
