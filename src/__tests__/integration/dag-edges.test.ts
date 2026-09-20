@@ -1,4 +1,3 @@
-
 /**
  * Integration tests for DAG edge emission and persistence.
  *
@@ -25,7 +24,6 @@ import { HistoryManager } from '../../core/HistoryManager.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import { GraphView } from '../../core/graph/GraphView.js';
 import { generateUlid } from '../../core/ids.js';
-import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { TreeOfThoughtStrategy } from '../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
 import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { FilePersistence } from '../../persistence/FilePersistence.js';
@@ -34,8 +32,9 @@ import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
 import type { Edge, EdgeKind } from '../../core/graph/Edge.js';
 import type { ThoughtData } from '../../core/thought.js';
 import { createTestThought } from '../helpers/factories.js';
+import { createDisabledThoughtEvaluator } from '../helpers/evaluator.js';
 
-const GLOBAL = '__global__';
+const DAG_SESSION = asSessionId('dag-edges-session');
 
 // SQLite persistence requires the optional `better-sqlite3` package.
 // Detect availability at module load so tests can be skipped gracefully.
@@ -53,6 +52,7 @@ function makeThought(
 	overrides?: Partial<Omit<ThoughtData, 'session_id'>> & { session_id?: string }
 ): ThoughtData {
 	return createTestThought({
+		session_id: DAG_SESSION,
 		id: generateUlid(),
 		thought_number: num,
 		total_thoughts: 10,
@@ -92,7 +92,7 @@ describe('DAG edges integration — Scenario 1: flag OFF parity', () => {
 		manager.addThought(makeThought(2));
 		manager.addThought(makeThought(3));
 
-		expect(edgeStore.size(asSessionId(GLOBAL))).toBe(0);
+		expect(edgeStore.size(DAG_SESSION)).toBe(0);
 		await manager.shutdown();
 	});
 
@@ -117,7 +117,7 @@ describe('DAG edges integration — Scenario 1: flag OFF parity', () => {
 		manager.addThought(makeThought(2));
 		manager.addThought(makeThought(3));
 
-		expect(manager.getHistoryLength()).toBe(3);
+		expect(manager.getHistoryLength(DAG_SESSION)).toBe(3);
 		await manager.shutdown();
 	});
 });
@@ -135,7 +135,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		manager.addThought(makeThought(2));
 		manager.addThought(makeThought(3));
 
-		const edges = edgeStore.edgesForSession(asSessionId(GLOBAL));
+		const edges = edgeStore.edgesForSession(DAG_SESSION);
 		expect(edges).toHaveLength(2);
 		expect(edges.every((e) => e.kind === 'sequence')).toBe(true);
 		await manager.shutdown();
@@ -150,7 +150,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		const t2 = makeThought(2, { branch_from_thought: 1, branch_id: asBranchId('alt') });
 		manager.addThought(t2);
 
-		const edges = edgeStore.edgesForSession(asSessionId(GLOBAL));
+		const edges = edgeStore.edgesForSession(DAG_SESSION);
 		const branchEdges = edges.filter((e) => e.kind === 'branch');
 		expect(branchEdges).toHaveLength(1);
 		expect(branchEdges[0]!.from).toBe(t1.id);
@@ -169,7 +169,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		const t3 = makeThought(3, { merge_from_thoughts: [1, 2] });
 		manager.addThought(t3);
 
-		const merges = edgeStore.edgesForSession(asSessionId(GLOBAL)).filter((e) => e.kind === 'merge');
+		const merges = edgeStore.edgesForSession(DAG_SESSION).filter((e) => e.kind === 'merge');
 		expect(merges).toHaveLength(2);
 		expect(merges.map((e) => e.from).sort()).toEqual([t1.id, t2.id].sort());
 		expect(merges.every((e) => e.to === t3.id)).toBe(true);
@@ -185,7 +185,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		const t2 = makeThought(2, { thought_type: 'verification', verification_target: 1 });
 		manager.addThought(t2);
 
-		const verifies = edgeStore.edgesForSession(asSessionId(GLOBAL)).filter((e) => e.kind === 'verifies');
+		const verifies = edgeStore.edgesForSession(DAG_SESSION).filter((e) => e.kind === 'verifies');
 		expect(verifies).toHaveLength(1);
 		expect(verifies[0]!.from).toBe(t2.id);
 		expect(verifies[0]!.to).toBe(t1.id);
@@ -201,7 +201,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		const t2 = makeThought(2, { thought_type: 'critique', verification_target: 1 });
 		manager.addThought(t2);
 
-		const crits = edgeStore.edgesForSession(asSessionId(GLOBAL)).filter((e) => e.kind === 'critiques');
+		const crits = edgeStore.edgesForSession(DAG_SESSION).filter((e) => e.kind === 'critiques');
 		expect(crits).toHaveLength(1);
 		expect(crits[0]!.from).toBe(t2.id);
 		expect(crits[0]!.to).toBe(t1.id);
@@ -219,7 +219,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		const t3 = makeThought(3, { synthesis_sources: [1, 2] });
 		manager.addThought(t3);
 
-		const derives = edgeStore.edgesForSession(asSessionId(GLOBAL)).filter((e) => e.kind === 'derives_from');
+		const derives = edgeStore.edgesForSession(DAG_SESSION).filter((e) => e.kind === 'derives_from');
 		expect(derives).toHaveLength(2);
 		expect(derives.map((e) => e.from).sort()).toEqual([t1.id, t2.id].sort());
 		expect(derives.every((e) => e.to === t3.id)).toBe(true);
@@ -235,7 +235,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		const t2 = makeThought(2, { revises_thought: 1, is_revision: true });
 		manager.addThought(t2);
 
-		const revises = edgeStore.edgesForSession(asSessionId(GLOBAL)).filter((e) => e.kind === 'revises');
+		const revises = edgeStore.edgesForSession(DAG_SESSION).filter((e) => e.kind === 'revises');
 		expect(revises).toHaveLength(1);
 		expect(revises[0]!.from).toBe(t2.id);
 		expect(revises[0]!.to).toBe(t1.id);
@@ -250,7 +250,7 @@ describe('DAG edges integration — Scenario 2: edge kind emission', () => {
 		manager.addThought(t1);
 		manager.addThought(makeThought(2, { revises_thought: 1, is_revision: true }));
 
-		const kinds = edgeStore.edgesForSession(asSessionId(GLOBAL)).map((e) => e.kind);
+		const kinds = edgeStore.edgesForSession(DAG_SESSION).map((e) => e.kind);
 		expect(kinds).toContain('revises');
 		expect(kinds).not.toContain('sequence');
 		await manager.shutdown();
@@ -300,7 +300,7 @@ describe('DAG edges integration — Scenario 3: three-backend roundtrip', () => 
 			manager.addThought(makeThought(5, { thought_type: 'verification', verification_target: 4 })); // verifies
 
 			const beforeKinds = edgeStore
-				.edgesForSession(asSessionId(GLOBAL))
+				.edgesForSession(DAG_SESSION)
 				.map((e) => e.kind)
 				.sort();
 			await manager._flushBuffer();
@@ -317,11 +317,11 @@ describe('DAG edges integration — Scenario 3: three-backend roundtrip', () => 
 			await fresh.loadFromPersistence();
 
 			const afterKinds = freshStore
-				.edgesForSession(asSessionId(GLOBAL))
+				.edgesForSession(DAG_SESSION)
 				.map((e) => e.kind)
 				.sort();
 			expect(afterKinds).toEqual(beforeKinds);
-			expect(freshStore.size(asSessionId(GLOBAL))).toBeGreaterThan(0);
+			expect(freshStore.size(DAG_SESSION)).toBeGreaterThan(0);
 			await fresh.shutdown();
 		});
 	}
@@ -344,7 +344,7 @@ describe('DAG edges integration — Scenario 4: multi-session isolation', () => 
 
 		expect(edgeStore.size(asSessionId('sess-a'))).toBe(1); // 2 thoughts → 1 sequence edge
 		expect(edgeStore.size(asSessionId('sess-b'))).toBe(2); // 3 thoughts → 2 sequence edges
-		expect(edgeStore.size(asSessionId(GLOBAL))).toBe(0);
+		expect(edgeStore.size(DAG_SESSION)).toBe(0);
 		await manager.shutdown();
 	});
 
@@ -430,46 +430,49 @@ describe('DAG edges integration — Scenario 5: restart + GraphView', () => {
 		await fresh.loadFromPersistence();
 
 		const view = new GraphView(freshStore);
-		const descendants = view.descendants(asSessionId(GLOBAL), ids[0]! as ThoughtId);
+		const descendants = view.descendants(DAG_SESSION, ids[0]! as ThoughtId);
 		expect(descendants).toEqual([ids[1]!, ids[2]!, ids[3]!]);
 
-		const ancestors = view.ancestors(asSessionId(GLOBAL), ids[3]! as ThoughtId);
+		const ancestors = view.ancestors(DAG_SESSION, ids[3]! as ThoughtId);
 		expect(ancestors).toEqual([ids[2]!, ids[1]!, ids[0]!]);
 
 		await fresh.shutdown();
 	});
 
-	it.skipIf(!SQLITE_AVAILABLE)('preserves topological order across restart (SQLite :memory:)', async () => {
-		const persistence = await SqlitePersistence.create({ dbPath: ':memory:' });
+	it.skipIf(!SQLITE_AVAILABLE)(
+		'preserves topological order across restart (SQLite :memory:)',
+		async () => {
+			const persistence = await SqlitePersistence.create({ dbPath: ':memory:' });
 
-		const ids: string[] = [];
-		const { manager } = makeManager({ persistence, dagEdges: true });
-		for (let i = 1; i <= 5; i++) {
-			const t = makeThought(i);
-			ids.push(t.id!);
-			manager.addThought(t);
+			const ids: string[] = [];
+			const { manager } = makeManager({ persistence, dagEdges: true });
+			for (let i = 1; i <= 5; i++) {
+				const t = makeThought(i);
+				ids.push(t.id!);
+				manager.addThought(t);
+			}
+			await manager._flushBuffer();
+			await manager.shutdown();
+
+			const freshStore = new EdgeStore();
+			const fresh = new HistoryManager({
+				edgeStore: freshStore,
+				dagEdges: true,
+				persistence,
+				persistenceFlushInterval: 60_000,
+			});
+			await fresh.loadFromPersistence();
+
+			const view = new GraphView(freshStore);
+			const order = view.topological(DAG_SESSION);
+			expect(order).toEqual(ids);
+
+			const leaves = view.leaves(DAG_SESSION);
+			expect(leaves).toEqual([ids[4]!]);
+
+			await fresh.shutdown();
 		}
-		await manager._flushBuffer();
-		await manager.shutdown();
-
-		const freshStore = new EdgeStore();
-		const fresh = new HistoryManager({
-			edgeStore: freshStore,
-			dagEdges: true,
-			persistence,
-			persistenceFlushInterval: 60_000,
-		});
-		await fresh.loadFromPersistence();
-
-		const view = new GraphView(freshStore);
-		const order = view.topological(asSessionId(GLOBAL));
-		expect(order).toEqual(ids);
-
-		const leaves = view.leaves(asSessionId(GLOBAL));
-		expect(leaves).toEqual([ids[4]!]);
-
-		await fresh.shutdown();
-	});
+	);
 
 	it('preserves a branch traversal via GraphView.branchThoughts after restart (Memory)', async () => {
 		const persistence = new MemoryPersistence();
@@ -495,7 +498,7 @@ describe('DAG edges integration — Scenario 5: restart + GraphView', () => {
 		await fresh.loadFromPersistence();
 
 		const view = new GraphView(freshStore);
-		const branchOrder = view.branchThoughts(asSessionId(GLOBAL), t1.id!);
+		const branchOrder = view.branchThoughts(DAG_SESSION, t1.id!);
 		expect(branchOrder).toEqual([t1.id!, t2.id!, t3.id!]);
 
 		// Sanity: every restored edge has a known kind.
@@ -509,7 +512,7 @@ describe('DAG edges integration — Scenario 5: restart + GraphView', () => {
 			'tool_invocation',
 			'revises',
 		]);
-		for (const e of freshStore.edgesForSession(asSessionId(GLOBAL))) {
+		for (const e of freshStore.edgesForSession(DAG_SESSION)) {
 			expect(validKinds.has(e.kind)).toBe(true);
 		}
 
@@ -528,15 +531,15 @@ describe('DAG edges integration — Scenario 5: restart + GraphView', () => {
 			terminationConfidence: 1,
 			plateauWindow: 10,
 		});
-		const evaluator = new ThoughtEvaluator();
-		const beforeHistory = manager.getHistory();
+		const evaluator = createDisabledThoughtEvaluator();
+		const beforeHistory = manager.getHistory(DAG_SESSION);
 		const beforeCurrent = beforeHistory[2];
 		if (beforeCurrent === undefined) throw new TypeError('Expected current thought before restore');
 		const before = strategy.decide({
-			sessionId: asSessionId(GLOBAL),
+			sessionId: DAG_SESSION,
 			history: beforeHistory,
 			graph: new GraphView(edgeStore),
-			stats: evaluator.computeReasoningStats(beforeHistory, manager.getBranches()),
+			stats: evaluator.computeReasoningStats(beforeHistory, manager.getBranches(DAG_SESSION)),
 			currentThought: beforeCurrent,
 		});
 		await manager._flushBuffer();
@@ -551,14 +554,15 @@ describe('DAG edges integration — Scenario 5: restart + GraphView', () => {
 			persistenceFlushInterval: 60_000,
 		});
 		await restored.loadFromPersistence();
-		const restoredHistory = restored.getHistory();
+		const restoredHistory = restored.getHistory(DAG_SESSION);
 		const restoredCurrent = restoredHistory[2];
-		if (restoredCurrent === undefined) throw new TypeError('Expected current thought after restore');
+		if (restoredCurrent === undefined)
+			throw new TypeError('Expected current thought after restore');
 		const after = strategy.decide({
-			sessionId: asSessionId(GLOBAL),
+			sessionId: DAG_SESSION,
 			history: restoredHistory,
 			graph: new GraphView(restoredStore),
-			stats: evaluator.computeReasoningStats(restoredHistory, restored.getBranches()),
+			stats: evaluator.computeReasoningStats(restoredHistory, restored.getBranches(DAG_SESSION)),
 			currentThought: restoredCurrent,
 		});
 		await restored.shutdown();
