@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { asSessionId } from '../../contracts/ids.js';
 import {
 	PersistenceClosedError,
 	PersistenceCorruptionError,
@@ -30,6 +31,8 @@ function createTestThought(overrides: Parameters<typeof createBaseTestThought>[0
 	persistentThoughtSequence += 1;
 	return createBaseTestThought({ id: `file-writer-${persistentThoughtSequence}`, ...overrides });
 }
+
+const TEST_SESSION_ID = asSessionId('test-session');
 
 const CHILD_DIRECTORY = process.env['TRACELATTICE_FILE_WRITER_CHILD_DIR'];
 const CHILD_READY = 'TRACELATTICE_FILE_WRITER_READY';
@@ -81,7 +84,10 @@ if (CHILD_DIRECTORY) {
 			const watcher = watch(CHILD_DIRECTORY);
 
 			// When
-			await backend.saveThought(createTestThought({ thought: 'child-owned' }));
+			await backend.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ thought: 'child-owned' })
+			);
 			process.stdout.write(`${CHILD_READY}\n`);
 			try {
 				while (true) {
@@ -115,10 +121,12 @@ if (CHILD_DIRECTORY) {
 
 			try {
 				// When
-				await Promise.all(thoughts.map((thought) => backend.saveThought(thought)));
+				await Promise.all(
+					thoughts.map((thought) => backend.saveThoughtForSession(TEST_SESSION_ID, thought))
+				);
 
 				// Then
-				const recovered = await backend.loadHistory();
+				const recovered = await backend.loadHistoryForSession(TEST_SESSION_ID);
 				expect(new Set(recovered.map((thought) => thought.id))).toEqual(
 					new Set(thoughts.map((thought) => thought.id))
 				);
@@ -135,12 +143,15 @@ if (CHILD_DIRECTORY) {
 
 			try {
 				// When
-				const acceptedSave = backend.saveThought(createTestThought({ id: 'before-clear' }));
-				await backend.clear();
+				const acceptedSave = backend.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ id: 'before-clear' })
+				);
+				await backend.clearAll();
 				await acceptedSave;
 
 				// Then
-				expect(await backend.loadHistory()).toEqual([]);
+				expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toEqual([]);
 			} finally {
 				await backend.close();
 				await rm(dataDir, { recursive: true, force: true });
@@ -154,11 +165,11 @@ if (CHILD_DIRECTORY) {
 			const competitor = new FilePersistence({ dataDir });
 
 			try {
-				await owner.saveThought(createTestThought({ id: 'owner' }));
+				await owner.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'owner' }));
 
 				// When / Then
 				await expect(
-					competitor.saveThought(createTestThought({ id: 'competitor' }))
+					competitor.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'competitor' }))
 				).rejects.toMatchObject({ code: 'PERSISTENCE_OWNERSHIP' });
 			} finally {
 				await competitor.close();
@@ -207,19 +218,21 @@ if (CHILD_DIRECTORY) {
 			const dataDir = await mkdtemp(join(tmpdir(), 'tracelattice-failed-owner-'));
 			const owner = new FilePersistence({ dataDir });
 			const firstCompetitor = new FilePersistence({ dataDir });
-			await owner.saveThought(createTestThought({ id: 'owner' }));
+			await owner.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'owner' }));
 
 			try {
-				await expect(firstCompetitor.loadHistory()).rejects.toMatchObject({
+				await expect(firstCompetitor.loadHistoryForSession(TEST_SESSION_ID)).rejects.toMatchObject({
 					code: 'PERSISTENCE_OWNERSHIP',
 				});
 				await firstCompetitor.close();
 				const secondCompetitor = new FilePersistence({ dataDir });
 
 				// When / Then
-				await expect(secondCompetitor.loadHistory()).rejects.toMatchObject({
-					code: 'PERSISTENCE_OWNERSHIP',
-				});
+				await expect(secondCompetitor.loadHistoryForSession(TEST_SESSION_ID)).rejects.toMatchObject(
+					{
+						code: 'PERSISTENCE_OWNERSHIP',
+					}
+				);
 				await secondCompetitor.close();
 			} finally {
 				await firstCompetitor.close();
@@ -239,11 +252,17 @@ if (CHILD_DIRECTORY) {
 			const competitor = new FilePersistence({ dataDir: alias });
 
 			try {
-				await owner.saveThought(createTestThought({ id: 'canonical-owner' }));
+				await owner.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ id: 'canonical-owner' })
+				);
 
 				// When / Then
 				await expect(
-					competitor.saveThought(createTestThought({ id: 'alias-competitor' }))
+					competitor.saveThoughtForSession(
+						TEST_SESSION_ID,
+						createTestThought({ id: 'alias-competitor' })
+					)
 				).rejects.toMatchObject({ code: 'PERSISTENCE_OWNERSHIP' });
 			} finally {
 				await competitor.close();
@@ -263,7 +282,10 @@ if (CHILD_DIRECTORY) {
 
 				// When / Then
 				await expect(
-					competitor.saveThought(createTestThought({ id: 'parent-competitor' }))
+					competitor.saveThoughtForSession(
+						TEST_SESSION_ID,
+						createTestThought({ id: 'parent-competitor' })
+					)
 				).rejects.toMatchObject({ code: 'PERSISTENCE_OWNERSHIP' });
 			} finally {
 				await competitor.close();
@@ -299,7 +321,7 @@ if (CHILD_DIRECTORY) {
 			// Given
 			const dataDir = await mkdtemp(join(tmpdir(), 'tracelattice-temp-failure-'));
 			const seed = new FilePersistence({ dataDir });
-			await seed.saveThought(createTestThought({ id: 'stable' }));
+			await seed.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'stable' }));
 			await seed.close();
 			const snapshotPath = join(dataDir, 'snapshot.json');
 			const previousBytes = await readFile(snapshotPath, 'utf-8');
@@ -318,9 +340,9 @@ if (CHILD_DIRECTORY) {
 
 			try {
 				// When / Then
-				await expect(backend.saveThought(createTestThought({ id: 'new' }))).rejects.toMatchObject({
-					stage: 'temporary-write',
-				});
+				await expect(
+					backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'new' }))
+				).rejects.toMatchObject({ stage: 'temporary-write' });
 				expect(await readFile(snapshotPath, 'utf-8')).toBe(previousBytes);
 			} finally {
 				await backend.close();
@@ -332,7 +354,7 @@ if (CHILD_DIRECTORY) {
 			// Given
 			const dataDir = await mkdtemp(join(tmpdir(), 'tracelattice-rename-failure-'));
 			const seed = new FilePersistence({ dataDir });
-			await seed.saveThought(createTestThought({ id: 'stable' }));
+			await seed.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'stable' }));
 			await seed.close();
 			const snapshotPath = join(dataDir, 'snapshot.json');
 			const previousBytes = await readFile(snapshotPath, 'utf-8');
@@ -348,9 +370,9 @@ if (CHILD_DIRECTORY) {
 
 			try {
 				// When / Then
-				await expect(backend.saveThought(createTestThought({ id: 'new' }))).rejects.toMatchObject({
-					stage: 'atomic-replacement',
-				});
+				await expect(
+					backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'new' }))
+				).rejects.toMatchObject({ stage: 'atomic-replacement' });
 				expect(await readFile(snapshotPath, 'utf-8')).toBe(previousBytes);
 				expect((await readdir(dataDir)).some((path) => path.endsWith('.tmp'))).toBe(false);
 			} finally {
@@ -370,7 +392,10 @@ if (CHILD_DIRECTORY) {
 			try {
 				// When / Then
 				await expect(
-					backend.saveThought(createTestThought({ id: 'must-not-replace-corruption' }))
+					backend.saveThoughtForSession(
+						TEST_SESSION_ID,
+						createTestThought({ id: 'must-not-replace-corruption' })
+					)
 				).rejects.toBeInstanceOf(PersistenceCorruptionError);
 				expect(await readFile(snapshotPath, 'utf-8')).toBe(corruptBytes);
 			} finally {
@@ -404,9 +429,9 @@ if (CHILD_DIRECTORY) {
 
 			try {
 				// When
-				const firstSave = backend.saveThought(first);
+				const firstSave = backend.saveThoughtForSession(TEST_SESSION_ID, first);
 				await publicationStarted.promise;
-				const secondSave = backend.saveThought(second);
+				const secondSave = backend.saveThoughtForSession(TEST_SESSION_ID, second);
 				let closeSettled = false;
 				const closing = backend.close().then(() => {
 					closeSettled = true;
@@ -419,9 +444,9 @@ if (CHILD_DIRECTORY) {
 				await Promise.all([firstSave, secondSave, closing]);
 				const snapshotPath = join(dataDir, 'snapshot.json');
 				const stored = parseFileSnapshotV2(await readFile(snapshotPath, 'utf-8'), snapshotPath);
-				expect(stored.thoughts).toEqual([{ sessionId: '__global__', thoughts: [first, second] }]);
+				expect(stored.thoughts).toEqual([{ sessionId: 'test-session', thoughts: [first, second] }]);
 				await expect(
-					backend.saveThought(createTestThought({ id: 'after-close' }))
+					backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'after-close' }))
 				).rejects.toBeInstanceOf(PersistenceClosedError);
 			} finally {
 				resumePublication.resolve();
@@ -449,8 +474,14 @@ if (CHILD_DIRECTORY) {
 
 			try {
 				// When
-				await backend.saveThought(createTestThought({ id: 'first-temp' }));
-				await backend.saveThought(createTestThought({ id: 'second-temp' }));
+				await backend.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ id: 'first-temp' })
+				);
+				await backend.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ id: 'second-temp' })
+				);
 
 				// Then
 				expect(new Set(temporaryPaths).size).toBe(2);
@@ -466,19 +497,21 @@ if (CHILD_DIRECTORY) {
 			// Given
 			const dataDir = await mkdtemp(join(tmpdir(), 'tracelattice-owner-cleanup-'));
 			const first = new FilePersistence({ dataDir });
-			await first.saveThought(createTestThought({ id: 'first-owner' }));
+			await first.saveThoughtForSession(TEST_SESSION_ID, createTestThought({ id: 'first-owner' }));
 
 			try {
 				// When
 				await first.close();
 				const second = new FilePersistence({ dataDir });
-				await second.saveThought(createTestThought({ id: 'second-owner' }));
+				await second.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ id: 'second-owner' })
+				);
 
 				// Then
-				expect((await second.loadHistory()).map((thought) => thought.id)).toEqual([
-					'first-owner',
-					'second-owner',
-				]);
+				expect(
+					(await second.loadHistoryForSession(TEST_SESSION_ID)).map((thought) => thought.id)
+				).toEqual(['first-owner', 'second-owner']);
 				await second.close();
 				expect(await readdir(dataDir)).not.toContain('.tracelattice-writer.lock');
 			} finally {
@@ -513,7 +546,10 @@ if (CHILD_DIRECTORY) {
 			});
 
 			try {
-				await backend.saveThought(createTestThought({ id: 'replaced-owner' }));
+				await backend.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ id: 'replaced-owner' })
+				);
 
 				// When
 				await backend.close();
@@ -534,7 +570,10 @@ if (CHILD_DIRECTORY) {
 			const backend = new FilePersistence({ dataDir });
 
 			try {
-				await backend.saveThought(createTestThought({ id: 'old-owner' }));
+				await backend.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ id: 'old-owner' })
+				);
 				const ownerMarker = (await readdir(lockPath))[0];
 				if (!ownerMarker) {
 					throw new Error('Owner marker was not created');
@@ -621,9 +660,9 @@ if (CHILD_DIRECTORY) {
 
 			try {
 				// When / Then
-				await expect(backend.saveThought(createTestThought())).rejects.toBeInstanceOf(
-					PersistencePublicationError
-				);
+				await expect(
+					backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought())
+				).rejects.toBeInstanceOf(PersistencePublicationError);
 			} finally {
 				await backend.close();
 				await rm(dataDir, { recursive: true, force: true });

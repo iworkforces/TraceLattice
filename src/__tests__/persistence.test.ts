@@ -21,6 +21,8 @@ function createTestThought(overrides: Parameters<typeof createBaseTestThought>[0
 	return createBaseTestThought({ id: `persistence-${persistentThoughtSequence}`, ...overrides });
 }
 
+const TEST_SESSION_ID = asSessionId('test-session');
+
 describe('MemoryPersistence', () => {
 	let backend: MemoryPersistence;
 
@@ -31,9 +33,9 @@ describe('MemoryPersistence', () => {
 	describe('saveThought and loadHistory', () => {
 		it('should save and load a single thought', async () => {
 			const thought = createTestThought();
-			await backend.saveThought(thought);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought);
 
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 
 			expect(history).toHaveLength(1);
 			expect(history[0]).toEqual(thought);
@@ -44,11 +46,11 @@ describe('MemoryPersistence', () => {
 			const thought2 = createTestThought({ thought_number: 2, thought: 'Second' });
 			const thought3 = createTestThought({ thought_number: 3, thought: 'Third' });
 
-			await backend.saveThought(thought1);
-			await backend.saveThought(thought2);
-			await backend.saveThought(thought3);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought1);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought2);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought3);
 
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 
 			expect(history).toHaveLength(3);
 			expect(history[0]!.thought).toBe('First');
@@ -57,16 +59,16 @@ describe('MemoryPersistence', () => {
 		});
 
 		it('should return empty array when no thoughts saved', async () => {
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 			expect(history).toEqual([]);
 		});
 
 		it('should return a copy of history (not internal reference)', async () => {
 			const thought = createTestThought();
-			await backend.saveThought(thought);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought);
 
-			const history1 = await backend.loadHistory();
-			const history2 = await backend.loadHistory();
+			const history1 = await backend.loadHistoryForSession(TEST_SESSION_ID);
+			const history2 = await backend.loadHistoryForSession(TEST_SESSION_ID);
 
 			// Modify first array
 			history1.push(createTestThought({ thought: 'Extra' }));
@@ -85,15 +87,18 @@ describe('MemoryPersistence', () => {
 				createTestThought({ thought: 'Branch thought 2', thought_number: 2 }),
 			];
 
-			await backend.saveBranch(branchId, thoughts);
+			await backend.saveBranchForSession(TEST_SESSION_ID, branchId, thoughts);
 
-			const loaded = await backend.loadBranch(branchId);
+			const loaded = await backend.loadBranchForSession(TEST_SESSION_ID, branchId);
 
 			expect(loaded).toEqual(thoughts);
 		});
 
 		it('should return undefined for non-existent branch', async () => {
-			const loaded = await backend.loadBranch(asBranchId('non-existent'));
+			const loaded = await backend.loadBranchForSession(
+				TEST_SESSION_ID,
+				asBranchId('non-existent')
+			);
 			expect(loaded).toBeUndefined();
 		});
 
@@ -102,13 +107,19 @@ describe('MemoryPersistence', () => {
 			const branch2 = [createTestThought({ thought: 'Branch 2' })];
 			const branch3 = [createTestThought({ thought: 'Branch 3' })];
 
-			await backend.saveBranch(asBranchId('branch-1'), branch1);
-			await backend.saveBranch(asBranchId('branch-2'), branch2);
-			await backend.saveBranch(asBranchId('branch-3'), branch3);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), branch1);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-2'), branch2);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-3'), branch3);
 
-			expect(await backend.loadBranch(asBranchId('branch-1'))).toEqual(branch1);
-			expect(await backend.loadBranch(asBranchId('branch-2'))).toEqual(branch2);
-			expect(await backend.loadBranch(asBranchId('branch-3'))).toEqual(branch3);
+			expect(await backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'))).toEqual(
+				branch1
+			);
+			expect(await backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-2'))).toEqual(
+				branch2
+			);
+			expect(await backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-3'))).toEqual(
+				branch3
+			);
 		});
 
 		it('should overwrite existing branch', async () => {
@@ -116,10 +127,10 @@ describe('MemoryPersistence', () => {
 			const original = [createTestThought({ thought: 'Original' })];
 			const updated = [createTestThought({ thought: 'Updated' })];
 
-			await backend.saveBranch(branchId, original);
-			await backend.saveBranch(branchId, updated);
+			await backend.saveBranchForSession(TEST_SESSION_ID, branchId, original);
+			await backend.saveBranchForSession(TEST_SESSION_ID, branchId, updated);
 
-			const loaded = await backend.loadBranch(branchId);
+			const loaded = await backend.loadBranchForSession(TEST_SESSION_ID, branchId);
 
 			expect(loaded).toEqual(updated);
 		});
@@ -128,10 +139,10 @@ describe('MemoryPersistence', () => {
 			const branchId = asBranchId('branch-1');
 			const thoughts = [createTestThought({ thought: 'Test' })];
 
-			await backend.saveBranch(branchId, thoughts);
+			await backend.saveBranchForSession(TEST_SESSION_ID, branchId, thoughts);
 
-			const loaded1 = await backend.loadBranch(branchId);
-			const loaded2 = await backend.loadBranch(branchId);
+			const loaded1 = await backend.loadBranchForSession(TEST_SESSION_ID, branchId);
+			const loaded2 = await backend.loadBranchForSession(TEST_SESSION_ID, branchId);
 
 			// Modify first array
 			loaded1?.push(createTestThought({ thought: 'Extra' }));
@@ -142,38 +153,48 @@ describe('MemoryPersistence', () => {
 		});
 	});
 
-	describe('clear', () => {
+	describe('clearAll', () => {
 		it('should clear all history and branches', async () => {
 			// Add history
-			await backend.saveThought(createTestThought());
-			await backend.saveThought(createTestThought({ thought_number: 2 }));
+			await backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought());
+			await backend.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ thought_number: 2 })
+			);
 
 			// Add branches
-			await backend.saveBranch(asBranchId('branch-1'), [createTestThought()]);
-			await backend.saveBranch(asBranchId('branch-2'), [createTestThought()]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), [
+				createTestThought(),
+			]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-2'), [
+				createTestThought(),
+			]);
 
 			// Verify data exists
-			expect((await backend.loadHistory()).length).toBeGreaterThan(0);
-			expect(backend.getBranchCount()).toBe(2);
+			expect((await backend.loadHistoryForSession(TEST_SESSION_ID)).length).toBeGreaterThan(0);
+			expect(await backend.listBranchesForSession(TEST_SESSION_ID)).toHaveLength(2);
 
 			// Clear
-			await backend.clear();
+			await backend.clearAll();
 
 			// Verify cleared
-			expect(await backend.loadHistory()).toEqual([]);
-			expect(await backend.loadBranch(asBranchId('branch-1'))).toBeUndefined();
-			expect(await backend.loadBranch(asBranchId('branch-2'))).toBeUndefined();
-			expect(backend.getHistorySize()).toBe(0);
-			expect(backend.getBranchCount()).toBe(0);
+			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toEqual([]);
+			expect(
+				await backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'))
+			).toBeUndefined();
+			expect(
+				await backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-2'))
+			).toBeUndefined();
+			expect(await backend.listBranchesForSession(TEST_SESSION_ID)).toEqual([]);
 		});
 
 		it('should be safe to call multiple times', async () => {
-			await backend.saveThought(createTestThought());
-			await backend.clear();
-			await backend.clear();
-			await backend.clear();
+			await backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought());
+			await backend.clearAll();
+			await backend.clearAll();
+			await backend.clearAll();
 
-			expect(await backend.loadHistory()).toEqual([]);
+			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toEqual([]);
 		});
 	});
 
@@ -183,33 +204,46 @@ describe('MemoryPersistence', () => {
 		});
 	});
 
-	describe('Helper methods', () => {
+	describe('scoped state queries', () => {
 		it('should track history size correctly', async () => {
-			expect(backend.getHistorySize()).toBe(0);
+			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(0);
 
-			await backend.saveThought(createTestThought());
-			expect(backend.getHistorySize()).toBe(1);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought());
+			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(1);
 
-			await backend.saveThought(createTestThought({ thought_number: 2 }));
-			expect(backend.getHistorySize()).toBe(2);
+			await backend.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ thought_number: 2 })
+			);
+			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(2);
 		});
 
 		it('should track branch count correctly', async () => {
-			expect(backend.getBranchCount()).toBe(0);
+			expect(await backend.listBranchesForSession(TEST_SESSION_ID)).toHaveLength(0);
 
-			await backend.saveBranch(asBranchId('branch-1'), [createTestThought()]);
-			expect(backend.getBranchCount()).toBe(1);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), [
+				createTestThought(),
+			]);
+			expect(await backend.listBranchesForSession(TEST_SESSION_ID)).toHaveLength(1);
 
-			await backend.saveBranch(asBranchId('branch-2'), [createTestThought()]);
-			expect(backend.getBranchCount()).toBe(2);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-2'), [
+				createTestThought(),
+			]);
+			expect(await backend.listBranchesForSession(TEST_SESSION_ID)).toHaveLength(2);
 		});
 
 		it('should return all branch IDs', async () => {
-			await backend.saveBranch(asBranchId('branch-1'), [createTestThought()]);
-			await backend.saveBranch(asBranchId('branch-2'), [createTestThought()]);
-			await backend.saveBranch(asBranchId('branch-3'), [createTestThought()]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), [
+				createTestThought(),
+			]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-2'), [
+				createTestThought(),
+			]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-3'), [
+				createTestThought(),
+			]);
 
-			const ids = backend.getBranchIds();
+			const ids = await backend.listBranchesForSession(TEST_SESSION_ID);
 
 			expect(ids).toHaveLength(3);
 			expect(ids).toEqual(expect.arrayContaining(['branch-1', 'branch-2', 'branch-3']));
@@ -223,29 +257,34 @@ describe('MemoryPersistence', () => {
 			);
 
 			// Save all concurrently
-			await Promise.all(thoughts.map((t) => backend.saveThought(t)));
+			await Promise.all(
+				thoughts.map((thought) => backend.saveThoughtForSession(TEST_SESSION_ID, thought))
+			);
 
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 
 			expect(history).toHaveLength(100);
 		});
 
 		it('should isolate history from branches', async () => {
 			// Add history
-			await backend.saveThought(createTestThought({ thought: 'History thought' }));
+			await backend.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ thought: 'History thought' })
+			);
 
 			// Add branch
-			await backend.saveBranch(asBranchId('branch-1'), [
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), [
 				createTestThought({ thought: 'Branch thought' }),
 			]);
 
 			// History should only contain history thoughts
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 			expect(history).toHaveLength(1);
 			expect(history[0]!.thought).toBe('History thought');
 
 			// Branch should only contain branch thoughts
-			const branch = await backend.loadBranch(asBranchId('branch-1'));
+			const branch = await backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'));
 			expect(branch).toHaveLength(1);
 			expect(branch?.[0]?.thought).toBe('Branch thought');
 		});
@@ -286,39 +325,39 @@ describe('FilePersistence', () => {
 				createdAt: 1,
 			};
 
-			await backend.saveThought(thought);
-			await backend.saveBranch(asBranchId('branch-1'), branch);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), branch);
 			await backend.saveEdges(asSessionId('session-1'), [edge]);
 
 			const snapshotPath = join(testDir, 'snapshot.json');
 			const snapshot = parseFileSnapshotV2(await readFile(snapshotPath, 'utf-8'), snapshotPath);
-			expect(snapshot.thoughts).toEqual([{ sessionId: '__global__', thoughts: [thought] }]);
+			expect(snapshot.thoughts).toEqual([{ sessionId: 'test-session', thoughts: [thought] }]);
 			expect(snapshot.branches).toEqual([
-				{ sessionId: '__global__', branchId: 'branch-1', thoughts: branch },
+				{ sessionId: 'test-session', branchId: 'branch-1', thoughts: branch },
 			]);
 			expect(snapshot.edges).toEqual([{ sessionId: 'session-1', edges: [edge] }]);
 		});
 
-		it('characterizes sequential retention as the newest v1 records', async () => {
+		it('retains the newest v2 records', async () => {
 			const retainedBackend = new FilePersistence({ dataDir: testDir, maxHistorySize: 2 });
 			const thoughts = [1, 2, 3].map((thoughtNumber) =>
 				createTestThought({ thought_number: thoughtNumber, thought: `Thought ${thoughtNumber}` })
 			);
 
 			for (const thought of thoughts) {
-				await retainedBackend.saveThought(thought);
+				await retainedBackend.saveThoughtForSession(TEST_SESSION_ID, thought);
 			}
 
-			const history = await retainedBackend.loadHistory();
+			const history = await retainedBackend.loadHistoryForSession(TEST_SESSION_ID);
 			expect(history).toEqual(thoughts.slice(1));
 			await retainedBackend.close();
 		});
 
 		it('should save and load a single thought', async () => {
 			const thought = createTestThought();
-			await backend.saveThought(thought);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought);
 
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 
 			expect(history).toHaveLength(1);
 			expect(history[0]).toEqual(thought);
@@ -328,12 +367,12 @@ describe('FilePersistence', () => {
 			const thought = createTestThought();
 
 			// Save with first instance
-			await backend.saveThought(thought);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, thought);
 			await backend.close();
 
 			// Create new instance (simulates restart)
 			const backend2 = new FilePersistence({ dataDir: testDir });
-			const history = await backend2.loadHistory();
+			const history = await backend2.loadHistoryForSession(TEST_SESSION_ID);
 
 			expect(history).toHaveLength(1);
 			expect(history[0]).toEqual(thought);
@@ -341,7 +380,7 @@ describe('FilePersistence', () => {
 		});
 
 		it('should handle empty history file', async () => {
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 			expect(history).toEqual([]);
 		});
 
@@ -353,7 +392,9 @@ describe('FilePersistence', () => {
 			const snapshotPath = join(testDir, 'snapshot.json');
 			await writeFile(snapshotPath, 'invalid json', 'utf-8');
 
-			await expect(backend.loadHistory()).rejects.toBeInstanceOf(PersistenceCorruptionError);
+			await expect(backend.loadHistoryForSession(TEST_SESSION_ID)).rejects.toBeInstanceOf(
+				PersistenceCorruptionError
+			);
 		});
 	});
 
@@ -365,15 +406,18 @@ describe('FilePersistence', () => {
 				createTestThought({ thought: 'Branch thought 2', thought_number: 2 }),
 			];
 
-			await backend.saveBranch(branchId, thoughts);
+			await backend.saveBranchForSession(TEST_SESSION_ID, branchId, thoughts);
 
-			const loaded = await backend.loadBranch(branchId);
+			const loaded = await backend.loadBranchForSession(TEST_SESSION_ID, branchId);
 
 			expect(loaded).toEqual(thoughts);
 		});
 
 		it('should return undefined for non-existent branch', async () => {
-			const loaded = await backend.loadBranch(asBranchId('non-existent'));
+			const loaded = await backend.loadBranchForSession(
+				TEST_SESSION_ID,
+				asBranchId('non-existent')
+			);
 			expect(loaded).toBeUndefined();
 		});
 
@@ -381,12 +425,12 @@ describe('FilePersistence', () => {
 			const branchId = asBranchId('branch-1');
 			const thoughts = [createTestThought({ thought: 'Branch thought' })];
 
-			await backend.saveBranch(branchId, thoughts);
+			await backend.saveBranchForSession(TEST_SESSION_ID, branchId, thoughts);
 			await backend.close();
 
 			// Create new instance
 			const backend2 = new FilePersistence({ dataDir: testDir });
-			const loaded = await backend2.loadBranch(branchId);
+			const loaded = await backend2.loadBranchForSession(TEST_SESSION_ID, branchId);
 
 			expect(loaded).toEqual(thoughts);
 			await backend2.close();
@@ -396,28 +440,32 @@ describe('FilePersistence', () => {
 			const { writeFile } = await import('node:fs/promises');
 			await writeFile(join(testDir, 'snapshot.json'), 'invalid json', 'utf-8');
 
-			await expect(backend.loadBranch(asBranchId('corrupted'))).rejects.toBeInstanceOf(
-				PersistenceCorruptionError
-			);
+			await expect(
+				backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('corrupted'))
+			).rejects.toBeInstanceOf(PersistenceCorruptionError);
 		});
 	});
 
-	describe('clear', () => {
+	describe('clearAll', () => {
 		it('should clear all history and branches', async () => {
 			// Add data
-			await backend.saveThought(createTestThought());
-			await backend.saveBranch(asBranchId('branch-1'), [createTestThought()]);
+			await backend.saveThoughtForSession(TEST_SESSION_ID, createTestThought());
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), [
+				createTestThought(),
+			]);
 
 			// Clear
-			await backend.clear();
+			await backend.clearAll();
 
 			// Verify cleared
-			expect(await backend.loadHistory()).toEqual([]);
-			expect(await backend.loadBranch(asBranchId('branch-1'))).toBeUndefined();
+			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toEqual([]);
+			expect(
+				await backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'))
+			).toBeUndefined();
 		});
 
 		it('should be safe to call when nothing to clear', async () => {
-			await expect(async () => await backend.clear()).not.toThrow();
+			await expect(async () => await backend.clearAll()).not.toThrow();
 		});
 	});
 
@@ -437,10 +485,13 @@ describe('FilePersistence', () => {
 
 			// Add more thoughts than max
 			for (let i = 0; i < 10; i++) {
-				await backend2.saveThought(createTestThought({ thought_number: i + 1 }));
+				await backend2.saveThoughtForSession(
+					TEST_SESSION_ID,
+					createTestThought({ thought_number: i + 1 })
+				);
 			}
 
-			const history = await backend2.loadHistory();
+			const history = await backend2.loadHistoryForSession(TEST_SESSION_ID);
 
 			// Should only have the last 5 thoughts
 			expect(history).toHaveLength(5);
@@ -461,12 +512,13 @@ describe('FilePersistence', () => {
 
 			try {
 				// When
-				for (const thought of thoughts) await unlimitedBackend.saveThought(thought);
+				for (const thought of thoughts)
+					await unlimitedBackend.saveThoughtForSession(TEST_SESSION_ID, thought);
 
 				// Then
 				const snapshotPath = join(testDir, 'snapshot.json');
 				const snapshot = parseFileSnapshotV2(await readFile(snapshotPath, 'utf-8'), snapshotPath);
-				expect(snapshot.thoughts).toEqual([{ sessionId: '__global__', thoughts }]);
+				expect(snapshot.thoughts).toEqual([{ sessionId: 'test-session', thoughts }]);
 			} finally {
 				await unlimitedBackend.close();
 			}
@@ -485,12 +537,13 @@ describe('FilePersistence', () => {
 
 			try {
 				// When
-				for (const thought of thoughts) await unlimitedBackend.saveThought(thought);
+				for (const thought of thoughts)
+					await unlimitedBackend.saveThoughtForSession(TEST_SESSION_ID, thought);
 
 				// Then
 				const snapshotPath = join(testDir, 'snapshot.json');
 				const snapshot = parseFileSnapshotV2(await readFile(snapshotPath, 'utf-8'), snapshotPath);
-				expect(snapshot.thoughts).toEqual([{ sessionId: '__global__', thoughts }]);
+				expect(snapshot.thoughts).toEqual([{ sessionId: 'test-session', thoughts }]);
 			} finally {
 				await unlimitedBackend.close();
 			}
@@ -504,9 +557,11 @@ describe('FilePersistence', () => {
 				persistBranches: false,
 			});
 
-			await backend2.saveBranch(asBranchId('branch-1'), [createTestThought()]);
+			await backend2.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), [
+				createTestThought(),
+			]);
 
-			const loaded = await backend2.loadBranch(asBranchId('branch-1'));
+			const loaded = await backend2.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'));
 
 			expect(loaded).toBeUndefined();
 		});
@@ -519,18 +574,24 @@ describe('FilePersistence', () => {
 		});
 
 		it('should return all branch IDs', async () => {
-			await backend.saveBranch(asBranchId('branch-1'), [createTestThought()]);
-			await backend.saveBranch(asBranchId('branch-2'), [createTestThought()]);
-			await backend.saveBranch(asBranchId('branch-3'), [createTestThought()]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'), [
+				createTestThought(),
+			]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-2'), [
+				createTestThought(),
+			]);
+			await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-3'), [
+				createTestThought(),
+			]);
 
-			const ids = await backend.getBranchIds();
+			const ids = await backend.listBranchesForSession(TEST_SESSION_ID);
 
 			expect(ids).toHaveLength(3);
 			expect(ids).toEqual(expect.arrayContaining(['branch-1', 'branch-2', 'branch-3']));
 		});
 
 		it('should return empty array when no branches', async () => {
-			const ids = await backend.getBranchIds();
+			const ids = await backend.listBranchesForSession(TEST_SESSION_ID);
 			expect(ids).toEqual([]);
 		});
 	});
@@ -542,10 +603,10 @@ describe('FilePersistence', () => {
 			);
 
 			for (const thought of thoughts) {
-				await backend.saveThought(thought);
+				await backend.saveThoughtForSession(TEST_SESSION_ID, thought);
 			}
 
-			const history = await backend.loadHistory();
+			const history = await backend.loadHistoryForSession(TEST_SESSION_ID);
 
 			expect(history).toHaveLength(50);
 		});
@@ -555,10 +616,10 @@ describe('FilePersistence', () => {
 			const nestedDir = join(testDir, 'nested', 'path');
 			const backend2 = new FilePersistence({ dataDir: nestedDir });
 
-			await backend2.saveThought(createTestThought());
+			await backend2.saveThoughtForSession(TEST_SESSION_ID, createTestThought());
 
 			// Should succeed without error
-			const history = await backend2.loadHistory();
+			const history = await backend2.loadHistoryForSession(TEST_SESSION_ID);
 			expect(history).toHaveLength(1);
 			await backend2.close();
 		});
@@ -583,8 +644,8 @@ describe('FilePersistence', () => {
 
 				for (const id of validBranchIds) {
 					const branchId = asBranchId(id);
-					await backend.saveBranch(branchId, [createTestThought()]);
-					const loaded = await backend.loadBranch(branchId);
+					await backend.saveBranchForSession(TEST_SESSION_ID, branchId, [createTestThought()]);
+					const loaded = await backend.loadBranchForSession(TEST_SESSION_ID, branchId);
 					expect(loaded).toBeDefined();
 					expect(loaded?.[0]?.thought).toBe('Test thought');
 				}
@@ -597,7 +658,9 @@ describe('FilePersistence', () => {
 
 				// Try path traversal - should throw
 				await expect(
-					backend.saveBranch(asBranchId('../../malicious'), [createTestThought()])
+					backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('../../malicious'), [
+						createTestThought(),
+					])
 				).rejects.toThrow();
 
 				// Verify no new files outside branches
@@ -612,10 +675,14 @@ describe('FilePersistence', () => {
 
 		describe('additional coverage', () => {
 			it('should delegate listBranches() to getBranchIds()', async () => {
-				await backend.saveBranch(asBranchId('branch-a'), [createTestThought()]);
-				await backend.saveBranch(asBranchId('branch-b'), [createTestThought()]);
+				await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-a'), [
+					createTestThought(),
+				]);
+				await backend.saveBranchForSession(TEST_SESSION_ID, asBranchId('branch-b'), [
+					createTestThought(),
+				]);
 
-				const branches = await backend.listBranches();
+				const branches = await backend.listBranchesForSession(TEST_SESSION_ID);
 
 				expect(branches).toHaveLength(2);
 				expect(branches).toEqual(expect.arrayContaining(['branch-a', 'branch-b']));
@@ -636,7 +703,9 @@ describe('FilePersistence', () => {
 					'utf-8'
 				);
 
-				await expect(backend.getBranchIds()).rejects.toBeInstanceOf(PersistenceCompatibilityError);
+				await expect(backend.listBranchesForSession(TEST_SESSION_ID)).rejects.toBeInstanceOf(
+					PersistenceCompatibilityError
+				);
 			});
 
 			it('should allow close() to be called repeatedly', async () => {
@@ -665,8 +734,8 @@ describe('FilePersistence', () => {
 					metrics: mockMetrics as unknown as IMetrics,
 				});
 
-				await metricsBackend.saveThought(createTestThought());
-				await metricsBackend.loadHistory();
+				await metricsBackend.saveThoughtForSession(TEST_SESSION_ID, createTestThought());
+				await metricsBackend.loadHistoryForSession(TEST_SESSION_ID);
 
 				const saveOps = histogramCalls.filter((c) => c.labels.operation === 'save_thought');
 				const loadOps = histogramCalls.filter((c) => c.labels.operation === 'load_history');
@@ -685,7 +754,9 @@ describe('FilePersistence', () => {
 					'utf-8'
 				);
 
-				await expect(backend.loadHistory()).rejects.toBeInstanceOf(PersistenceCompatibilityError);
+				await expect(backend.loadHistoryForSession(TEST_SESSION_ID)).rejects.toBeInstanceOf(
+					PersistenceCompatibilityError
+				);
 			});
 
 			it('should reject a non-array branch collection in the v2 snapshot', async () => {
@@ -702,24 +773,19 @@ describe('FilePersistence', () => {
 					'utf-8'
 				);
 
-				await expect(backend.loadBranch(asBranchId('not-array'))).rejects.toBeInstanceOf(
-					PersistenceCompatibilityError
-				);
+				await expect(
+					backend.loadBranchForSession(TEST_SESSION_ID, asBranchId('not-array'))
+				).rejects.toBeInstanceOf(PersistenceCompatibilityError);
 			});
 
-			it('should skip non-json files during clear()', async () => {
+			it('rejects unsupported nonempty layouts during clearAll()', async () => {
 				const { writeFile: wf, mkdir: mk } = await import('node:fs/promises');
 				const branchesDir = join(testDir, 'branches');
 				await mk(branchesDir, { recursive: true });
-				// Create a non-json file in branches dir
 				await wf(join(branchesDir, 'readme.txt'), 'not a branch', 'utf-8');
-				// Also create a valid branch
-				await backend.saveBranch(asBranchId('valid'), [createTestThought()]);
 
-				// Clear should succeed without throwing
-				await expect(backend.clear()).resolves.toBeUndefined();
+				await expect(backend.clearAll()).rejects.toBeInstanceOf(PersistenceCompatibilityError);
 
-				// Non-json file should still exist
 				expect(existsSync(join(branchesDir, 'readme.txt'))).toBe(true);
 			});
 		});
@@ -808,10 +874,10 @@ describe('PersistenceBackend Interface Compliance', () => {
 	it('MemoryPersistence should comply with interface', async () => {
 		const backend = new MemoryPersistence();
 
-		await backend.saveThought(testThought);
-		expect(await backend.loadHistory()).toHaveLength(1);
-		await backend.clear();
-		expect(await backend.loadHistory()).toHaveLength(0);
+		await backend.saveThoughtForSession(TEST_SESSION_ID, testThought);
+		expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(1);
+		await backend.clearAll();
+		expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(0);
 		expect(await backend.healthy()).toBe(true);
 		await backend.close();
 	});
@@ -822,10 +888,10 @@ describe('PersistenceBackend Interface Compliance', () => {
 
 		const backend = new FilePersistence({ dataDir: testDir });
 
-		await backend.saveThought(testThought);
-		expect(await backend.loadHistory()).toHaveLength(1);
-		await backend.clear();
-		expect(await backend.loadHistory()).toHaveLength(0);
+		await backend.saveThoughtForSession(TEST_SESSION_ID, testThought);
+		expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(1);
+		await backend.clearAll();
+		expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(0);
 		expect(await backend.healthy()).toBe(true);
 		await backend.close();
 
