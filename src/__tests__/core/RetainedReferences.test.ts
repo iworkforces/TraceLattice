@@ -6,8 +6,10 @@ import { HistoryManager } from '../../core/HistoryManager.js';
 import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
 import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
 import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
+import { Calibrator } from '../../core/evaluator/Calibrator.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import type { EdgeKind } from '../../core/graph/Edge.js';
+import { OutcomeRecorder } from '../../core/reasoning/OutcomeRecorder.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import { InMemorySuspensionStore } from '../../core/tools/InMemorySuspensionStore.js';
 import type { ThoughtData } from '../../core/thought.js';
@@ -22,6 +24,8 @@ const FEATURES: FeatureFlags = {
 	newThoughtTypes: true,
 	outcomeRecording: false,
 };
+
+const SESSION_ID = asSessionId('test-session');
 
 type SameNumberRelationCase = {
 	readonly name: string;
@@ -87,7 +91,7 @@ function makeProcessor(manager: HistoryManager, store?: InMemorySuspensionStore)
 	return new ThoughtProcessor(
 		manager,
 		new ThoughtFormatter(),
-		new ThoughtEvaluator(),
+		new ThoughtEvaluator(new Calibrator(new OutcomeRecorder({ enabled: false }), false)),
 		undefined,
 		new SequentialStrategy(),
 		undefined,
@@ -116,7 +120,7 @@ describe('retained thought reference resolution', () => {
 		);
 		manager.addThought(createTestThought({ id: 'latest', thought_number: 20 }));
 
-		expect(resolve(manager, '__global__', 7)).toEqual({
+		expect(resolve(manager, SESSION_ID, 7)).toEqual({
 			kind: 'unique',
 			thoughtId: asThoughtId('branch-only'),
 		});
@@ -133,7 +137,7 @@ describe('retained thought reference resolution', () => {
 			})
 		);
 
-		expect(resolve(manager, '__global__', 4)).toEqual({
+		expect(resolve(manager, SESSION_ID, 4)).toEqual({
 			kind: 'unique',
 			thoughtId: asThoughtId('copied'),
 		});
@@ -144,7 +148,7 @@ describe('retained thought reference resolution', () => {
 		manager.addThought(createTestThought({ id: 'z-id', thought_number: 3 }));
 		manager.addThought(createTestThought({ id: 'a-id', thought_number: 3, retracted: true }));
 
-		const resolution = resolve(manager, '__global__', 3);
+		const resolution = resolve(manager, SESSION_ID, 3);
 		expect(resolution).toEqual({
 			kind: 'ambiguous',
 			thoughtIds: [asThoughtId('a-id'), asThoughtId('z-id')],
@@ -152,11 +156,11 @@ describe('retained thought reference resolution', () => {
 		if (resolution.kind === 'ambiguous') expect(Object.isFrozen(resolution.thoughtIds)).toBe(true);
 	});
 
-	it('isolates equal thought numbers by session and clears only the requested session', () => {
+	it('isolates equal thought numbers by session and resets only the requested session', async () => {
 		const manager = new HistoryManager();
 		manager.addThought(createTestThought({ id: 'a', thought_number: 2, session_id: 'A' }));
 		manager.addThought(createTestThought({ id: 'b', thought_number: 2, session_id: 'B' }));
-		manager.clear('A');
+		await manager.resetSession('A');
 
 		expect(resolve(manager, 'A', 2)).toEqual({ kind: 'missing' });
 		expect(resolve(manager, 'B', 2)).toEqual({ kind: 'unique', thoughtId: asThoughtId('b') });
@@ -169,6 +173,7 @@ describe('retained-reference policy', () => {
 		const manager = new HistoryManager({ edgeStore });
 		manager.addThought(createTestThought({ id: 'target-10', thought_number: 10 }));
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'verify retained ten',
 			thought_number: 11,
 			total_thoughts: 11,
@@ -179,14 +184,15 @@ describe('retained-reference policy', () => {
 
 		expect(result.isError).toBeUndefined();
 		expect(payload(result).warnings).toBeUndefined();
-		expect(manager.getHistory().at(-1)?.verification_target).toBe(10);
-		expect(edgeStore.edgesForSession(asSessionId('__global__')).at(-1)?.to).toBe('target-10');
+		expect(manager.getHistory(SESSION_ID).at(-1)?.verification_target).toBe(10);
+		expect(edgeStore.edgesForSession(SESSION_ID).at(-1)?.to).toBe('target-10');
 	});
 
 	it('drops a missing optional scalar with the existing dangling prefix', async () => {
 		const manager = new HistoryManager();
 		manager.addThought(createTestThought({ id: 'ten', thought_number: 10 }));
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'missing one',
 			thought_number: 11,
 			total_thoughts: 11,
@@ -197,7 +203,7 @@ describe('retained-reference policy', () => {
 		expect(payload(result).warnings).toEqual([
 			'Dropped dangling verification_target: 1 (history has 1 thoughts)',
 		]);
-		expect(manager.getHistory().at(-1)?.verification_target).toBeUndefined();
+		expect(manager.getHistory(SESSION_ID).at(-1)?.verification_target).toBeUndefined();
 	});
 
 	it('drops an ambiguous optional scalar without emitting a relational edge', async () => {
@@ -206,6 +212,7 @@ describe('retained-reference policy', () => {
 		manager.addThought(createTestThought({ id: 'first', thought_number: 1 }));
 		manager.addThought(createTestThought({ id: 'second', thought_number: 1 }));
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'ambiguous verification',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -218,9 +225,7 @@ describe('retained-reference policy', () => {
 			'Dropped ambiguous verification_target: 1 (history has 2 thoughts)',
 		]);
 		expect(
-			edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((edge) => edge.kind === 'verifies')
+			edgeStore.edgesForSession(SESSION_ID).filter((edge) => edge.kind === 'verifies')
 		).toHaveLength(0);
 	});
 
@@ -230,6 +235,7 @@ describe('retained-reference policy', () => {
 		manager.addThought(createTestThought({ id: 'one-b', thought_number: 1 }));
 		manager.addThought(createTestThought({ id: 'seven', thought_number: 7 }));
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'mixed references',
 			thought_number: 8,
 			total_thoughts: 8,
@@ -237,7 +243,7 @@ describe('retained-reference policy', () => {
 			synthesis_sources: [7, 1, 5, 7],
 		});
 
-		expect(manager.getHistory().at(-1)?.synthesis_sources).toEqual([7, 7]);
+		expect(manager.getHistory(SESSION_ID).at(-1)?.synthesis_sources).toEqual([7, 7]);
 		expect(payload(result).warnings).toEqual([
 			'Filtered dangling synthesis_sources: [5] (history has 3 thoughts)',
 			'Filtered ambiguous synthesis_sources: [1] (history has 3 thoughts)',
@@ -271,6 +277,7 @@ describe('retained-reference policy', () => {
 	])('rejects a result-bearing verification with a $name before admission', async ({ target }) => {
 		const manager = new HistoryManager();
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'strict verification',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -282,7 +289,7 @@ describe('retained-reference policy', () => {
 
 		expect(result.isError).toBe(true);
 		expect(payload(result)).toMatchObject({ code: 'VALIDATION_ERROR' });
-		expect(manager.getHistory()).toHaveLength(0);
+		expect(manager.getHistory(SESSION_ID)).toHaveLength(0);
 	});
 
 	it('rejects an ambiguous result target before admission', async () => {
@@ -291,6 +298,7 @@ describe('retained-reference policy', () => {
 		manager.addThought(createTestThought({ id: 'second', thought_number: 1, confidence: 0.8 }));
 
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'ambiguous strict verification',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -301,17 +309,21 @@ describe('retained-reference policy', () => {
 		});
 
 		expect(payload(result)).toMatchObject({ code: 'VALIDATION_ERROR' });
-		expect(manager.getHistory()).toHaveLength(2);
+		expect(manager.getHistory(SESSION_ID)).toHaveLength(2);
 	});
 
 	it.each([
-		{ name: 'retracted', target: createTestThought({ id: 'target', retracted: true, confidence: 0.8 }) },
+		{
+			name: 'retracted',
+			target: createTestThought({ id: 'target', retracted: true, confidence: 0.8 }),
+		},
 		{ name: 'confidence-less', target: createTestThought({ id: 'target' }) },
 	])('rejects a $name result target before admission', async ({ target }) => {
 		const manager = new HistoryManager();
 		manager.addThought(target);
 
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'invalid target state',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -322,7 +334,7 @@ describe('retained-reference policy', () => {
 		});
 
 		expect(payload(result)).toMatchObject({ code: 'VALIDATION_ERROR' });
-		expect(manager.getHistory()).toHaveLength(1);
+		expect(manager.getHistory(SESSION_ID)).toHaveLength(1);
 	});
 
 	it('does not resolve a result target from another session', async () => {
@@ -359,6 +371,7 @@ describe('retained-reference policy', () => {
 		);
 
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'stable identity verification',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -369,7 +382,7 @@ describe('retained-reference policy', () => {
 		});
 
 		expect(result.isError).toBeUndefined();
-		expect(manager.getHistory()).toHaveLength(2);
+		expect(manager.getHistory(SESSION_ID)).toHaveLength(2);
 	});
 
 	it('validates reset result targets against the empty replacement scope before reset', async () => {
@@ -401,9 +414,10 @@ describe('retained-reference policy', () => {
 		manager.addThought(createTestThought({ id: 'one-a', thought_number: 1 }));
 		manager.addThought(createTestThought({ id: 'one-b', thought_number: 1 }));
 		const before = manager
-			.getHistory()
+			.getHistory(SESSION_ID)
 			.map((thought) => ({ id: thought.id, retracted: thought.retracted }));
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'ambiguous backtrack',
 			thought_number: 2,
 			total_thoughts: 2,
@@ -414,7 +428,9 @@ describe('retained-reference policy', () => {
 
 		expect(payload(result).code).toBe('INVALID_BACKTRACK');
 		expect(
-			manager.getHistory().map((thought) => ({ id: thought.id, retracted: thought.retracted }))
+			manager
+				.getHistory(SESSION_ID)
+				.map((thought) => ({ id: thought.id, retracted: thought.retracted }))
 		).toEqual(before);
 	});
 });
@@ -481,6 +497,7 @@ describe('stable edge endpoints', () => {
 		const edgeStore = new EdgeStore();
 		const manager = new HistoryManager({ edgeStore });
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'optional current self-reference',
 			thought_number: 7,
 			total_thoughts: 7,
@@ -492,13 +509,14 @@ describe('stable edge endpoints', () => {
 		expect(payload(result).warnings).toEqual([
 			'Dropped dangling verification_target: 7 (history has 0 thoughts)',
 		]);
-		expect(manager.getHistory()[0]?.verification_target).toBeUndefined();
-		expect(edgeStore.edgesForSession(asSessionId('__global__'))).toHaveLength(0);
+		expect(manager.getHistory(SESSION_ID)[0]?.verification_target).toBeUndefined();
+		expect(edgeStore.edgesForSession(SESSION_ID)).toHaveLength(0);
 	});
 
 	it('rejects a required current self-reference without admitting it', async () => {
 		const manager = new HistoryManager();
 		const result = await makeProcessor(manager).process({
+			session_id: SESSION_ID,
 			thought: 'required current self-reference',
 			thought_number: 7,
 			total_thoughts: 7,
@@ -508,7 +526,7 @@ describe('stable edge endpoints', () => {
 		});
 
 		expect(payload(result).code).toBe('INVALID_BACKTRACK');
-		expect(manager.getHistory()).toHaveLength(0);
+		expect(manager.getHistory(SESSION_ID)).toHaveLength(0);
 	});
 
 	it('deduplicates identical merge edges produced by duplicate numeric array values', () => {
@@ -519,9 +537,9 @@ describe('stable edge endpoints', () => {
 			createTestThought({ id: 'merge', thought_number: 5, merge_from_thoughts: [4, 4, 4] })
 		);
 
-		expect(
-			edgeStore.edgesForSession(asSessionId('__global__')).filter((edge) => edge.kind === 'merge')
-		).toEqual([expect.objectContaining({ from: asThoughtId('source'), to: asThoughtId('merge') })]);
+		expect(edgeStore.edgesForSession(SESSION_ID).filter((edge) => edge.kind === 'merge')).toEqual([
+			expect.objectContaining({ from: asThoughtId('source'), to: asThoughtId('merge') }),
+		]);
 	});
 
 	it('prunes a resumed observation edge when the original tool call is no longer retained', async () => {
@@ -530,6 +548,7 @@ describe('stable edge endpoints', () => {
 		const manager = new HistoryManager({ edgeStore, maxHistorySize: 1 });
 		const processor = makeProcessor(manager, store);
 		const call = await processor.process({
+			session_id: SESSION_ID,
 			thought: 'call search',
 			thought_number: 9,
 			total_thoughts: 10,
@@ -544,6 +563,7 @@ describe('stable edge endpoints', () => {
 		manager.addThought(createTestThought({ id: 'reused-nine', thought_number: 9 }));
 
 		const observation = await processor.process({
+			session_id: SESSION_ID,
 			thought: 'search returned',
 			thought_number: 10,
 			total_thoughts: 10,
@@ -555,9 +575,7 @@ describe('stable edge endpoints', () => {
 		expect(observation.isError).toBeUndefined();
 		expect(originalId).toBeDefined();
 		expect(
-			edgeStore
-				.edgesForSession(asSessionId('__global__'))
-				.filter((edge) => edge.kind === 'tool_invocation')
+			edgeStore.edgesForSession(SESSION_ID).filter((edge) => edge.kind === 'tool_invocation')
 		).toEqual([]);
 	});
 });
