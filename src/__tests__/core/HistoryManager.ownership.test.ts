@@ -153,7 +153,7 @@ describe('HistoryManager — session ownership', () => {
 			});
 		});
 
-		describe('clear() / reset_state ownership enforcement', () => {
+		describe('reset ownership enforcement', () => {
 			it('rejects a wrong-owner awaitable reset before mutation and keeps the session usable', async () => {
 				runWithContext({ requestId: 'r1', owner: 'user-A' }, () => {
 					hm.addThought(createTestThought({ session_id: 's1', thought: 'owned' }));
@@ -189,17 +189,26 @@ describe('HistoryManager — session ownership', () => {
 				expect(hm.getHistoryLength('b')).toBe(1);
 			});
 
-			it('clear(sessionId) throws SessionAccessDeniedError when a different owner attempts reset', () => {
+			it('rejects owner-aware resetAll without inventing a session identity', async () => {
+				const error = await runWithContext({ requestId: 'r1', owner: 'user-A' }, () =>
+					hm.resetAll()
+				)
+					.then(() => undefined)
+					.catch((reason: unknown) => reason);
+
+				expect(error).toMatchObject({ code: ERROR_CODES.SESSION_ACCESS_DENIED });
+				expect(error).not.toHaveProperty('sessionId');
+			});
+
+			it('resetSession throws SessionAccessDeniedError when a different owner attempts reset', async () => {
 				runWithContext({ requestId: 'r1', owner: 'user-A' }, () => {
 					hm.addThought(createTestThought({ session_id: 's1', thought: 't1' }));
 					hm.addThought(createTestThought({ session_id: 's1', thought: 't2', thought_number: 2 }));
 				});
 
-				expect(() =>
-					runWithContext({ requestId: 'r2', owner: 'user-B' }, () => {
-						hm.clear(asSessionId('s1'));
-					})
-				).toThrow(SessionAccessDeniedError);
+				await expect(
+					runWithContext({ requestId: 'r2', owner: 'user-B' }, () => hm.resetSession('s1'))
+				).rejects.toThrow(SessionAccessDeniedError);
 
 				// Session still exists with original data under the original owner
 				runWithContext({ requestId: 'r3', owner: 'user-A' }, () => {
@@ -207,34 +216,31 @@ describe('HistoryManager — session ownership', () => {
 				});
 			});
 
-			it('clear(sessionId) succeeds for the same owner', () => {
+			it('resetSession succeeds for the same owner', async () => {
 				runWithContext({ requestId: 'r1', owner: 'user-A' }, () => {
 					hm.addThought(createTestThought({ session_id: 's1', thought: 't1' }));
 					hm.addThought(createTestThought({ session_id: 's1', thought: 't2', thought_number: 2 }));
 				});
 
-				runWithContext({ requestId: 'r2', owner: 'user-A' }, () => {
-					expect(() => hm.clear(asSessionId('s1'))).not.toThrow();
-					// Session is recreated empty on next access
+				await runWithContext({ requestId: 'r2', owner: 'user-A' }, () => hm.resetSession('s1'));
+				runWithContext({ requestId: 'r3', owner: 'user-A' }, () => {
 					expect(hm.getHistoryLength(asSessionId('s1'))).toBe(0);
 				});
 			});
 
-			it('clearSession(sessionId) also enforces ownership (delegates to clear)', () => {
+			it('resetSession continues to enforce ownership', async () => {
 				runWithContext({ requestId: 'r1', owner: 'user-A' }, () => {
 					hm.addThought(createTestThought({ session_id: 's1' }));
 				});
 
-				expect(() =>
-					runWithContext({ requestId: 'r2', owner: 'user-B' }, () => {
-						hm.clearSession(asSessionId('s1'));
-					})
-				).toThrow(SessionAccessDeniedError);
+				await expect(
+					runWithContext({ requestId: 'r2', owner: 'user-B' }, () => hm.resetSession('s1'))
+				).rejects.toThrow(SessionAccessDeniedError);
 			});
 
-			it('stdio path: clear(sessionId) works without owner in context', () => {
+			it('stdio path: resetSession works without owner in context', async () => {
 				hm.addThought(createTestThought({ session_id: 's1' }));
-				expect(() => hm.clear(asSessionId('s1'))).not.toThrow();
+				await expect(hm.resetSession('s1')).resolves.toBeUndefined();
 			});
 		});
 	});

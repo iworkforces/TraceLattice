@@ -25,7 +25,7 @@ import {
 	type ThoughtId,
 } from '../../contracts/ids.js';
 
-const GLOBAL: SessionId = asSessionId('__global__');
+const SESSION_ID: SessionId = asSessionId('edge-persistence-session');
 
 function makeThought(
 	num: number,
@@ -34,6 +34,7 @@ function makeThought(
 	const { session_id, ...rest } = overrides ?? {};
 	return createTestThought({
 		id: generateUlid() as ThoughtId,
+		session_id: SESSION_ID,
 		thought_number: num,
 		total_thoughts: 10,
 		thought: `t${num}`,
@@ -92,11 +93,11 @@ describe('HistoryManager edge persistence', () => {
 
 		expect(saveEdgesSpy).toHaveBeenCalledTimes(1);
 		const [sessionId, edges] = saveEdgesSpy.mock.calls[0]!;
-		expect(sessionId).toBe(GLOBAL);
+		expect(sessionId).toBe(SESSION_ID);
 		expect(edges.length).toBe(2);
 		expect(edges.every((e: Edge) => e.kind === 'sequence')).toBe(true);
 
-		const persisted = await persistence.loadEdges(GLOBAL);
+		const persisted = await persistence.loadEdges(SESSION_ID);
 		expect(persisted).toHaveLength(2);
 		await manager.shutdown();
 	});
@@ -115,16 +116,25 @@ describe('HistoryManager edge persistence', () => {
 
 	it('loads edges into EdgeStore on loadFromPersistence', async () => {
 		const persistence = new MemoryPersistence();
-		await persistence.saveThought(makeThought(1, { id: asThoughtId('thought-a') }));
-		await persistence.saveThought(makeThought(2, { id: asThoughtId('thought-b') }));
-		await persistence.saveThought(makeThought(3, { id: asThoughtId('thought-c') }));
+		await persistence.saveThoughtForSession(
+			SESSION_ID,
+			makeThought(1, { id: asThoughtId('thought-a') })
+		);
+		await persistence.saveThoughtForSession(
+			SESSION_ID,
+			makeThought(2, { id: asThoughtId('thought-b') })
+		);
+		await persistence.saveThoughtForSession(
+			SESSION_ID,
+			makeThought(3, { id: asThoughtId('thought-c') })
+		);
 		const seedEdges: Edge[] = [
 			{
 				id: generateUlid() as EdgeId,
 				from: asThoughtId('thought-a'),
 				to: asThoughtId('thought-b'),
 				kind: 'sequence',
-				sessionId: GLOBAL,
+				sessionId: SESSION_ID,
 				createdAt: 100,
 			},
 			{
@@ -132,11 +142,11 @@ describe('HistoryManager edge persistence', () => {
 				from: asThoughtId('thought-b'),
 				to: asThoughtId('thought-c'),
 				kind: 'derives_from',
-				sessionId: GLOBAL,
+				sessionId: SESSION_ID,
 				createdAt: 200,
 			},
 		];
-		await persistence.saveEdges(GLOBAL, seedEdges);
+		await persistence.saveEdges(SESSION_ID, seedEdges);
 
 		const edgeStore = new EdgeStore();
 		const manager = new HistoryManager({
@@ -148,8 +158,8 @@ describe('HistoryManager edge persistence', () => {
 
 		await manager.loadFromPersistence();
 
-		expect(edgeStore.size(GLOBAL)).toBe(2);
-		const loaded = edgeStore.edgesForSession(GLOBAL);
+		expect(edgeStore.size(SESSION_ID)).toBe(2);
+		const loaded = edgeStore.edgesForSession(SESSION_ID);
 		expect(loaded.map((e) => e.kind).sort()).toEqual(['derives_from', 'sequence']);
 		await manager.shutdown();
 	});
@@ -161,11 +171,11 @@ describe('HistoryManager edge persistence', () => {
 		manager.addThought(makeThought(2));
 		manager.addThought(makeThought(3));
 
-		expect(edgeStore.size(GLOBAL)).toBeGreaterThan(0);
+		expect(edgeStore.size(SESSION_ID)).toBeGreaterThan(0);
 
 		await manager.resetAll();
 
-		expect(edgeStore.size(GLOBAL)).toBe(0);
+		expect(edgeStore.size(SESSION_ID)).toBe(0);
 		await manager.shutdown();
 	});
 
@@ -192,13 +202,13 @@ describe('HistoryManager edge persistence', () => {
 
 		await fresh.loadFromPersistence();
 
-		expect(freshEdgeStore.size(GLOBAL)).toBe(3);
-		const loaded = freshEdgeStore.edgesForSession(GLOBAL);
+		expect(freshEdgeStore.size(SESSION_ID)).toBe(3);
+		const loaded = freshEdgeStore.edgesForSession(SESSION_ID);
 		expect(loaded.every((e) => e.kind === 'sequence')).toBe(true);
 		await fresh.shutdown();
 	});
 
-	it('listEdgeSessions returns all sessions with persisted edges', async () => {
+	it('listSessions returns all sessions with persisted edges', async () => {
 		const persistence = new MemoryPersistence();
 		await persistence.saveEdges(asSessionId('test-A'), [
 			{
@@ -221,7 +231,7 @@ describe('HistoryManager edge persistence', () => {
 			},
 		]);
 
-		const sessions = await persistence.listEdgeSessions();
+		const sessions = await persistence.listSessions();
 		expect(sessions.sort()).toEqual(['test-A', 'test-B']);
 	});
 
@@ -312,7 +322,7 @@ describe('HistoryManager edge persistence', () => {
 		await manager._flushBuffer();
 		await manager.shutdown();
 
-		const sessions = await persistence.listEdgeSessions();
+		const sessions = await persistence.listSessions();
 		expect(sessions.sort()).toEqual(['test-A', 'test-B']);
 
 		const freshEdgeStore = new EdgeStore();
