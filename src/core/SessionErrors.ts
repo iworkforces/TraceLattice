@@ -60,32 +60,3 @@ export class SessionAccessDeniedError extends SequentialThinkingError {
 		this.actualOwner = actualOwner;
 	}
 }
-
-/** Scope requested through the legacy synchronous clear API. */
-export type AsyncResetScope = 'session' | 'all';
-
-/** Condition that makes the legacy synchronous clear API unsafe. */
-export type AsyncResetReason = 'persistent' | 'active';
-
-/** Error raised when state requires the awaitable reset API. */
-export class AsyncResetRequiredError extends SequentialThinkingError {
-	public readonly scope: AsyncResetScope;
-	public readonly sessionId: SessionId | undefined;
-	public readonly reason: AsyncResetReason;
-
-	constructor(
-		scope: AsyncResetScope,
-		sessionId?: SessionId,
-		reason: AsyncResetReason = 'persistent'
-	) {
-		const target = scope === 'session' ? `session '${sessionId}'` : 'all sessions';
-		super(
-			`Synchronous clear cannot reset ${reason} ${target}; use the awaitable ${scope === 'session' ? 'resetSession()' : 'resetAll()'} API`,
-			ERROR_CODES.ASYNC_RESET_REQUIRED
-		);
-		this.name = 'AsyncResetRequiredError';
-		this.scope = scope;
-		this.sessionId = sessionId;
-		this.reason = reason;
-	}
-}
