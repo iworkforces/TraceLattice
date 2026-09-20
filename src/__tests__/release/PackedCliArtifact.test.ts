@@ -381,6 +381,13 @@ async function createFixture(fixtureCase: FixtureCase): Promise<string> {
 	return root;
 }
 
+async function createBunShimEnvironment(): Promise<NodeJS.ProcessEnv> {
+	const runtimeRoot = await mkdtemp(join(tmpdir(), 'tracelattice-bun-runtime-'));
+	temporaryRoots.push(runtimeRoot);
+	await symlink(process.execPath, join(runtimeRoot, 'bun'));
+	return { ...process.env, PATH: `${runtimeRoot}${delimiter}${process.env.PATH ?? ''}` };
+}
+
 async function runVerifier(
 	packageDirectory: string,
 	{ loader, env }: VerifierOptions = {}
@@ -390,7 +397,7 @@ async function runVerifier(
 		: [verifier, '--package-dir', packageDirectory];
 	const child = spawn(process.execPath, nodeArguments, {
 		stdio: ['ignore', 'pipe', 'pipe'],
-		env,
+		env: env ?? (await createBunShimEnvironment()),
 	});
 	let stdout = '';
 	let stderr = '';
@@ -461,13 +468,8 @@ describe('packed CLI artifact contract', () => {
 			code: '',
 			mutate: async () => undefined,
 		});
-		const runtimeRoot = await mkdtemp(join(tmpdir(), 'tracelattice-bun-runtime-'));
-		temporaryRoots.push(runtimeRoot);
-		await symlink(process.execPath, join(runtimeRoot, 'bun'));
 		// When
-		const result = await runVerifier(packageDirectory, {
-			env: { ...process.env, PATH: `${runtimeRoot}${delimiter}${process.env.PATH ?? ''}` },
-		});
+		const result = await runVerifier(packageDirectory);
 		// Then
 		expect(result.code).toBe(0);
 		const receipt: unknown = JSON.parse(result.stdout);
@@ -510,13 +512,8 @@ describe('packed CLI artifact contract', () => {
 					cliBody.replace("serverInfo: { name: 'tracelattice'", "serverInfo: { name: 'wrong-name'")
 				),
 		});
-		const runtimeRoot = await mkdtemp(join(tmpdir(), 'tracelattice-bun-runtime-'));
-		temporaryRoots.push(runtimeRoot);
-		await symlink(process.execPath, join(runtimeRoot, 'bun'));
 		// When
-		const result = await runVerifier(packageDirectory, {
-			env: { ...process.env, PATH: `${runtimeRoot}${delimiter}${process.env.PATH ?? ''}` },
-		});
+		const result = await runVerifier(packageDirectory);
 		// Then
 		expect(result.code).not.toBe(0);
 		expect(result.stderr).toContain('PACKED_PROTOCOL_INVALID');
