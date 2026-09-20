@@ -30,7 +30,6 @@ export interface OutcomeRecorderConfig {
  * const recorder = new OutcomeRecorder({ enabled: true });
  * recorder.recordVerification({
  *   thoughtId: 't1',
- *   thoughtNumber: 1,
  *   sessionId: 'session-a',
  *   predicted: 0.8,
  *   actual: 1,
