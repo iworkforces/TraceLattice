@@ -1,4 +1,4 @@
-import { PersistenceCompatibilityError, PersistenceImportRequiredError } from '../errors.js';
+import { PersistenceCompatibilityError } from '../errors.js';
 import type { SqliteDatabase } from './SqliteDriver.js';
 import { runSqliteTransaction } from './SqliteDriver.js';
 
@@ -125,28 +125,15 @@ export function sqliteSchemaObjects(database: SqliteDatabase, sourcePath: string
 		.map((row) => readSchemaObject(row, sourcePath));
 }
 
-function hasLegacyShape(objects: readonly SchemaObject[]): boolean {
-	const names = new Set(objects.map(({ type, name }) => `${type}:${name}`));
-	return (
-		names.has('table:thoughts') &&
-		names.has('table:edges') &&
-		names.has('table:summaries') &&
-		!names.has('table:schema_version')
-	);
-}
-
 export function validateSqliteV2Schema(database: SqliteDatabase, sourcePath: string): void {
 	const objects = sqliteSchemaObjects(database, sourcePath);
 	if (objects.length !== V2_OBJECTS.size) {
-		if (hasLegacyShape(objects)) {
-			throw new PersistenceImportRequiredError(sourcePath, ['unversioned SQLite v1 schema']);
-		}
-		throw new PersistenceCompatibilityError(sourcePath, 'SQLite v2 object set does not match');
+		throw new PersistenceCompatibilityError(sourcePath, 'database does not match SQLite v2 schema');
 	}
 	for (const object of objects) {
 		const expected = V2_OBJECTS.get(`${object.type}:${object.name}`);
 		if (expected === undefined || normalizeSql(object.sql) !== expected) {
-			throw new PersistenceCompatibilityError(sourcePath, `SQLite v2 drift at '${object.name}'`);
+			throw new PersistenceCompatibilityError(sourcePath, 'database does not match SQLite v2 schema');
 		}
 	}
 	const versionRows = database.prepare('SELECT singleton, version FROM schema_version').all();

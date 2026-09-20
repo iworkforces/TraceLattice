@@ -1,4 +1,3 @@
-import type { SessionScopedPersistenceOperation } from '../contracts/PersistenceBackend.js';
 import type { BranchId, SessionId } from '../contracts/ids.js';
 import { ERROR_CODES, SequentialThinkingError } from '../errors.js';
 
@@ -16,20 +15,6 @@ export type PersistenceWriteOperation =
 	| 'saveBranchForSession'
 	| 'saveEdges'
 	| 'saveSummaries';
-
-/** Error raised when a custom backend lacks the complete scoped capability. */
-export class PersistenceCapabilityError extends SequentialThinkingError {
-	public readonly operation: SessionScopedPersistenceOperation;
-
-	constructor(operation: SessionScopedPersistenceOperation) {
-		super(
-			`Persistence backend does not support required session operation '${operation}'`,
-			ERROR_CODES.PERSISTENCE_CAPABILITY_UNSUPPORTED
-		);
-		this.name = 'PersistenceCapabilityError';
-		this.operation = operation;
-	}
-}
 
 /** Error raised before a write whose payload belongs to another namespace. */
 export class PersistenceScopeMismatchError extends SequentialThinkingError {
