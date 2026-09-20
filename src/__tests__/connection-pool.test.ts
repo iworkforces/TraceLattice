@@ -43,7 +43,7 @@ describe('ConnectionPool', () => {
 
 	afterEach(async () => {
 		if (pool.isRunning()) {
-			await pool.terminate();
+			await pool.dispose();
 		}
 	});
 
@@ -59,7 +59,7 @@ describe('ConnectionPool', () => {
 			expect(stats.cleanupEnabled).toBe(true);
 
 			// Cleanup for default pool
-			defaultPool.terminate();
+			defaultPool.dispose();
 		});
 
 		it('should use custom maxSessions', () => {
@@ -68,7 +68,7 @@ describe('ConnectionPool', () => {
 				serverFactory: createMockServerFactory(),
 			});
 			expect(customPool.getStats().maxSessions).toBe(10);
-			customPool.terminate();
+			customPool.dispose();
 		});
 
 		it('should use custom sessionTimeout', () => {
@@ -77,7 +77,7 @@ describe('ConnectionPool', () => {
 				serverFactory: createMockServerFactory(),
 			});
 			expect(customPool.getStats().sessionTimeout).toBe(120000);
-			customPool.terminate();
+			customPool.dispose();
 		});
 
 		it('should allow disabling autoCleanup', () => {
@@ -86,7 +86,7 @@ describe('ConnectionPool', () => {
 				serverFactory: createMockServerFactory(),
 			});
 			expect(noCleanupPool.getStats().cleanupEnabled).toBe(false);
-			noCleanupPool.terminate();
+			noCleanupPool.dispose();
 		});
 
 		it('should require serverFactory to create sessions', async () => {
@@ -98,7 +98,7 @@ describe('ConnectionPool', () => {
 				'ConnectionPool requires a serverFactory option to create sessions'
 			);
 
-			await missingFactoryPool.terminate();
+			await missingFactoryPool.dispose();
 		});
 	});
 
@@ -132,11 +132,11 @@ describe('ConnectionPool', () => {
 				'Max sessions (2) reached'
 			);
 
-			await smallPool.terminate();
+			await smallPool.dispose();
 		});
 
 		it('should throw error when terminated', async () => {
-			await pool.terminate();
+			await pool.dispose();
 
 			await expect(async () => await pool.createSession()).rejects.toThrow(
 				'ConnectionPool has been terminated'
@@ -173,26 +173,32 @@ describe('ConnectionPool', () => {
 				expect(serverFactory).toHaveBeenCalledTimes(1);
 			} finally {
 				vi.restoreAllMocks();
-				await collisionPool.terminate();
+				await collisionPool.dispose();
 			}
 		});
 	});
 
 	describe('process', () => {
 		it('should process thought in existing session', async () => {
-			const sessionId = await pool.createSession();
+			const poolSessionId = await pool.createSession();
+			const thoughtSessionId = asSessionId('thought-session');
 
 			const thought: ThoughtData = {
 				thought: 'test',
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: thoughtSessionId,
 			};
 
-			const result = await pool.process(sessionId, thought);
+			const result = await pool.process(poolSessionId, thought);
 
 			expect(result).toBeDefined();
 			expect(result.content).toEqual([{ type: 'text', text: 'Test response' }]);
+			const child = pool.getSessionInfo(poolSessionId)?.server;
+			expect(child?.processThought).toHaveBeenCalledWith(thought);
+			expect(thought.session_id).toBe(thoughtSessionId);
+			expect(thought.session_id).not.toBe(poolSessionId);
 		});
 
 		it('throws the typed missing-session error for direct processing', async () => {
@@ -201,6 +207,7 @@ describe('ConnectionPool', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('missing-slot-thought'),
 			};
 
 			await expect(pool.process(asSessionId('non-existent'), thought)).rejects.toBeInstanceOf(
@@ -230,6 +237,7 @@ describe('ConnectionPool', () => {
 					thought_number: 1,
 					total_thoughts: 1,
 					next_thought_needed: false,
+					session_id: asSessionId('accepted-thought'),
 				})
 			);
 			await started.promise;
@@ -252,7 +260,7 @@ describe('ConnectionPool', () => {
 			await expect(admittingPool.runWithSession(sessionId, rejectedCallback)).resolves.toEqual({
 				status: 'missing',
 			});
-			await admittingPool.terminate();
+			await admittingPool.dispose();
 		});
 
 		it('throws the typed inactive-session error while direct processing is closing', async () => {
@@ -275,6 +283,7 @@ describe('ConnectionPool', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('pending-thought'),
 			});
 			await started.promise;
 			const close = typedPool.closeSession(sessionId);
@@ -285,13 +294,14 @@ describe('ConnectionPool', () => {
 					thought_number: 1,
 					total_thoughts: 1,
 					next_thought_needed: false,
+					session_id: asSessionId('late-thought'),
 				})
 			).rejects.toBeInstanceOf(SessionNotActiveError);
 
 			operationGate.resolve();
 			await processing;
 			await close;
-			await typedPool.terminate();
+			await typedPool.dispose();
 		});
 	});
 
@@ -327,7 +337,7 @@ describe('ConnectionPool', () => {
 			expect(id2).toBeDefined();
 			expect(smallPool.getStats().totalSessions).toBe(1);
 
-			await smallPool.terminate();
+			await smallPool.dispose();
 		});
 
 		it('removes routing before awaiting one shared child stop', async () => {
@@ -355,7 +365,7 @@ describe('ConnectionPool', () => {
 
 			stopGate.resolve();
 			await firstClose;
-			await closingPool.terminate();
+			await closingPool.dispose();
 		});
 
 		it('retains failed cleanup as inactive owned capacity until a retry succeeds', async () => {
@@ -381,6 +391,7 @@ describe('ConnectionPool', () => {
 					thought_number: 1,
 					total_thoughts: 1,
 					next_thought_needed: false,
+					session_id: asSessionId('cleanup-failure-thought'),
 				})
 			).rejects.toBeInstanceOf(SessionNotActiveError);
 			await expect(retainedPool.createSession()).rejects.toThrow('Max sessions (1) reached');
@@ -391,7 +402,7 @@ describe('ConnectionPool', () => {
 				retainedPool.runWithSession(sessionId, async () => 'unexpected')
 			).resolves.toEqual({ status: 'missing' });
 			await expect(retainedPool.createSession()).resolves.toMatch(/^session_/);
-			await retainedPool.terminate();
+			await retainedPool.dispose();
 		});
 	});
 
@@ -472,7 +483,7 @@ describe('ConnectionPool', () => {
 				serverFactory: createMockServerFactory(),
 			});
 			expect(customPool.getStats().maxSessions).toBe(50);
-			customPool.terminate();
+			customPool.dispose();
 		});
 
 		it('should track sessionTimeout correctly', () => {
@@ -481,7 +492,7 @@ describe('ConnectionPool', () => {
 				serverFactory: createMockServerFactory(),
 			});
 			expect(customPool.getStats().sessionTimeout).toBe(120000);
-			customPool.terminate();
+			customPool.dispose();
 		});
 	});
 
@@ -491,41 +502,41 @@ describe('ConnectionPool', () => {
 		});
 
 		it('should return false when terminated', async () => {
-			await pool.terminate();
+			await pool.dispose();
 			expect(pool.isRunning()).toBe(false);
 		});
 	});
 
-	describe('terminate', () => {
-		it('should terminate gracefully when empty', async () => {
-			await expect(pool.terminate()).resolves.toBeUndefined();
+	describe('dispose', () => {
+		it('should dispose gracefully when empty', async () => {
+			await expect(pool.dispose()).resolves.toBeUndefined();
 		});
 
-		it('should terminate gracefully with sessions', async () => {
+		it('should dispose gracefully with sessions', async () => {
 			await pool.createSession();
 			await pool.createSession();
 
-			await expect(pool.terminate()).resolves.toBeUndefined();
+			await expect(pool.dispose()).resolves.toBeUndefined();
 		});
 
-		it('should clear all sessions on terminate', async () => {
+		it('should clear all sessions on dispose', async () => {
 			await pool.createSession();
 			await pool.createSession();
 
 			expect(pool.getStats().totalSessions).toBe(2);
 
-			await pool.terminate();
+			await pool.dispose();
 
 			expect(pool.getStats().totalSessions).toBe(0);
 		});
 
 		it('should be idempotent', async () => {
-			await pool.terminate();
-			await expect(pool.terminate()).resolves.toBeUndefined();
+			await pool.dispose();
+			await expect(pool.dispose()).resolves.toBeUndefined();
 		});
 
-		it('should prevent operations after terminate', async () => {
-			await pool.terminate();
+		it('should prevent operations after dispose', async () => {
+			await pool.dispose();
 
 			await expect(async () => await pool.createSession()).rejects.toThrow(
 				'ConnectionPool has been terminated'
@@ -558,8 +569,8 @@ describe('ConnectionPool', () => {
 			await terminatingPool.createSession();
 			await terminatingPool.createSession();
 
-			const firstTerminate = terminatingPool.terminate();
-			const concurrentTerminate = terminatingPool.terminate();
+			const firstTerminate = terminatingPool.dispose();
+			const concurrentTerminate = terminatingPool.dispose();
 
 			expect(concurrentTerminate).toBe(firstTerminate);
 			expect(terminatingPool.getStats().totalSessions).toBe(0);
@@ -589,7 +600,7 @@ describe('ConnectionPool', () => {
 			});
 			const create = terminatingPool.createSession();
 
-			const terminate = terminatingPool.terminate();
+			const terminate = terminatingPool.dispose();
 			factory.resolve({
 				processThought: vi.fn().mockResolvedValue({ content: [] }),
 				stop,
@@ -604,7 +615,7 @@ describe('ConnectionPool', () => {
 			expect(stop).toHaveBeenCalledTimes(1);
 			expect(terminatingPool.getStats().totalSessions).toBe(0);
 
-			await expect(terminatingPool.terminate()).resolves.toBeUndefined();
+			await expect(terminatingPool.dispose()).resolves.toBeUndefined();
 			expect(stop).toHaveBeenCalledTimes(2);
 		});
 
@@ -617,15 +628,15 @@ describe('ConnectionPool', () => {
 			});
 			await terminatingPool.createSession();
 
-			const firstTerminate = terminatingPool.terminate();
-			const concurrentTerminate = terminatingPool.terminate();
+			const firstTerminate = terminatingPool.dispose();
+			const concurrentTerminate = terminatingPool.dispose();
 			expect(concurrentTerminate).toBe(firstTerminate);
 			await expect(firstTerminate).rejects.toMatchObject({ errors: [stopFailure] });
 			expect(stop).toHaveBeenCalledTimes(1);
 
-			await expect(terminatingPool.terminate()).resolves.toBeUndefined();
+			await expect(terminatingPool.dispose()).resolves.toBeUndefined();
 			expect(stop).toHaveBeenCalledTimes(2);
-			await expect(terminatingPool.terminate()).resolves.toBeUndefined();
+			await expect(terminatingPool.dispose()).resolves.toBeUndefined();
 			expect(stop).toHaveBeenCalledTimes(2);
 		});
 
@@ -643,14 +654,14 @@ describe('ConnectionPool', () => {
 			const sessionId = await terminatingPool.createSession();
 
 			const close = terminatingPool.closeSession(sessionId);
-			const terminate = terminatingPool.terminate();
+			const terminate = terminatingPool.dispose();
 			expect(stop).toHaveBeenCalledTimes(1);
 			firstStop.reject(stopFailure);
 
 			await expect(close).rejects.toBe(stopFailure);
 			await expect(terminate).rejects.toMatchObject({ errors: [stopFailure] });
 			expect(stop).toHaveBeenCalledTimes(1);
-			await expect(terminatingPool.terminate()).resolves.toBeUndefined();
+			await expect(terminatingPool.dispose()).resolves.toBeUndefined();
 			expect(stop).toHaveBeenCalledTimes(2);
 		});
 
@@ -664,7 +675,7 @@ describe('ConnectionPool', () => {
 			});
 			const create = terminatingPool.createSession();
 
-			const terminate = terminatingPool.terminate();
+			const terminate = terminatingPool.dispose();
 			factory.resolve({
 				processThought: vi.fn().mockResolvedValue({ content: [] }),
 				stop,
@@ -693,7 +704,7 @@ describe('ConnectionPool', () => {
 			const stats = defaultPool.getStats();
 			expect(stats.maxSessions).toBe(100);
 
-			defaultPool.terminate();
+			defaultPool.dispose();
 		});
 
 		it('should create ConnectionPool with custom options', () => {
@@ -709,7 +720,7 @@ describe('ConnectionPool', () => {
 			expect(stats.maxSessions).toBe(25);
 			expect(stats.sessionTimeout).toBe(60000);
 
-			customPool.terminate();
+			customPool.dispose();
 		});
 	});
 });
@@ -780,7 +791,7 @@ describe('ConnectionPool callback-scoped admission', () => {
 		operationGate.resolve();
 		await close;
 		expect(stop).toHaveBeenCalledTimes(1);
-		await pool.terminate();
+		await pool.dispose();
 	});
 
 	it('holds termination only until the pending callback settles and stops once', async () => {
@@ -799,8 +810,8 @@ describe('ConnectionPool callback-scoped admission', () => {
 		});
 		await operationStarted.promise;
 
-		const firstTerminate = pool.terminate();
-		const duplicateTerminate = pool.terminate();
+		const firstTerminate = pool.dispose();
+		const duplicateTerminate = pool.dispose();
 		expect(duplicateTerminate).toBe(firstTerminate);
 		expect(stop).not.toHaveBeenCalled();
 
@@ -823,7 +834,7 @@ describe('ConnectionPool callback-scoped admission', () => {
 				throw sentinel;
 			})
 		).rejects.toBe(sentinel);
-		await expect(pool.terminate()).resolves.toBeUndefined();
+		await expect(pool.dispose()).resolves.toBeUndefined();
 		expect(stop).toHaveBeenCalledTimes(1);
 	});
 
@@ -846,6 +857,7 @@ describe('ConnectionPool callback-scoped admission', () => {
 					thought_number: 1,
 					total_thoughts: 1,
 					next_thought_needed: false,
+					session_id: asSessionId('nested-thought'),
 				});
 			});
 			expect(nested).toEqual({
@@ -864,7 +876,7 @@ describe('ConnectionPool callback-scoped admission', () => {
 		await expect(outer).resolves.toEqual({ status: 'completed', value: 'outer' });
 		await close;
 		expect(stop).toHaveBeenCalledTimes(1);
-		await pool.terminate();
+		await pool.dispose();
 	});
 
 	it('admits a different-ID nested operation against its own child', async () => {
@@ -894,7 +906,7 @@ describe('ConnectionPool callback-scoped admission', () => {
 			status: 'completed',
 			value: { status: 'completed', value: 'second' },
 		});
-		await pool.terminate();
+		await pool.dispose();
 	});
 
 	it('rejects a stale ALS descendant after its captured child has closed', async () => {
@@ -918,7 +930,7 @@ describe('ConnectionPool callback-scoped admission', () => {
 
 		await expect(descendant.promise).resolves.toEqual({ status: 'missing' });
 		expect(callback).not.toHaveBeenCalled();
-		await pool.terminate();
+		await pool.dispose();
 	});
 });
 
@@ -992,7 +1004,7 @@ describe('ConnectionPool edge cases', () => {
 			'Max sessions (0) reached'
 		);
 
-		await zeroPool.terminate();
+		await zeroPool.dispose();
 	});
 
 	it('should handle very large maxSessions', () => {
@@ -1004,7 +1016,7 @@ describe('ConnectionPool edge cases', () => {
 
 		expect(largePool.getStats().maxSessions).toBe(10000);
 
-		largePool.terminate();
+		largePool.dispose();
 	});
 
 	it('should handle very short sessionTimeout', async () => {
@@ -1022,7 +1034,7 @@ describe('ConnectionPool edge cases', () => {
 
 		expect(shortTimeoutPool.getSessionInfo(sessionId)).toBeUndefined();
 
-		await shortTimeoutPool.terminate();
+		await shortTimeoutPool.dispose();
 		vi.useRealTimers();
 	});
 
@@ -1035,7 +1047,7 @@ describe('ConnectionPool edge cases', () => {
 
 		expect(longTimeoutPool.getStats().sessionTimeout).toBe(3600000);
 
-		longTimeoutPool.terminate();
+		longTimeoutPool.dispose();
 	});
 });
 
@@ -1043,7 +1055,7 @@ describe('ConnectionPool cleanup', () => {
 	it('should enable cleanup by default', () => {
 		const defaultPool = new ConnectionPool({ serverFactory: createMockServerFactory() });
 		expect(defaultPool.getStats().cleanupEnabled).toBe(true);
-		defaultPool.terminate();
+		defaultPool.dispose();
 	});
 
 	it('should allow disabling cleanup', () => {
@@ -1052,7 +1064,7 @@ describe('ConnectionPool cleanup', () => {
 			serverFactory: createMockServerFactory(),
 		});
 		expect(noCleanupPool.getStats().cleanupEnabled).toBe(false);
-		noCleanupPool.terminate();
+		noCleanupPool.dispose();
 	});
 
 	it('should use custom cleanup interval', () => {
@@ -1063,6 +1075,6 @@ describe('ConnectionPool cleanup', () => {
 
 		expect(customIntervalPool).toBeInstanceOf(ConnectionPool);
 
-		customIntervalPool.terminate();
+		customIntervalPool.dispose();
 	});
 });

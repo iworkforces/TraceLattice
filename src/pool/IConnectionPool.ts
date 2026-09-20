@@ -85,12 +85,12 @@ export interface IConnectionPool extends IDisposable {
 	/**
 	 * Process a thought in the specified session.
 	 *
-	 * @param sessionId - The session ID
+	 * @param poolSessionId - The pool slot ID, distinct from `input.session_id`
 	 * @param input - The thought data to process
 	 * @returns The processing result
 	 * @throws SessionNotFoundError if the session does not exist
 	 */
-	process(sessionId: SessionId, input: SessionThoughtInput): Promise<ProcessResult>;
+	process(poolSessionId: SessionId, input: SessionThoughtInput): Promise<ProcessResult>;
 
 	/**
 	 * Run an operation while atomically holding an active session open.
@@ -135,15 +135,8 @@ export interface IConnectionPool extends IDisposable {
 	getStats(): ConnectionPoolStats;
 
 	/**
-	 * Close all sessions and stop the cleanup timer.
-	 */
-	terminate(): Promise<void>;
-
-	/**
 	 * Dispose of the connection pool, releasing all resources.
-	 *
-	 * Implements the {@link IDisposable} interface. Typically delegates
-	 * to {@link IConnectionPool.terminate}.
+	 * Implements the {@link IDisposable} interface.
 	 */
 	dispose(): Promise<void>;
 

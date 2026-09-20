@@ -34,7 +34,7 @@ describe('ConnectionPool additional coverage', () => {
 			// Session should be removed by cleanup
 			expect(pool.getSessionInfo(sessionId)).toBeUndefined();
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 
@@ -59,6 +59,7 @@ describe('ConnectionPool additional coverage', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('timeout-reset-thought'),
 			};
 			await pool.process(sessionId, thought);
 
@@ -67,7 +68,7 @@ describe('ConnectionPool additional coverage', () => {
 
 			expect(pool.getSessionInfo(sessionId)?.isActive).toBe(true);
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 
@@ -89,6 +90,7 @@ describe('ConnectionPool additional coverage', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('inactive-thought'),
 			};
 
 			// Process should fail because session is closed
@@ -96,7 +98,7 @@ describe('ConnectionPool additional coverage', () => {
 			// SessionNotActiveError is for inactive sessions
 			await expect(pool.process(sessionId, thought)).rejects.toThrow();
 
-			await pool.terminate();
+			await pool.dispose();
 		});
 	});
 
@@ -121,13 +123,13 @@ describe('ConnectionPool additional coverage', () => {
 			// Session should be cleaned up
 			expect(pool.getStats().totalSessions).toBe(0);
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 	});
 
 	describe('dispose', () => {
-		it('should delegate to terminate', async () => {
+		it('should dispose all resources', async () => {
 			const pool = new ConnectionPool({
 				maxSessions: 5,
 				autoCleanup: false,
@@ -161,7 +163,7 @@ describe('ConnectionPool additional coverage', () => {
 			expect(id2).not.toBe(id3);
 			expect(pool.getStats().totalSessions).toBe(3);
 
-			await pool.terminate();
+			await pool.dispose();
 		});
 	});
 
@@ -189,13 +191,13 @@ describe('ConnectionPool additional coverage', () => {
 			// Session should be cleaned up (removed from pool)
 			expect(pool.getSessionInfo(sessionId)).toBeUndefined();
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 	});
 
-	describe('error handling in terminate', () => {
-		it('should report errors when closing sessions during terminate', async () => {
+	describe('error handling in dispose', () => {
+		it('should report errors when closing sessions during dispose', async () => {
 			const stopFailure = new Error('Stop failed');
 			const failingFactory = vi.fn().mockImplementation(async () => ({
 				processThought: vi.fn().mockResolvedValue({
@@ -212,7 +214,7 @@ describe('ConnectionPool additional coverage', () => {
 
 			await pool.createSession();
 
-			await expect(pool.terminate()).rejects.toMatchObject({ errors: [stopFailure] });
+			await expect(pool.dispose()).rejects.toMatchObject({ errors: [stopFailure] });
 		});
 	});
 
@@ -228,7 +230,7 @@ describe('ConnectionPool additional coverage', () => {
 			expect(pool).toBeInstanceOf(ConnectionPool);
 			expect(pool.getStats().maxSessions).toBe(50);
 
-			pool.terminate();
+			pool.dispose();
 		});
 	});
 
@@ -250,6 +252,7 @@ describe('ConnectionPool additional coverage', () => {
 				thought_number: 1,
 				total_thoughts: 1,
 				next_thought_needed: false,
+				session_id: asSessionId('timer-reset-thought'),
 			};
 
 			// First process call sets timeout timer
@@ -261,7 +264,7 @@ describe('ConnectionPool additional coverage', () => {
 			// Session should still be active
 			expect(pool.getSessionInfo(sessionId)?.isActive).toBe(true);
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 	});
@@ -296,7 +299,7 @@ describe('ConnectionPool additional coverage', () => {
 			expect(pool.isRunning()).toBe(true);
 			expect(stop).toHaveBeenCalledTimes(2);
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 
@@ -325,7 +328,7 @@ describe('ConnectionPool additional coverage', () => {
 			expect(stop).toHaveBeenCalledTimes(2);
 			await expect(pool.createSession()).resolves.toMatch(/^session_/);
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 
@@ -346,7 +349,7 @@ describe('ConnectionPool additional coverage', () => {
 			await expect(pool.closeSession(sessionId)).rejects.toBe(stopFailure);
 			await expect(pool.closeSession(sessionId)).resolves.toBeUndefined();
 			expect(stop).toHaveBeenCalledTimes(2);
-			await pool.terminate();
+			await pool.dispose();
 		});
 	});
 
@@ -372,7 +375,7 @@ describe('ConnectionPool additional coverage', () => {
 			const after = pool.getActiveSessions();
 			expect(after).toHaveLength(1);
 
-			await pool.terminate();
+			await pool.dispose();
 		});
 	});
 
@@ -386,7 +389,7 @@ describe('ConnectionPool additional coverage', () => {
 
 			await expect(pool.closeSession(asSessionId('nonexistent'))).rejects.toThrow();
 
-			await pool.terminate();
+			await pool.dispose();
 		});
 	});
 
@@ -401,7 +404,7 @@ describe('ConnectionPool additional coverage', () => {
 			await pool.createSession();
 			await expect(pool.createSession()).rejects.toThrow();
 
-			await pool.terminate();
+			await pool.dispose();
 		});
 
 		it('should throw when pool is terminated', async () => {
@@ -411,7 +414,7 @@ describe('ConnectionPool additional coverage', () => {
 				serverFactory: createMockServerFactory(),
 			});
 
-			await pool.terminate();
+			await pool.dispose();
 			await expect(pool.createSession()).rejects.toThrow();
 		});
 
@@ -425,7 +428,7 @@ describe('ConnectionPool additional coverage', () => {
 				'ConnectionPool requires a serverFactory option to create sessions'
 			);
 
-			await pool.terminate();
+			await pool.dispose();
 		});
 	});
 
@@ -454,12 +457,12 @@ describe('ConnectionPool additional coverage', () => {
 
 			expect(pool.getSessionInfo(sessionId)).toBeUndefined();
 
-			await pool.terminate();
+			await pool.dispose();
 			vi.useRealTimers();
 		});
 	});
 
-	describe('terminate edge cases', () => {
+	describe('dispose edge cases', () => {
 		it('should be a no-op when already terminated', async () => {
 			const pool = new ConnectionPool({
 				maxSessions: 5,
@@ -467,8 +470,8 @@ describe('ConnectionPool additional coverage', () => {
 				serverFactory: createMockServerFactory(),
 			});
 
-			await pool.terminate();
-			await expect(pool.terminate()).resolves.toBeUndefined();
+			await pool.dispose();
+			await expect(pool.dispose()).resolves.toBeUndefined();
 		});
 
 		it('attempts a persistent failure only once per termination generation', async () => {
@@ -480,9 +483,9 @@ describe('ConnectionPool additional coverage', () => {
 			});
 			await pool.createSession();
 
-			await expect(pool.terminate()).rejects.toMatchObject({ errors: [stopFailure] });
+			await expect(pool.dispose()).rejects.toMatchObject({ errors: [stopFailure] });
 			expect(stop).toHaveBeenCalledTimes(1);
-			await expect(pool.terminate()).rejects.toMatchObject({ errors: [stopFailure] });
+			await expect(pool.dispose()).rejects.toMatchObject({ errors: [stopFailure] });
 			expect(stop).toHaveBeenCalledTimes(2);
 		});
 	});
