@@ -50,9 +50,6 @@ export function _countByType(history: ThoughtData[]): Record<ThoughtType, number
 	return counts;
 }
 
-/** Alias of {@link _countByType} without the underscore prefix. */
-export const countByType = _countByType;
-
 /**
  * Compute the longest contiguous chain depth (sequence of thoughts without branching).
  *
@@ -78,6 +75,3 @@ export function _computeChainDepth(history: ThoughtData[]): number {
 
 	return maxDepth;
 }
-
-/** Alias of {@link _computeChainDepth} without the underscore prefix. */
-export const computeChainDepth = _computeChainDepth;

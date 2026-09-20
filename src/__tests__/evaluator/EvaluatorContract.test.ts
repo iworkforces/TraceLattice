@@ -1,20 +1,20 @@
-import { asBranchId } from '../../contracts/ids.js';
+import { asBranchId, asSessionId } from '../../contracts/ids.js';
 /**
- * Backward-compatibility snapshot tests for the {@link ThoughtEvaluator} facade.
+ * Contract tests for the {@link ThoughtEvaluator} facade.
  *
- * These tests lock the public API of the post-refactor `ThoughtEvaluator`
- * (which composes `SignalComputer` + `Aggregator` + `PatternDetector` +
- * `Calibrator`) so that future changes cannot silently alter observable
- * behavior.
+ * These tests exercise the public facade over SignalComputer, Aggregator,
+ * PatternDetector, and Calibrator.
  *
  * Tests intentionally exercise only the public {@link ThoughtEvaluator} API —
  * no imports from `core/evaluator/*` internals.
  *
- * @module __tests__/evaluator/EvaluatorBackwardCompat
+ * @module __tests__/evaluator/EvaluatorContract
  */
 
 import { describe, it, expect } from 'vitest';
 import { ThoughtEvaluator } from '../../core/ThoughtEvaluator.js';
+import { Calibrator } from '../../core/evaluator/Calibrator.js';
+import { OutcomeRecorder } from '../../core/reasoning/OutcomeRecorder.js';
 import {
 	createTestThought,
 	createHypothesisThought,
@@ -53,7 +53,12 @@ function linearFixture(): Fixture {
 function branchingFixture(): Fixture {
 	const main: ThoughtData[] = [
 		createTestThought({ thought: 'Main 1', thought_number: 1, total_thoughts: 3, confidence: 0.7 }),
-		createTestThought({ thought: 'Main 2', thought_number: 2, total_thoughts: 3, confidence: 0.75 }),
+		createTestThought({
+			thought: 'Main 2',
+			thought_number: 2,
+			total_thoughts: 3,
+			confidence: 0.75,
+		}),
 		createTestThought({ thought: 'Main 3', thought_number: 3, total_thoughts: 3, confidence: 0.8 }),
 	];
 	const branchA: ThoughtData[] = [
@@ -104,8 +109,18 @@ function hypothesisVerificationFixture(): Fixture {
 
 function mixedTypesFixture(): Fixture {
 	const history: ThoughtData[] = [
-		createTestThought({ thought_number: 1, total_thoughts: 6, thought_type: 'regular', confidence: 0.7 }),
-		createHypothesisThought({ thought_number: 2, total_thoughts: 6, hypothesis_id: 'hyp-1', confidence: 0.65 }),
+		createTestThought({
+			thought_number: 1,
+			total_thoughts: 6,
+			thought_type: 'regular',
+			confidence: 0.7,
+		}),
+		createHypothesisThought({
+			thought_number: 2,
+			total_thoughts: 6,
+			hypothesis_id: 'hyp-1',
+			confidence: 0.65,
+		}),
 		createVerificationThought({
 			thought_number: 3,
 			total_thoughts: 6,
@@ -113,7 +128,12 @@ function mixedTypesFixture(): Fixture {
 			verification_target: 2,
 			confidence: 0.88,
 		}),
-		createCritiqueThought({ thought_number: 4, total_thoughts: 6, verification_target: 3, confidence: 0.72 }),
+		createCritiqueThought({
+			thought_number: 4,
+			total_thoughts: 6,
+			verification_target: 3,
+			confidence: 0.72,
+		}),
 		createSynthesisThought({ thought_number: 5, total_thoughts: 6, confidence: 0.8 }),
 		createMetaThought({ thought_number: 6, total_thoughts: 6, confidence: 0.78 }),
 	];
@@ -151,7 +171,9 @@ function longSessionFixture(): Fixture {
 				thought_type: t,
 				confidence: conf,
 				...(t === 'hypothesis' ? { hypothesis_id: `hyp-${i}` } : {}),
-				...(t === 'verification' && i > 0 ? { hypothesis_id: `hyp-${i - 2}`, verification_target: i - 1 } : {}),
+				...(t === 'verification' && i > 0
+					? { hypothesis_id: `hyp-${i - 2}`, verification_target: i - 1 }
+					: {}),
 			})
 		);
 	}
@@ -166,20 +188,29 @@ const fixtures: Fixture[] = [
 	longSessionFixture(),
 ];
 
+function createEvaluator(): ThoughtEvaluator {
+	return new ThoughtEvaluator(new Calibrator(new OutcomeRecorder({ enabled: false }), false));
+}
+
+function confidenceContext(fixture: Fixture) {
+	return {
+		currentThought: fixture.history.at(-1) ?? createTestThought(),
+		sessionId: asSessionId('evaluator-contract'),
+	};
+}
+
 // === Tests ================================================================
 
-describe('ThoughtEvaluator backward compatibility', () => {
-	const evaluator = new ThoughtEvaluator();
+describe('ThoughtEvaluator contract', () => {
+	const evaluator = createEvaluator();
 
-	describe('Zero-arg constructor', () => {
-		it('constructs without error', () => {
-			expect(() => new ThoughtEvaluator()).not.toThrow();
-		});
-
-		it('produces a working evaluator with zero-arg constructor', () => {
-			const ev = new ThoughtEvaluator();
+	describe('injected calibrator', () => {
+		it('constructs a working evaluator with its current collaborator', () => {
+			const ev = createEvaluator();
 			const fx = linearFixture();
-			expect(() => ev.computeConfidenceSignals(fx.history, fx.branches)).not.toThrow();
+			expect(() =>
+				ev.computeConfidenceSignals(fx.history, fx.branches, confidenceContext(fx))
+			).not.toThrow();
 			expect(() => ev.computeReasoningStats(fx.history, fx.branches)).not.toThrow();
 			expect(() => ev.computePatternSignals(fx.history, fx.branches)).not.toThrow();
 		});
@@ -189,14 +220,22 @@ describe('ThoughtEvaluator backward compatibility', () => {
 		for (const fx of fixtures) {
 			describe(`fixture: ${fx.name}`, () => {
 				it('returns structural_quality as a number in [0,1]', () => {
-					const signals = evaluator.computeConfidenceSignals(fx.history, fx.branches);
+					const signals = evaluator.computeConfidenceSignals(
+						fx.history,
+						fx.branches,
+						confidenceContext(fx)
+					);
 					expect(typeof signals.structural_quality).toBe('number');
 					expect(signals.structural_quality).toBeGreaterThanOrEqual(0);
 					expect(signals.structural_quality).toBeLessThanOrEqual(1);
 				});
 
 				it('exposes all quality_components fields', () => {
-					const signals = evaluator.computeConfidenceSignals(fx.history, fx.branches);
+					const signals = evaluator.computeConfidenceSignals(
+						fx.history,
+						fx.branches,
+						confidenceContext(fx)
+					);
 					expect(signals.quality_components).toBeDefined();
 					const c = signals.quality_components!;
 					expect(typeof c.type_diversity).toBe('number');
@@ -211,13 +250,25 @@ describe('ThoughtEvaluator backward compatibility', () => {
 				});
 
 				it('is deterministic — same input → same output', () => {
-					const a = evaluator.computeConfidenceSignals(fx.history, fx.branches);
-					const b = evaluator.computeConfidenceSignals(fx.history, fx.branches);
+					const a = evaluator.computeConfidenceSignals(
+						fx.history,
+						fx.branches,
+						confidenceContext(fx)
+					);
+					const b = evaluator.computeConfidenceSignals(
+						fx.history,
+						fx.branches,
+						confidenceContext(fx)
+					);
 					expect(b).toEqual(a);
 				});
 
 				it('reports reasoning_depth equal to history length', () => {
-					const signals = evaluator.computeConfidenceSignals(fx.history, fx.branches);
+					const signals = evaluator.computeConfidenceSignals(
+						fx.history,
+						fx.branches,
+						confidenceContext(fx)
+					);
 					expect(signals.reasoning_depth).toBe(fx.history.length);
 				});
 			});
@@ -245,7 +296,8 @@ describe('ThoughtEvaluator backward compatibility', () => {
 						tool_observation: 0,
 						assumption: 0,
 						decomposition: 0,
-						backtrack: 0,					};
+						backtrack: 0,
+					};
 					for (const t of fx.history) {
 						const type = (t.thought_type ?? 'regular') as ThoughtType;
 						expected[type]++;
@@ -308,19 +360,20 @@ describe('ThoughtEvaluator backward compatibility', () => {
 		});
 	});
 
-	describe('calibrated_confidence omitted when no calibrator is injected', () => {
-		it('default NoOpCalibrator does not add calibrated_confidence', () => {
-			const ev = new ThoughtEvaluator();
+	describe('disabled calibration', () => {
+		it('does not add calibrated_confidence', () => {
+			const ev = createEvaluator();
 			for (const fx of fixtures) {
-				const signals = ev.computeConfidenceSignals(fx.history, fx.branches);
+				const signals = ev.computeConfidenceSignals(fx.history, fx.branches, confidenceContext(fx));
 				expect(signals.calibrated_confidence).toBeUndefined();
 				expect(signals.calibration_metrics).toBeUndefined();
 			}
 		});
 
 		it('also omits calibration fields for an empty history', () => {
-			const ev = new ThoughtEvaluator();
-			const signals = ev.computeConfidenceSignals([], {});
+			const ev = createEvaluator();
+			const empty = { name: 'empty', history: [], branches: {} } satisfies Fixture;
+			const signals = ev.computeConfidenceSignals([], {}, confidenceContext(empty));
 			expect(signals.calibrated_confidence).toBeUndefined();
 			expect(signals.calibration_metrics).toBeUndefined();
 		});
