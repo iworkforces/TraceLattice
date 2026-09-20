@@ -1,9 +1,9 @@
 import { EdgeStore } from '../../../../core/graph/EdgeStore.js';
 import { GraphView } from '../../../../core/graph/GraphView.js';
 import { TreeOfThoughtStrategy } from '../../../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
-import { ThoughtEvaluator } from '../../../../core/ThoughtEvaluator.js';
 import type { StrategyContext } from '../../../../contracts/strategy.js';
 import { createTestSessionId, createTestThought } from '../../../helpers/factories.js';
+import { createDisabledThoughtEvaluator } from '../../../helpers/evaluator.js';
 import { battleEdge, scoreChecks } from './helpers.js';
 import type { BattleScenario } from './types.js';
 
@@ -16,7 +16,7 @@ type ContextInput = {
 
 function createContext(input: ContextInput): StrategyContext {
 	const sessionId = createTestSessionId('tot-anchor');
-	const evaluator = new ThoughtEvaluator();
+	const evaluator = createDisabledThoughtEvaluator();
 	const currentThought = input.history[input.history.length - 1];
 	if (currentThought === undefined) {
 		throw new Error('strategy context requires at least one thought');

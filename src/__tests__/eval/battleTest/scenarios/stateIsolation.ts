@@ -1,3 +1,4 @@
+import { asSessionId } from '../../../../contracts/ids.js';
 import { createTestThought, MockHistoryManager } from '../../../helpers/factories.js';
 import { scoreChecks } from './helpers.js';
 import type { BattleScenario } from './types.js';
@@ -32,19 +33,19 @@ export const STATE_ISOLATION_SCENARIOS = [
 		caseId: 'state-isolation-clear-one-session',
 		category,
 		description:
-			'clear(session) detects reset-state-not-clearing if target session remains populated.',
-		run: () => {
+			'resetSession(session) detects reset-state-not-clearing if target session remains populated.',
+		run: async () => {
 			const history = new MockHistoryManager();
 			history.addThought(createTestThought({ thought: 'session a', session_id: 'reset-a' }));
 			history.addThought(createTestThought({ thought: 'session b', session_id: 'reset-b' }));
-			history.clear('reset-a');
+			await history.resetSession(asSessionId('reset-a'));
 			return scoreChecks({
 				caseId: 'state-isolation-clear-one-session',
 				category,
 				checks: {
 					targetCleared: history.getHistoryLength('reset-a') === 0,
 					otherSessionPreserved: history.getHistoryLength('reset-b') === 1,
-					clearCalledOnce: history.getClearCallCount() === 1,
+					resetCalledOnce: history.getResetCallCount() === 1,
 				},
 				criticalFailure: 'reset-state-not-clearing',
 			});
