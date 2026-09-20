@@ -274,9 +274,8 @@ async function exerciseProtocol(artifact) {
 			protocol: {
 				initialize: true,
 				toolsList: true,
-				validNamedSession: true,
-				omittedSessionRejected: true,
-				retiredSessionRejected: true,
+				validCall: true,
+				invalidCall: true,
 			},
 			shutdown: { exitCode: status.code, signal: status.signal, outstandingRequests: 0 },
 		};

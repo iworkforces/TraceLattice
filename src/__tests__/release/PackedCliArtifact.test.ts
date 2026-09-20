@@ -473,14 +473,11 @@ describe('packed CLI artifact contract', () => {
 		// Then
 		expect(result.code).toBe(0);
 		const receipt: unknown = JSON.parse(result.stdout);
-		expect(receipt).toMatchObject({
-			protocolCheck: {
-				initialize: true,
-				toolsList: true,
-				validNamedSession: true,
-				omittedSessionRejected: true,
-				retiredSessionRejected: true,
-			},
+		expect(receipt).toHaveProperty('protocolCheck', {
+			initialize: true,
+			toolsList: true,
+			validCall: true,
+			invalidCall: true,
 		});
 	}, 120_000);
 
