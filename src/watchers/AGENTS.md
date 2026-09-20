@@ -43,7 +43,7 @@ Skill **discovery** defaults also include `.agents/skills` + `~/.agents/skills`.
 
 - Errors from `refreshAsync()` are logged, never thrown.
 - `ignoreInitial: true`. Ignore `node_modules` + `.DS_Store`.
-- Tool events that are not `.tool.md` are ignored. Skills log add/change/remove when `WATCHER_VERBOSE=true`.
+- Tool events that are not `.tool.md` are ignored. Skills log add/change/remove when `TRACELATTICE_WATCHER_VERBOSE=true`.
 - `ready()` waits for chokidar's initial scan. `stop()` closes the watcher and joins the in-flight refresh.
 - Instantiated only if `enableWatcher`. Stopped with the server.
 

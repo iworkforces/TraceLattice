@@ -34,7 +34,7 @@ Subclasses implement: `_fileExtensions`, `_entityName`, `_shouldSkipFile`, `_par
 
 - Manual `add()` wins over files. Discovery skips names already in `_manualItems`.
 - Tools: `.tool.md`. Skills: `.md`, `.yml`, `.yaml`.
-- `removeSkillByName` is **gone**. Skills: `BaseRegistry.remove(name)` only. Tools: `removeTool(name)`.
+- Both registries use `add`, `remove`, `update`, `get`, `getAll`, `has`, `getNames`, `clear`, and `size` from `BaseRegistry`.
 - `lazyDiscovery` is accepted on the options type but **unused in the class**. Gated in `lib.ts` (`autoDiscover` vs `lazyDiscovery`).
 - `existsSync` is the only sync FS call (skip missing dirs). Everything else is async.
 - `ToolRegistry.get()` still probes `tool:${name}` — that per-name cache is **dead**. Only `'all'` is set.
