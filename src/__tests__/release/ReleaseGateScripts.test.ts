@@ -46,6 +46,10 @@ async function readPackedVerifier() {
 	return readFile(resolve(projectRoot, 'scripts/verify-packed-cli.mjs'), 'utf8');
 }
 
+async function readCurrentContractVerifier() {
+	return readFile(resolve(projectRoot, 'scripts/current-contract.mjs'), 'utf8');
+}
+
 describe('release gate package scripts', () => {
 	it('publishes the scoped package while preserving the public CLI bin', async () => {
 		// Given
@@ -131,5 +135,50 @@ describe('release gate package scripts', () => {
 		expect(inspection).toBeGreaterThan(-1);
 		expect(library).toBeGreaterThan(inspection);
 		expect(runtime).toBeGreaterThan(library);
+	});
+
+	it('checks the current contract in source, build output, and the installed package', async () => {
+		const verifierSource = await readPackedVerifier();
+
+		const source = verifierSource.indexOf('await verifySourceCurrentContract(repositoryRoot)');
+		const build = verifierSource.indexOf('await verifyBuildCurrentContract(packageDirectory)');
+		const inspection = verifierSource.indexOf(
+			'artifact = await inspectPackedPackage(packageDirectory)'
+		);
+		const packed = verifierSource.indexOf(
+			'await verifyPackedCurrentContract(artifact.packageRoot)'
+		);
+
+		expect(source).toBeGreaterThan(-1);
+		expect(build).toBeGreaterThan(source);
+		expect(inspection).toBeGreaterThan(build);
+		expect(packed).toBeGreaterThan(inspection);
+	});
+
+	it('scopes explicit thought-session checks away from tests and non-thought session APIs', async () => {
+		// Given
+		const contractSource = await readCurrentContractVerifier();
+		// When
+		const sourceExclusion = contractSource.includes("entry.name === '__tests__'");
+		const scopedFiles = contractSource.includes("'core/ThoughtProcessor'");
+		// Then
+		expect(sourceExclusion).toBe(true);
+		expect(scopedFiles).toBe(true);
+		expect(contractSource).not.toContain("'src/transport/");
+		expect(contractSource).not.toContain("'src/pool/");
+	});
+
+	it('keeps the current-contract verifier directly executable', async () => {
+		// Given
+		const contractSource = await readCurrentContractVerifier();
+		// When
+		const directEntryGuard = contractSource.lastIndexOf(
+			'resolve(process.argv[1]) === fileURLToPath(import.meta.url)'
+		);
+		// Then
+		expect(directEntryGuard).toBeGreaterThan(-1);
+		expect(
+			contractSource.indexOf('await verifySourceCurrentContract(repositoryRoot)', directEntryGuard)
+		).toBeGreaterThan(-1);
 	});
 });

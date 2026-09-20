@@ -9,9 +9,14 @@ type FixtureManifest = Record<string, unknown>;
 type FixtureCase = {
 	readonly label: string;
 	readonly code: string;
+	readonly packSucceeded?: boolean;
 	readonly mutate: (root: string, manifest: FixtureManifest) => Promise<void>;
 };
-type ProcessResult = { readonly code: number | null; readonly stderr: string };
+type ProcessResult = {
+	readonly code: number | null;
+	readonly stdout: string;
+	readonly stderr: string;
+};
 type VerifierOptions = {
 	readonly loader?: string;
 	readonly env?: NodeJS.ProcessEnv;
@@ -32,7 +37,13 @@ if (process.argv.includes('--version')) {
     let result;
     if (request.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'tracelattice', version: '1.2.3' } };
     else if (request.method === 'tools/list') result = { tools: [{ name: 'sequentialthinking_tools' }] };
-    else result = request.params?.arguments ? { content: [{ type: 'text', text: 'ok' }] } : { isError: true, content: [{ type: 'text', text: 'invalid' }] };
+    else {
+      const input = request.params?.arguments;
+      const validSession = typeof input?.session_id === 'string' && input.session_id !== '__global__';
+      result = validSession
+        ? { content: [{ type: 'text', text: JSON.stringify({ session_id: input.session_id }) }] }
+        : { isError: true, content: [{ type: 'text', text: 'invalid session' }] };
+    }
     console.log(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }));
   });
 }
@@ -80,6 +91,16 @@ export class ToolAwareSequentialThinkingServer {
     this.refresh ??= Promise.resolve({ tools: 1, skills: 1 });
     return this.refresh;
   }
+  getBranches(sessionId) {
+    if (typeof sessionId !== 'string') throw new TypeError('sessionId is required');
+    return {};
+  }
+  async processThought(input) {
+    if (typeof input.session_id !== 'string' || input.session_id === '__global__') {
+      return { isError: true, content: [{ type: 'text', text: 'invalid session' }] };
+    }
+    return { content: [{ type: 'text', text: JSON.stringify({ session_id: input.session_id }) }] };
+  }
   async stop() {}
   async dispose() {}
 }
@@ -114,12 +135,16 @@ export declare function createHttpTransport(options?: HttpTransportOptions): Htt
 export interface ServerOptions { readonly autoDiscover?: boolean; readonly loadFromPersistence?: boolean; }
 export interface IToolAwareSequentialThinkingServer {
   refreshDiscovery(): Promise<{ tools: number; skills: number }>;
+  getBranches(sessionId: string): Record<string, readonly object[]>;
+  processThought(input: { readonly session_id: string; readonly thought: string; readonly thought_number: number; readonly total_thoughts: number }): Promise<{ readonly content: readonly { readonly type: 'text'; readonly text: string }[]; readonly isError?: boolean }>;
   stop(): Promise<void>;
   dispose(): Promise<void>;
 }
 export declare class ToolAwareSequentialThinkingServer implements IToolAwareSequentialThinkingServer {
   static create(options?: ServerOptions): Promise<ToolAwareSequentialThinkingServer>;
   refreshDiscovery(): Promise<{ tools: number; skills: number }>;
+  getBranches(sessionId: string): Record<string, readonly object[]>;
+  processThought(input: { readonly session_id: string; readonly thought: string; readonly thought_number: number; readonly total_thoughts: number }): Promise<{ readonly content: readonly { readonly type: 'text'; readonly text: string }[]; readonly isError?: boolean }>;
   stop(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -247,6 +272,85 @@ const cases: readonly FixtureCase[] = [
 				)
 			),
 	},
+	{
+		label: 'removed registry alias in build output',
+		code: 'BUILD_CURRENT_CONTRACT_INVALID',
+		packSucceeded: false,
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/lib.d.ts'),
+				`${libraryDeclarations}\nexport declare function addTool(value: unknown): void;\n`
+			),
+	},
+	{
+		label: 'retired global session symbol in build output',
+		code: 'BUILD_CURRENT_CONTRACT_INVALID',
+		packSucceeded: false,
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/lib.js'),
+				`${libraryBody}\nexport const GLOBAL_SESSION_ID = '__global__';\n`
+			),
+	},
+	{
+		label: 'retired global session accepted by a constructor in build output',
+		code: 'BUILD_CURRENT_CONTRACT_INVALID',
+		packSucceeded: false,
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/lib.js'),
+				`${libraryBody}\nfunction asSessionId(value) { return value; }\nexport const defaultSession = asSessionId('__global__');\n`
+			),
+	},
+	{
+		label: 'optional public thought session declaration in build output',
+		code: 'BUILD_CURRENT_CONTRACT_INVALID',
+		packSucceeded: false,
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/lib.d.ts'),
+				libraryDeclarations.replace(
+					'getBranches(sessionId: string)',
+					'getBranches(sessionId?: string)'
+				)
+			),
+	},
+	{
+		label: 'thought session fallback in build output',
+		code: 'BUILD_CURRENT_CONTRACT_INVALID',
+		packSucceeded: false,
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/lib.js'),
+				`${libraryBody}\nexport function fallback(input) { return input.session_id ?? 'default-session'; }\n`
+			),
+	},
+	{
+		label: 'packed CLI accepting an omitted thought session',
+		code: 'PACKED_PROTOCOL_INVALID',
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/cli.js'),
+				cliBody
+					.replace(
+						"typeof input?.session_id === 'string' && input.session_id !== '__global__'",
+						"input === undefined || input.session_id !== '__global__'"
+					)
+					.replace('JSON.stringify({ session_id: input.session_id })', 'JSON.stringify({})')
+			),
+	},
+	{
+		label: 'packed CLI accepting the retired thought session',
+		code: 'PACKED_PROTOCOL_INVALID',
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/cli.js'),
+				cliBody.replace(
+					"typeof input?.session_id === 'string' && input.session_id !== '__global__'",
+					"typeof input?.session_id === 'string'"
+				)
+			),
+	},
 ];
 
 async function createFixture(fixtureCase: FixtureCase): Promise<string> {
@@ -285,10 +389,14 @@ async function runVerifier(
 		? ['--experimental-loader', loader, verifier, '--package-dir', packageDirectory]
 		: [verifier, '--package-dir', packageDirectory];
 	const child = spawn(process.execPath, nodeArguments, {
-		stdio: ['ignore', 'ignore', 'pipe'],
+		stdio: ['ignore', 'pipe', 'pipe'],
 		env,
 	});
+	let stdout = '';
 	let stderr = '';
+	child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+		stdout += chunk;
+	});
 	child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
 		stderr += chunk;
 	});
@@ -297,7 +405,7 @@ async function runVerifier(
 		child.once('error', reject);
 		child.once('close', (code) => {
 			clearTimeout(timeout);
-			resolve({ code, stderr });
+			resolve({ code, stdout, stderr });
 		});
 	});
 }
@@ -346,6 +454,34 @@ afterEach(async () => {
 });
 
 describe('packed CLI artifact contract', () => {
+	it('verifies named thought sessions through the installed library and CLI', async () => {
+		// Given
+		const packageDirectory = await createFixture({
+			label: 'current explicit session contract',
+			code: '',
+			mutate: async () => undefined,
+		});
+		const runtimeRoot = await mkdtemp(join(tmpdir(), 'tracelattice-bun-runtime-'));
+		temporaryRoots.push(runtimeRoot);
+		await symlink(process.execPath, join(runtimeRoot, 'bun'));
+		// When
+		const result = await runVerifier(packageDirectory, {
+			env: { ...process.env, PATH: `${runtimeRoot}${delimiter}${process.env.PATH ?? ''}` },
+		});
+		// Then
+		expect(result.code).toBe(0);
+		const receipt: unknown = JSON.parse(result.stdout);
+		expect(receipt).toMatchObject({
+			protocolCheck: {
+				initialize: true,
+				toolsList: true,
+				validNamedSession: true,
+				omittedSessionRejected: true,
+				retiredSessionRejected: true,
+			},
+		});
+	}, 120_000);
+
 	it.each(cases)(
 		'rejects $label with $code after packing and installing',
 		async (fixtureCase) => {
@@ -356,8 +492,9 @@ describe('packed CLI artifact contract', () => {
 			// Then
 			expect(result.code).not.toBe(0);
 			expect(result.stderr).toContain(fixtureCase.code);
-			expect(result.stderr).toContain('PACK_SUCCEEDED=true');
-			expect(result.stderr).toContain('INSTALL_SUCCEEDED=true');
+			const packed = fixtureCase.packSucceeded !== false;
+			expect(result.stderr).toContain(`PACK_SUCCEEDED=${packed}`);
+			expect(result.stderr).toContain(`INSTALL_SUCCEEDED=${packed}`);
 		},
 		120_000
 	);
