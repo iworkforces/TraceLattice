@@ -23,7 +23,6 @@ export type SessionEligibility<S extends SessionLike> = (
 
 /** Configuration options for {@link SessionManager}. */
 export interface SessionManagerConfig {
-	readonly defaultSessionId: SessionId;
 	readonly sessionTtlMs: number;
 	readonly cleanupIntervalMs: number;
 	readonly getMaxSessions: () => number;
@@ -46,7 +45,6 @@ type Candidate<S extends SessionLike> = {
  * ```
  */
 export class SessionManager<S extends SessionLike> {
-	private readonly _defaultSessionId: SessionId;
 	private readonly _sessionTtlMs: number;
 	private readonly _cleanupIntervalMs: number;
 	private readonly _getMaxSessions: () => number;
@@ -55,7 +53,6 @@ export class SessionManager<S extends SessionLike> {
 	private _cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 	public constructor(config: SessionManagerConfig) {
-		this._defaultSessionId = config.defaultSessionId;
 		this._sessionTtlMs = config.sessionTtlMs;
 		this._cleanupIntervalMs = config.cleanupIntervalMs;
 		this._getMaxSessions = config.getMaxSessions;
@@ -120,7 +117,6 @@ export class SessionManager<S extends SessionLike> {
 					.filter(
 						(candidate) =>
 							candidate.session.owner === owner &&
-							candidate.sessionId !== this._defaultSessionId &&
 							isEligible(candidate.sessionId, candidate.session)
 					)
 					.slice(0, ownerNeed)
@@ -133,9 +129,7 @@ export class SessionManager<S extends SessionLike> {
 		const selectedIds = new Set(selected.map((candidate) => candidate.sessionId));
 		const alternatives = live.filter(
 			(candidate) =>
-				candidate.sessionId !== this._defaultSessionId &&
-				!selectedIds.has(candidate.sessionId) &&
-				isEligible(candidate.sessionId, candidate.session)
+				!selectedIds.has(candidate.sessionId) && isEligible(candidate.sessionId, candidate.session)
 		);
 		if (alternatives.length < remainingNeed) return undefined;
 		selected.push(...alternatives.slice(0, remainingNeed));
@@ -151,7 +145,6 @@ export class SessionManager<S extends SessionLike> {
 		return this._orderedLiveCandidates(sessions)
 			.filter(
 				(candidate) =>
-					candidate.sessionId !== this._defaultSessionId &&
 					now - candidate.session.lastAccessedAt > this._sessionTtlMs &&
 					isEligible(candidate.sessionId, candidate.session)
 			)
