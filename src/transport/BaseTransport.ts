@@ -7,7 +7,6 @@
  * @remarks
  * **Security Features:**
  * - Session ID validation (alphanumeric, max 64 chars)
- * - Query parameter sanitization (whitelist allowed keys)
  * - Rate limiting per IP (configurable, default 100 req/min)
  * - CORS origin validation
  *
@@ -18,7 +17,6 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { URL } from 'node:url';
 import type { HealthChecker } from '../health/HealthChecker.js';
 import type { Logger, LogLevel } from '../logger/StructuredLogger.js';
 import { SESSION_ID_PATTERN, MAX_SESSION_ID_LENGTH } from '../core/ids.js';
@@ -41,13 +39,6 @@ class NoopLogger implements Logger {
 		return this._level;
 	}
 }
-
-/**
- * Allowed query parameter names (whitelist for security).
- */
-const ALLOWED_QUERY_PARAMS = new Set(['session', 'sessionId', 'client', 'clientId']);
-
-
 
 /**
  * Rate limit settings (requests per minute per IP).
@@ -121,24 +112,6 @@ export abstract class BaseTransport {
 			return false;
 		}
 		return SESSION_ID_PATTERN.test(sessionId);
-	}
-
-	/**
-	 * Sanitize query parameters by removing any not in whitelist.
-	 *
-	 * @param url - The URL object containing query parameters
-	 * @returns A sanitized record of allowed query parameters
-	 */
-	protected sanitizeQueryParams(url: URL): Record<string, string> {
-		const sanitized: Record<string, string> = {};
-
-		for (const [key, value] of url.searchParams.entries()) {
-			if (ALLOWED_QUERY_PARAMS.has(key)) {
-				sanitized[key] = value;
-			}
-		}
-
-		return sanitized;
 	}
 
 	/**

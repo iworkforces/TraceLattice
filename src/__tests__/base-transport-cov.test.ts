@@ -33,9 +33,6 @@ class TestableTransport extends BaseTransport {
 	override checkRateLimit(ip: string): boolean {
 		return super.checkRateLimit(ip);
 	}
-	override sanitizeQueryParams(url: URL): Record<string, string> {
-		return super.sanitizeQueryParams(url);
-	}
 	override validateHostHeader(req: IncomingMessage): boolean {
 		return super.validateHostHeader(req);
 	}
@@ -43,7 +40,7 @@ class TestableTransport extends BaseTransport {
 		return super.getClientIp(req);
 	}
 	override setCorsHeaders(res: ServerResponse): void {
-		return super.setCorsHeaders(res);
+		super.setCorsHeaders(res);
 	}
 	override get isShuttingDown(): boolean {
 		return super.isShuttingDown;
@@ -92,16 +89,18 @@ function createMockResponse(): MockServerResponse & ServerResponse {
 function createMockPersistence(healthy: boolean): PersistenceBackend {
 	return {
 		healthy: async () => healthy,
-		saveThought: vi.fn(),
-		loadHistory: vi.fn().mockResolvedValue([]),
-		saveBranch: vi.fn(),
-		loadBranch: vi.fn().mockResolvedValue(undefined),
-		listBranches: vi.fn().mockResolvedValue([]),
-		clear: vi.fn(),
+		saveThoughtForSession: vi.fn(),
+		loadHistoryForSession: vi.fn().mockResolvedValue([]),
+		saveBranchForSession: vi.fn(),
+		deleteBranchForSession: vi.fn(),
+		loadBranchForSession: vi.fn().mockResolvedValue(undefined),
+		listBranchesForSession: vi.fn().mockResolvedValue([]),
+		listSessions: vi.fn().mockResolvedValue([]),
+		clearSession: vi.fn(),
+		clearAll: vi.fn(),
 		close: vi.fn(),
 		saveEdges: vi.fn().mockResolvedValue(undefined),
 		loadEdges: vi.fn().mockResolvedValue([]),
-		listEdgeSessions: vi.fn().mockResolvedValue([]),
 		saveSummaries: vi.fn().mockResolvedValue(undefined),
 		loadSummaries: vi.fn().mockResolvedValue([]),
 	};

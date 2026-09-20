@@ -27,10 +27,6 @@ class TestableTransport extends BaseTransport {
 		return super.checkRateLimit(ip);
 	}
 
-	override sanitizeQueryParams(url: URL): Record<string, string> {
-		return super.sanitizeQueryParams(url);
-	}
-
 	override validateHostHeader(req: IncomingMessage): boolean {
 		return super.validateHostHeader(req);
 	}
@@ -189,31 +185,6 @@ describe('BaseTransport', () => {
 			for (let i = 0; i < 200; i++) {
 				expect(transport.checkRateLimit('1.1.1.1')).toBe(false);
 			}
-		});
-	});
-
-	describe('sanitizeQueryParams', () => {
-		beforeEach(() => {
-			transport = new TestableTransport();
-		});
-
-		it('should keep whitelisted query params', () => {
-			const url = new URL('http://localhost?session=abc&clientId=123');
-			const sanitized = transport.sanitizeQueryParams(url);
-			expect(sanitized).toEqual({ session: 'abc', clientId: '123' });
-		});
-
-		it('should strip non-whitelisted query params', () => {
-			const url = new URL('http://localhost?session=abc&evil=inject&clientId=123');
-			const sanitized = transport.sanitizeQueryParams(url);
-			expect(sanitized).toEqual({ session: 'abc', clientId: '123' });
-			expect(sanitized).not.toHaveProperty('evil');
-		});
-
-		it('should return empty object for no params', () => {
-			const url = new URL('http://localhost');
-			const sanitized = transport.sanitizeQueryParams(url);
-			expect(sanitized).toEqual({});
 		});
 	});
 
