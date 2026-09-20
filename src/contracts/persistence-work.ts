@@ -15,9 +15,8 @@ export type PersistenceWorkToken = string;
 /**
  * One accepted persistence unit.
  *
- * Every variant has an explicit session, including global work attributed to
- * `GLOBAL_SESSION_ID`. Snapshot variants use `key` and `version` for
- * compare-and-set acknowledgement of the exact accepted snapshot.
+ * Every variant has an explicit named session. Snapshot variants use `key` and
+ * `version` for compare-and-set acknowledgement of the exact accepted snapshot.
  */
 export type PersistenceWork =
 	| {
