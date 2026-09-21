@@ -208,12 +208,16 @@ export abstract class BaseRegistry<T extends { name: string }> {
 		if (!this._items.has(name)) {
 			throw this._createNotFoundError(name, 'update');
 		}
+		const isManualItem = this._manualItems.has(name);
 		const existing = this._items.get(name)!;
 		const updated = { ...existing, ...updates, name };
 		this._items.set(name, updated);
-		if (this._manualItems.has(name)) this._manualItems.set(name, updated);
-		for (const [filePath, item] of this._discoveredItemsByPath) {
-			if (item.name === name) this._discoveredItemsByPath.set(filePath, updated);
+		if (isManualItem) {
+			this._manualItems.set(name, updated);
+		} else {
+			for (const [filePath, item] of this._discoveredItemsByPath) {
+				if (item.name === name) this._discoveredItemsByPath.set(filePath, updated);
+			}
 		}
 		this.log(`Updated ${this._entityName}: ${name}`, { [`${this._entityName}Name`]: name });
 		// Invalidate cache when updating an item
