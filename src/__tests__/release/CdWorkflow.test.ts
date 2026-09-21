@@ -128,64 +128,29 @@ describe('CD workflow verified artifact policy', () => {
 });
 
 describe('CD workflow artifact verification policy', () => {
-	it('checks the digest before registry access and validates the bounded receipt', async () => {
+	it('checks the digest before the shared validator and registry access', async () => {
 		// Given
 		const publish = getPublish(await readWorkflow());
 		// When
 		const checksumIndex = publish.steps.findIndex((step) => step.name === 'Verify checksum');
 		const artifactIndex = publish.steps.findIndex((step) => step.id === 'artifact');
 		const registryIndex = publish.steps.findIndex((step) => step.id === 'check');
+		const publishIndex = publish.steps.findIndex((step) => step.id === 'publish');
 		const artifact = v.parse(stepSchema, publish.steps[artifactIndex]);
 		// Then
 		expect(checksumIndex).toBeGreaterThan(0);
 		expect(checksumIndex).toBeLessThan(artifactIndex);
 		expect(artifactIndex).toBeLessThan(registryIndex);
+		expect(registryIndex).toBeLessThan(publishIndex);
 		expect(publish.steps[checksumIndex]?.run).toContain('sha256sum --check --strict SHA256SUMS');
 		expect(artifact.env).toEqual({
 			ARTIFACT_DIR: artifactDirectory,
 			EXPECTED_SHA: '${{ github.sha }}',
 		});
-		for (const contract of [
-			'sourceSha',
-			"receipt.name !== '@iworkforces/tracelattice'",
-			"manifest.main !== 'dist/lib.js'",
-			"manifest.types !== 'dist/lib.d.ts'",
-			'manifest.exports',
-			"rootExport.import !== './dist/lib.js'",
-			"rootExport.types !== './dist/lib.d.ts'",
-			"packageExports['./package.json'] !== './package.json'",
-			'manifest.bin',
-			"bin.tracelattice !== './dist/cli.js'",
-			'manifest.files',
-			"files.includes('dist')",
-			"typeof file === 'string'",
-			"file.trim() !== ''",
-			String.raw`/^(?:[\\/]|[A-Za-z]:)/.test(file)`,
-			String.raw`/[\r\n]/.test(file)`,
-			"file.split(/[\\\\/]/).includes('..')",
-			'receipt.packedFiles',
-			"'package.json', 'dist/cli.js', 'dist/lib.js', 'dist/lib.d.ts'",
-			'tarball.basename',
-			'tarball.sha256',
-			'checks.shebang',
-			'checks.executable',
-			'versionCheck',
-			'protocolCheck',
-			'protocolCheck.initialize !== true',
-			'protocolCheck.toolsList !== true',
-			'protocolCheck.validCall !== true',
-			'protocolCheck.invalidCall !== true',
-			'shutdownCheck',
-			'tempRootsRemoved',
-			'outputPreserved',
-		]) {
-			expect(artifact.run).toContain(contract);
-		}
-		expect(artifact.run).toContain(
-			'const expectedBasename = `iworkforces-tracelattice-${version}.tgz`;'
+		expect(artifact.run).toBe(
+			'node scripts/validate-release-receipt.mjs >> "$GITHUB_OUTPUT"'
 		);
-		expect(artifact.run).toContain('GITHUB_OUTPUT');
-		expect(artifact.run).toContain('tag=v${version}');
+		expect(artifact.run).not.toContain("<<'NODE'");
 	});
 
 	it('never rebuilds or tests in publish', async () => {
@@ -194,7 +159,8 @@ describe('CD workflow artifact verification policy', () => {
 		// When
 		const commands = publish.steps.flatMap((step) => (step.run === undefined ? [] : [step.run]));
 		// Then
-		expect(commands.join('\n')).not.toMatch(/npm (install|pack)|npm run|npm test/);
+		expect(commands.join('\n')).not.toMatch(/npm (?:ci|install|pack)|npm run|npm test/);
+		expect(commands.join('\n')).not.toMatch(/\b(?:build|repack)\b/);
 		expect(commands.join('\n')).not.toContain('require("./package.json")');
 	});
 });
