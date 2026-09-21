@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PackedCliError, appendCleanupDiagnostics } from './packed-cli-cleanup.mjs';
 import { cleanupPackedPackage, inspectPackedPackage } from './packed-cli-package.mjs';
 import { verifyPackedRuntime } from './packed-cli-runtime.mjs';
 import { verifyPackedLibraryApi } from './packed-library-api.mjs';
+import { validateReleaseReceipt } from './validate-release-receipt.mjs';
 import {
 	verifyBuildCurrentContract,
 	verifyPackedCurrentContract,
@@ -37,8 +38,8 @@ async function requireDirectory(path, contract) {
 
 async function prepareOutput(path) {
 	try {
-		const metadata = await stat(path);
-		if (!metadata.isDirectory()) {
+		const metadata = await lstat(path);
+		if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
 			throw new PackedCliError('OUTPUT_DIRECTORY_INVALID', 'pack output path is not a directory');
 		}
 		if ((await readdir(path)).length !== 0) {
@@ -127,7 +128,16 @@ async function run() {
 		const runtime = await verifyPackedRuntime(artifact);
 		verificationSucceeded = true;
 		if (outputDirectory) {
-			return await preserveArtifact(outputDirectory, { artifact, runtime, sourceSha });
+			const receipt = await preserveArtifact(outputDirectory, { artifact, runtime, sourceSha });
+			try {
+				await validateReleaseReceipt({ artifactDirectory: outputDirectory, expectedSourceSha: sourceSha });
+			} catch (error) {
+				throw new PackedCliError('RELEASE_RECEIPT_INVALID', String(error), {
+					packSucceeded: true,
+					installSucceeded: true,
+				});
+			}
+			return receipt;
 		}
 		await cleanupPackedPackage(artifact);
 		return createReceipt({ artifact, runtime, preserved: false, sourceSha });
