@@ -86,6 +86,16 @@ function makeItem(name: string, value = 0): TestItem {
 	return { name, value };
 }
 
+interface Deferred<T> {
+	readonly promise: Promise<T>;
+	readonly resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+	const result = Promise.withResolvers<T>();
+	return { promise: result.promise, resolve: result.resolve };
+}
+
 // ---------- Tests ----------
 
 describe('BaseRegistry', () => {
@@ -467,6 +477,284 @@ describe('BaseRegistry', () => {
 			expect(registry.size()).toBe(1);
 		});
 
+		it('overlays a manual add made while its filesystem read is pending', async () => {
+			// Given
+			registry = createRegistry({ searchDirs: ['/test/dir'] });
+			registry.setParseFrontmatter(() => ({ name: 'shared', value: 1 }));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'shared.test.md', isFile: () => true }] as never);
+			const readStarted = deferred<void>();
+			const pendingRead = deferred<string>();
+			mockReadFile.mockImplementationOnce(() => {
+				readStarted.resolve();
+				return pendingRead.promise as never;
+			});
+			const discovery = registry.discoverAsync();
+			await readStarted.promise;
+
+			// When
+			registry.add(makeItem('shared', 7));
+			pendingRead.resolve('filesystem');
+			const count = await discovery;
+
+			// Then
+			expect(count).toBe(0);
+			expect(registry.get('shared')).toEqual(makeItem('shared', 7));
+			expect(registry.getAll()).toEqual([makeItem('shared', 7)]);
+		});
+
+		it('overlays a stable-name manual update made while a read is pending', async () => {
+			// Given
+			registry = createRegistry({ searchDirs: ['/test/dir'] });
+			registry.add(makeItem('manual', 1));
+			registry.setParseFrontmatter(() => ({ name: 'filesystem', value: 3 }));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'item.test.md', isFile: () => true }] as never);
+			const readStarted = deferred<void>();
+			const pendingRead = deferred<string>();
+			mockReadFile.mockImplementationOnce(() => {
+				readStarted.resolve();
+				return pendingRead.promise as never;
+			});
+			const discovery = registry.discoverAsync();
+			await readStarted.promise;
+
+			// When
+			registry.update('manual', { name: 'renamed', value: 2 });
+			pendingRead.resolve('filesystem');
+			await discovery;
+
+			// Then
+			expect(registry.get('manual')).toEqual(makeItem('manual', 2));
+			expect(registry.has('renamed')).toBe(false);
+			expect(registry.getNames()).toEqual(['manual', 'filesystem']);
+		});
+
+		it('reveals a retained filesystem candidate when its manual shadow is removed', async () => {
+			// Given
+			registry = createRegistry({ searchDirs: ['/test/dir'] });
+			registry.add(makeItem('shared', 7));
+			registry.setParseFrontmatter(() => ({ name: 'shared', value: 1 }));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'shared.test.md', isFile: () => true }] as never);
+			mockReadFile.mockResolvedValue('filesystem' as never);
+			expect(await registry.discoverAsync()).toBe(0);
+
+			// When
+			registry.remove('shared');
+
+			// Then
+			expect(registry.get('shared')).toEqual(makeItem('shared', 1));
+			expect(registry.getAll()).toEqual([makeItem('shared', 1)]);
+			expect(await registry.discoverAsync()).toBe(1);
+			expect(mockReaddir).toHaveBeenCalledOnce();
+		});
+
+		it('keeps a retained filesystem candidate unchanged when its manual shadow is updated', async () => {
+			// Given
+			const cache = new DiscoveryCache<TestItem>({ maxSize: 50, ttl: 300000 });
+			registry = createRegistry({ searchDirs: ['/test/dir'], cache });
+			registry.add(makeItem('shared', 7));
+			registry.setParseFrontmatter(() => ({ name: 'shared', value: 1 }));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'shared.test.md', isFile: () => true }] as never);
+			mockReadFile.mockResolvedValue('filesystem' as never);
+			expect(await registry.discoverAsync()).toBe(0);
+
+			// When
+			registry.update('shared', { value: 8 });
+			expect(registry.get('shared')).toEqual(makeItem('shared', 8));
+			expect(registry.getAll()).toEqual([makeItem('shared', 8)]);
+			registry.remove('shared');
+
+			// Then
+			const expected = [makeItem('shared', 1)];
+			expect(registry.get('shared')).toEqual(expected[0]);
+			expect(registry.getAll()).toEqual(expected);
+			expect(cache.get('all')).toEqual(expected);
+			expect(registry.getNames()).toEqual(['shared']);
+			expect(registry.has('shared')).toBe(true);
+			expect(registry.size()).toBe(1);
+			expect(await registry.discoverAsync()).toBe(1);
+			expect(mockReaddir).toHaveBeenCalledOnce();
+			cache.dispose();
+		});
+
+		it('supersedes an update to a discovered item on the next refresh', async () => {
+			// Given
+			registry = createRegistry({ searchDirs: ['/test/dir'] });
+			registry.setParseFrontmatter((content) => ({
+				name: 'filesystem',
+				value: content === 'fresh' ? 2 : 1,
+			}));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'item.test.md', isFile: () => true }] as never);
+			mockReadFile.mockResolvedValueOnce('initial' as never).mockResolvedValueOnce('fresh' as never);
+			await registry.discoverAsync();
+			registry.update('filesystem', { name: 'renamed', value: 99 });
+
+			// When
+			await registry.refreshAsync();
+
+			// Then
+			expect(registry.get('filesystem')).toEqual(makeItem('filesystem', 2));
+			expect(registry.has('renamed')).toBe(false);
+		});
+
+		it('rediscovers a removed filesystem item without retaining a tombstone', async () => {
+			// Given
+			registry = createRegistry({ searchDirs: ['/test/dir'] });
+			registry.setParseFrontmatter(() => ({ name: 'filesystem', value: 1 }));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'item.test.md', isFile: () => true }] as never);
+			mockReadFile.mockResolvedValue('content' as never);
+			await registry.discoverAsync();
+			registry.remove('filesystem');
+
+			// When
+			const count = await registry.refreshAsync();
+
+			// Then
+			expect(count).toBe(1);
+			expect(registry.get('filesystem')).toEqual(makeItem('filesystem', 1));
+		});
+
+		it('clear invalidates an active pass and its queued pre-clear refresh', async () => {
+			// Given
+			const cache = new DiscoveryCache<TestItem>({ maxSize: 50, ttl: 300000 });
+			const logger = {
+				info: vi.fn(),
+				warn: vi.fn(),
+				error: vi.fn(),
+				debug: vi.fn(),
+				setLevel: vi.fn(),
+				getLevel: vi.fn(),
+			};
+			registry = createRegistry({ searchDirs: ['/test/dir'], cache, logger });
+			registry.setParseFrontmatter(() => ({ name: 'stale', value: 1 }));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'item.test.md', isFile: () => true }] as never);
+			const readStarted = deferred<void>();
+			const pendingRead = deferred<string>();
+			mockReadFile.mockImplementation(() => {
+				readStarted.resolve();
+				return pendingRead.promise as never;
+			});
+			const discovery = registry.discoverAsync();
+			await readStarted.promise;
+			const queuedRefresh = registry.refreshAsync();
+
+			// When
+			registry.clear();
+			const cacheSet = vi.spyOn(cache, 'set');
+			pendingRead.resolve('stale');
+			await Promise.all([discovery, queuedRefresh]);
+
+			// Then
+			expect(mockReaddir).toHaveBeenCalledOnce();
+			expect(registry.getAll()).toEqual([]);
+			expect(cacheSet).toHaveBeenCalledOnce();
+			expect(cacheSet).toHaveBeenCalledWith('all', []);
+			expect(
+				logger.info.mock.calls.some(([message]) => String(message).startsWith('Discovery complete'))
+			).toBe(false);
+			cache.dispose();
+		});
+
+		it('setAll invalidates an active pass and its queued pre-replacement refresh', async () => {
+			// Given
+			registry = createRegistry({ searchDirs: ['/test/dir'] });
+			registry.setParseFrontmatter(() => ({ name: 'stale', value: 1 }));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'item.test.md', isFile: () => true }] as never);
+			const readStarted = deferred<void>();
+			const pendingRead = deferred<string>();
+			mockReadFile.mockImplementation(() => {
+				readStarted.resolve();
+				return pendingRead.promise as never;
+			});
+			const discovery = registry.discoverAsync();
+			await readStarted.promise;
+			const queuedRefresh = registry.refreshAsync();
+
+			// When
+			registry.setAll([makeItem('replacement', 9)]);
+			pendingRead.resolve('stale');
+			await Promise.all([discovery, queuedRefresh]);
+
+			// Then
+			expect(mockReaddir).toHaveBeenCalledOnce();
+			expect(registry.getAll()).toEqual([makeItem('replacement', 9)]);
+		});
+
+		it('runs one fresh pass when refresh is requested after replacement', async () => {
+			// Given
+			registry = createRegistry({ searchDirs: ['/test/dir'] });
+			registry.setParseFrontmatter((content) => ({
+				name: content === 'fresh' ? 'fresh' : 'stale',
+				value: 1,
+			}));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([{ name: 'item.test.md', isFile: () => true }] as never);
+			const readStarted = deferred<void>();
+			const pendingRead = deferred<string>();
+			mockReadFile
+				.mockImplementationOnce(() => {
+					readStarted.resolve();
+					return pendingRead.promise as never;
+				})
+				.mockResolvedValueOnce('fresh' as never);
+			const staleDiscovery = registry.discoverAsync();
+			await readStarted.promise;
+			registry.setAll([makeItem('replacement', 9)]);
+
+			// When
+			const refreshed = registry.refreshAsync();
+			pendingRead.resolve('stale');
+			const [, count] = await Promise.all([staleDiscovery, refreshed]);
+
+			// Then
+			expect(count).toBe(1);
+			expect(mockReaddir).toHaveBeenCalledTimes(2);
+			expect(registry.getAll()).toEqual([makeItem('replacement', 9), makeItem('fresh', 1)]);
+		});
+
+		it('publishes one cache-backed snapshot with a visible filesystem count', async () => {
+			// Given
+			const cache = new DiscoveryCache<TestItem>({ maxSize: 50, ttl: 300000 });
+			registry = createRegistry({ searchDirs: ['/test/dir'], cache });
+			registry.add(makeItem('shared', 7));
+			expect(registry.getAll()).toEqual([makeItem('shared', 7)]);
+			registry.setParseFrontmatter((content) => ({
+				name: content,
+				value: content === 'shared' ? 1 : 2,
+			}));
+			mockExistsSync.mockReturnValue(true);
+			mockReaddir.mockResolvedValue([
+				{ name: 'shared.test.md', isFile: () => true },
+				{ name: 'visible.test.md', isFile: () => true },
+			] as never);
+			mockReadFile.mockImplementation(
+				(path) => Promise.resolve(String(path).includes('shared') ? 'shared' : 'visible') as never
+			);
+
+			// When
+			const count = await registry.discoverAsync();
+
+			// Then
+			const expected = [makeItem('shared', 7), makeItem('visible', 2)];
+			expect(count).toBe(1);
+			expect(registry.get('shared')).toEqual(expected[0]);
+			expect(registry.get('visible')).toEqual(expected[1]);
+			expect(registry.getAll()).toEqual(expected);
+			expect(cache.get('all')).toEqual(expected);
+			expect(registry.getNames()).toEqual(['shared', 'visible']);
+			expect(registry.has('shared')).toBe(true);
+			expect(registry.has('visible')).toBe(true);
+			expect(registry.size()).toBe(2);
+			cache.dispose();
+		});
+
 		it('handles empty directories', async () => {
 			registry = createRegistry({ searchDirs: ['/empty/dir'] });
 
@@ -764,7 +1052,7 @@ describe('BaseRegistry', () => {
 			mockExistsSync.mockReset();
 		});
 
-		it('discoverAsync returns 0 when discovered but cache returns null', async () => {
+		it('discoverAsync retains the visible filesystem count when the cache is invalidated', async () => {
 			const cache = new DiscoveryCache<TestItem>({ maxSize: 50, ttl: 300000 });
 			registry = createRegistry({ searchDirs: ['/test/dir'], cache });
 			registry.setParseFrontmatter(() => ({ name: 'item', value: 1 }));
@@ -779,8 +1067,7 @@ describe('BaseRegistry', () => {
 			cache.invalidate('all');
 
 			const count = await registry.discoverAsync();
-			// cached?.length ?? 0 → null?.length ?? 0 → 0
-			expect(count).toBe(0);
+			expect(count).toBe(1);
 			cache.dispose();
 		});
 

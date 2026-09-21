@@ -23,6 +23,7 @@ type VerifierOptions = {
 };
 
 const verifier = fileURLToPath(new URL('../../../scripts/verify-packed-cli.mjs', import.meta.url));
+const verifierModuleUrl = new URL('../../../scripts/verify-packed-cli.mjs', import.meta.url).href;
 const cleanupModuleUrl = new URL('../../../scripts/packed-cli-cleanup.mjs', import.meta.url).href;
 const temporaryRoots: string[] = [];
 const cliBody = `#!/usr/bin/env bun
@@ -454,6 +455,59 @@ export async function rm(path, options) {
 	return loader;
 }
 
+async function createValidatorFailureLoader(cleanupFailure = false): Promise<string> {
+	const loaderRoot = await mkdtemp(join(tmpdir(), 'tracelattice-validator-loader-'));
+	temporaryRoots.push(loaderRoot);
+	const loader = join(loaderRoot, 'validator-failure-loader.mjs');
+	await writeFile(
+		loader,
+		`const verifierModuleUrl = ${JSON.stringify(verifierModuleUrl)};
+export async function resolve(specifier, context, nextResolve) {
+  if (specifier === './validate-release-receipt.mjs' && context.parentURL === verifierModuleUrl) {
+    return { url: 'validator-failure:module', shortCircuit: true };
+  }
+  if (${cleanupFailure} && specifier === 'node:fs/promises' && context.parentURL === verifierModuleUrl) {
+    return { url: 'validator-failure:fs-promises', shortCircuit: true };
+  }
+  return nextResolve(specifier, context);
+}
+export async function load(url, context, nextLoad) {
+  if (url === 'validator-failure:module') {
+    return {
+      format: 'module',
+      shortCircuit: true,
+      source: \`import { readdir } from 'node:fs/promises';
+export async function validateReleaseReceipt({ artifactDirectory }) {
+  const entries = (await readdir(artifactDirectory)).sort();
+  if (entries.join(',') !== 'SHA256SUMS,iworkforces-tracelattice-1.2.3.tgz,verification.json') {
+    throw new Error('validator ran before preservation completed');
+  }
+  throw new Error('injected release receipt rejection');
+}\`,
+    };
+  }
+  if (url === 'validator-failure:fs-promises') {
+    return {
+      format: 'module',
+      shortCircuit: true,
+      source: \`import * as fs from 'node:fs/promises';
+import { basename } from 'node:path';
+export const { copyFile, lstat, mkdir, readdir, stat, writeFile } = fs;
+export async function rm(path, options) {
+  await fs.rm(path, options);
+  if (typeof path === 'string' && basename(path).startsWith('tracelattice-release-output-')) {
+    throw new Error('injected preserved output cleanup rejection');
+  }
+}\`,
+    };
+  }
+  return nextLoad(url, context);
+}
+`
+	);
+	return loader;
+}
+
 afterEach(async () => {
 	await Promise.all(
 		temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
@@ -479,6 +533,111 @@ describe('packed CLI artifact contract', () => {
 			validCall: true,
 			invalidCall: true,
 		});
+	}, 120_000);
+
+	it('validates a preserved artifact with null source SHA without changing stdout', async () => {
+		// Given
+		const packageDirectory = await createFixture({
+			label: 'preserved artifact',
+			code: '',
+			mutate: async () => undefined,
+		});
+		const outputDirectory = await mkdtemp(join(tmpdir(), 'tracelattice-release-output-'));
+		temporaryRoots.push(outputDirectory);
+		const environment = await createBunShimEnvironment();
+		delete environment.TRACELATTICE_SOURCE_SHA;
+		environment.TRACELATTICE_PACK_OUTPUT_DIR = outputDirectory;
+		// When
+		const result = await runVerifier(packageDirectory, { env: environment });
+		// Then
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe('');
+		expect(result.stdout.endsWith('\n')).toBe(true);
+		const receipt: unknown = JSON.parse(result.stdout);
+		expect(result.stdout).toBe(`${JSON.stringify(receipt)}\n`);
+		expect(receipt).toHaveProperty('sourceSha', null);
+		expect(receipt).toHaveProperty('cleanup', {
+			tempRootsRemoved: true,
+			outputPreserved: true,
+		});
+		expect((await readdir(outputDirectory)).sort()).toEqual([
+			'SHA256SUMS',
+			'iworkforces-tracelattice-1.2.3.tgz',
+			'verification.json',
+		]);
+	}, 120_000);
+
+	it('rejects a symlinked output directory before preserving artifacts', async () => {
+		// Given
+		const packageDirectory = await createFixture({
+			label: 'symlinked release output',
+			code: '',
+			mutate: async () => undefined,
+		});
+		const outputTarget = await mkdtemp(join(tmpdir(), 'tracelattice-release-output-target-'));
+		const outputLink = `${outputTarget}-link`;
+		temporaryRoots.push(outputTarget, outputLink);
+		await symlink(outputTarget, outputLink);
+		const environment = await createBunShimEnvironment();
+		environment.TRACELATTICE_PACK_OUTPUT_DIR = outputLink;
+		// When
+		const result = await runVerifier(packageDirectory, { env: environment });
+		// Then
+		expect(result.code).not.toBe(0);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('OUTPUT_DIRECTORY_INVALID');
+		expect(result.stderr).toContain('PACK_SUCCEEDED=false');
+		expect(result.stderr).toContain('INSTALL_SUCCEEDED=false');
+		expect(await readdir(outputTarget)).toEqual([]);
+	}, 120_000);
+
+	it('removes preserved output after post-preservation validation fails', async () => {
+		// Given
+		const packageDirectory = await createFixture({
+			label: 'invalid preserved artifact',
+			code: '',
+			mutate: async () => undefined,
+		});
+		const outputDirectory = await mkdtemp(join(tmpdir(), 'tracelattice-release-output-'));
+		temporaryRoots.push(outputDirectory);
+		const environment = await createBunShimEnvironment();
+		environment.TRACELATTICE_PACK_OUTPUT_DIR = outputDirectory;
+		const loader = await createValidatorFailureLoader();
+		// When
+		const result = await runVerifier(packageDirectory, { loader, env: environment });
+		// Then
+		expect(result.code).not.toBe(0);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('RELEASE_RECEIPT_INVALID');
+		expect(result.stderr).toContain('injected release receipt rejection');
+		expect(result.stderr).toContain('PACK_SUCCEEDED=true');
+		expect(result.stderr).toContain('INSTALL_SUCCEEDED=true');
+		await expect(readdir(outputDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
+	}, 120_000);
+
+	it('keeps validation primary when preserved-output cleanup also fails', async () => {
+		// Given
+		const packageDirectory = await createFixture({
+			label: 'invalid preserved artifact with cleanup failure',
+			code: '',
+			mutate: async () => undefined,
+		});
+		const outputDirectory = await mkdtemp(join(tmpdir(), 'tracelattice-release-output-'));
+		temporaryRoots.push(outputDirectory);
+		const environment = await createBunShimEnvironment();
+		environment.TRACELATTICE_PACK_OUTPUT_DIR = outputDirectory;
+		const loader = await createValidatorFailureLoader(true);
+		// When
+		const result = await runVerifier(packageDirectory, { loader, env: environment });
+		// Then
+		expect(result.code).not.toBe(0);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('RELEASE_RECEIPT_INVALID');
+		expect(result.stderr).toContain('injected release receipt rejection');
+		expect(result.stderr).toContain('cleanup failures:');
+		expect(result.stderr).toContain('injected preserved output cleanup rejection');
+		expect(result.stderr).toContain('PACK_SUCCEEDED=true');
+		expect(result.stderr).toContain('INSTALL_SUCCEEDED=true');
 	}, 120_000);
 
 	it.each(cases)(
