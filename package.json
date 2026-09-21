@@ -1,6 +1,6 @@
 {
 	"name": "@iworkforces/tracelattice",
-	"version": "2.1.1",
+	"version": "2.1.2",
 	"description": "Semantic Sequential Thinking Layer For AI Agents.",
 	"type": "module",
 	"main": "dist/lib.js",
