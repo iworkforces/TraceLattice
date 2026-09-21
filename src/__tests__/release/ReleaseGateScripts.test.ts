@@ -46,6 +46,10 @@ async function readPackedVerifier() {
 	return readFile(resolve(projectRoot, 'scripts/verify-packed-cli.mjs'), 'utf8');
 }
 
+async function readReceiptValidator() {
+	return readFile(resolve(projectRoot, 'scripts/validate-release-receipt.mjs'), 'utf8');
+}
+
 async function readCurrentContractVerifier() {
 	return readFile(resolve(projectRoot, 'scripts/current-contract.mjs'), 'utf8');
 }
@@ -135,6 +139,35 @@ describe('release gate package scripts', () => {
 		expect(inspection).toBeGreaterThan(-1);
 		expect(library).toBeGreaterThan(inspection);
 		expect(runtime).toBeGreaterThan(library);
+	});
+
+	it('validates the preserved artifact before returning the local receipt', async () => {
+		// Given
+		const verifierSource = await readPackedVerifier();
+		// When
+		const preservation = verifierSource.indexOf('await preserveArtifact(outputDirectory');
+		const validation = verifierSource.indexOf('await validateReleaseReceipt({');
+		const returnedReceipt = verifierSource.indexOf('return receipt', validation);
+		// Then
+		expect(verifierSource).toContain(
+			"import { validateReleaseReceipt } from './validate-release-receipt.mjs'"
+		);
+		expect(preservation).toBeGreaterThan(-1);
+		expect(validation).toBeGreaterThan(preservation);
+		expect(returnedReceipt).toBeGreaterThan(validation);
+	});
+
+	it('keeps the shared receipt validator directly executable', async () => {
+		// Given
+		const validatorSource = await readReceiptValidator();
+		// When
+		const directEntryGuard = validatorSource.lastIndexOf(
+			'resolve(process.argv[1]) === fileURLToPath(import.meta.url)'
+		);
+		// Then
+		expect(validatorSource).toContain('export async function validateReleaseReceipt');
+		expect(directEntryGuard).toBeGreaterThan(-1);
+		expect(validatorSource.indexOf('await main()', directEntryGuard)).toBeGreaterThan(-1);
 	});
 
 	it('checks the current contract in source, build output, and the installed package', async () => {
