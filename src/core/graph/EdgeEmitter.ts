@@ -13,6 +13,7 @@ import type { Logger } from '../../logger/StructuredLogger.js';
 import { NullLogger } from '../../logger/NullLogger.js';
 import type { ThoughtData } from '../thought.js';
 import type { ResolvedThoughtReferences, ThoughtAdmissionContext } from '../IHistoryManager.js';
+import { resolvedVerificationTarget } from '../evaluator/VerificationLinks.js';
 import type { Edge, EdgeKind } from './Edge.js';
 import {
 	generateEdgeId,
@@ -133,7 +134,7 @@ export class EdgeEmitter {
 
 		return this._addEdgeIfValid(
 			thought.id,
-			references.verificationTargetThoughtId,
+			resolvedVerificationTarget(thought, references),
 			'verifies',
 			sessionId
 		);

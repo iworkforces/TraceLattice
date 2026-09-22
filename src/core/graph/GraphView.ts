@@ -13,7 +13,7 @@
  * @module core/graph/GraphView
  */
 
-import type { IEdgeStore } from '../../contracts/interfaces.js';
+import type { IGraphViewStore } from '../../contracts/interfaces.js';
 import type { SessionId, ThoughtId } from '../../contracts/ids.js';
 import { CycleDetectedError } from '../../errors.js';
 import type { Edge } from './Edge.js';
@@ -30,7 +30,7 @@ import type { Edge } from './Edge.js';
  * ```
  */
 export class GraphView {
-	private readonly _store: IEdgeStore;
+	private readonly _store: IGraphViewStore;
 
 	/**
 	 * Create a new GraphView backed by the given edge store.
@@ -42,7 +42,7 @@ export class GraphView {
 	 * const view = new GraphView(edgeStore);
 	 * ```
 	 */
-	constructor(store: IEdgeStore) {
+	constructor(store: IGraphViewStore) {
 		this._store = store;
 	}
 
@@ -63,10 +63,11 @@ export class GraphView {
 	 */
 	chronological(sessionId: SessionId): readonly ThoughtId[] {
 		const edges = this._store.edgesForSession(sessionId);
-		if (edges.length === 0) {
-			return [];
-		}
-		const { nodes, hasIncoming } = this._collectNodes(edges);
+		const { nodes, hasIncoming } = this._collectNodes(
+			edges,
+			this._store.nodesForSession?.(sessionId)
+		);
+		if (nodes.size === 0) return [];
 		const roots = this._findRoots(nodes, hasIncoming, edges);
 		return this._bfsFromRoots(sessionId, roots) as readonly ThoughtId[];
 	}
@@ -74,9 +75,9 @@ export class GraphView {
 	/**
 	 * Return the shortest directed distance from any retained root to a thought.
 	 *
-	 * Nodes are derived from the current edge store, so isolated thoughts are
-	 * invisible and pruning can expose a retained node as a new root. Every edge
-	 * kind participates in the traversal.
+	 * Nodes are derived from edges unless an immutable snapshot supplies original
+	 * endpoint nodes. Thoughts never referenced by an audit edge remain invisible.
+	 * Every edge kind participates in the traversal.
 	 *
 	 * @param sessionId - Session to query
 	 * @param thoughtId - Thought whose root distance to resolve
@@ -84,9 +85,7 @@ export class GraphView {
 	 */
 	depthFromRoots(sessionId: SessionId, thoughtId: ThoughtId): number | undefined {
 		const edges = this._store.edgesForSession(sessionId);
-		if (edges.length === 0) return undefined;
-
-		const nodes = new Set<ThoughtId>();
+		const nodes = new Set<ThoughtId>(this._store.nodesForSession?.(sessionId) ?? []);
 		const hasIncoming = new Set<ThoughtId>();
 		const outgoing = new Map<ThoughtId, ThoughtId[]>();
 		for (const edge of edges) {
@@ -170,10 +169,8 @@ export class GraphView {
 	 */
 	topological(sessionId: SessionId): readonly ThoughtId[] {
 		const edges = this._store.edgesForSession(sessionId);
-		if (edges.length === 0) {
-			return [];
-		}
-		const inDegree = this._buildInDegree(edges);
+		const inDegree = this._buildInDegree(edges, this._store.nodesForSession?.(sessionId));
+		if (inDegree.size === 0) return [];
 		const queue: string[] = [];
 		for (const [node, deg] of inDegree) {
 			if (deg === 0) queue.push(node);
@@ -247,10 +244,8 @@ export class GraphView {
 	 */
 	leaves(sessionId: SessionId): readonly ThoughtId[] {
 		const edges = this._store.edgesForSession(sessionId);
-		if (edges.length === 0) {
-			return [];
-		}
-		const { nodes } = this._collectNodes(edges);
+		const { nodes } = this._collectNodes(edges, this._store.nodesForSession?.(sessionId));
+		if (nodes.size === 0) return [];
 		const result: string[] = [];
 		for (const node of nodes) {
 			if (this._store.outgoing(sessionId, node as ThoughtId).length === 0) {
@@ -264,11 +259,14 @@ export class GraphView {
 	 * Collect every node id referenced by the edges and a set of nodes
 	 * that have at least one incoming edge.
 	 */
-	private _collectNodes(edges: readonly Edge[]): {
+	private _collectNodes(
+		edges: readonly Edge[],
+		explicitNodes: readonly ThoughtId[] = []
+	): {
 		nodes: Set<string>;
 		hasIncoming: Set<string>;
 	} {
-		const nodes = new Set<string>();
+		const nodes = new Set<string>(explicitNodes);
 		const hasIncoming = new Set<string>();
 		for (const edge of edges) {
 			nodes.add(edge.from);
@@ -330,8 +328,12 @@ export class GraphView {
 	/**
 	 * Build an in-degree map covering every node referenced by the edges.
 	 */
-	private _buildInDegree(edges: readonly Edge[]): Map<string, number> {
+	private _buildInDegree(
+		edges: readonly Edge[],
+		explicitNodes: readonly ThoughtId[] = []
+	): Map<string, number> {
 		const inDegree = new Map<string, number>();
+		for (const node of explicitNodes) inDegree.set(node, 0);
 		for (const edge of edges) {
 			if (!inDegree.has(edge.from)) inDegree.set(edge.from, 0);
 			inDegree.set(edge.to, (inDegree.get(edge.to) ?? 0) + 1);
