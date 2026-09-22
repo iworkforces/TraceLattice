@@ -43,7 +43,9 @@ Reasoning engine: ingest → graph mutation → quality signals → strategy. `H
 ## NOTES
 
 - Branch thoughts are appended to **both** `thought_history` and `session.branches[id]`.
+- Thought IDs admit once per named session while live, queued, or durable. Admission rejects duplicates before branch registration, history, graph, outcome, suspension, or persistence side effects; cross-session reuse is allowed and ownership releases only when every owned copy is discarded.
 - Backtrack is append-only (`retracted: true`). Evaluator filters retracted.
+- Verification resolves its canonical retained stable target before mutation. An explicit target is authoritative; duplicate, missing, ambiguous, and id-less canonical targets fail closed. A legacy label can resolve only one identity-bearing target. This verification outcome-key check is distinct from thought-ID duplicate admission.
 - Public clearing is awaitable: `resetSession(sessionId)` or `resetAll()` coordinates admission, locks, persistence barriers, and auxiliary state.
 - Thought processing and scoped reads require a named session; omitted sessions and retired `__global__` fail validation. Successful processor responses always include `session_id`.
 - `resetAll()` and shutdown deliberately coordinate every thought session. MCP transport sessions, request owners, and `ConnectionPool` slots do not provide thought-session defaults.

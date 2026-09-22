@@ -43,10 +43,11 @@ Detector still emits all six (`PatternName` in `contracts/reasoning-types.ts`).
 
 ## CALIBRATOR
 
-Actual math: **shrinkage toward per-type empirical mean** (`priorWeight = 1/(1+n/10)`; empty type mean 0.5). “Beta(2,2) prior updates” is **overstated** — no α/β counters.
+Actual math: **raw-signal prior blended with the per-type empirical mean** (`priorWeight = 10/(10+n)`; empty type mean 0.5 receives zero empirical weight). There are no Beta α/β counters, and cold start returns raw confidence exactly.
 
-- Temperature applied only if outcomes **≥ 10**. Else identity on the shrunk value.
-- Mutable **per-session T map** (`refit` writes it). Grid in `calibration-math.ts`: `{0.5, 0.75, 1.0, 1.25, 1.5, 2.0}`.
+- Temperature applied only if outcomes **≥ 10**. Else identity on the blended value.
+- `refit` scores T against per-type leave-one-out blends; inference uses all observed type outcomes before T.
+- Mutable **per-session T map** (`refit` writes it). Grid in `calibration-math.ts`: `{0.5, 0.75, 1.0, 1.25, 1.5, 2.0}`. Exact ties prefer T=1, then grid order.
 - Brier + 10-bin ECE. `perTypeBrier` keyed by all 11 types.
 
 Outcomes come from `OutcomeRecorder` (verification path) — not this dir.
