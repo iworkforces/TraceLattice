@@ -1,6 +1,6 @@
 # LOGGER MODULE
 
-**Updated:** 2026-09-17
+**Updated:** 2026-09-22
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
@@ -21,10 +21,9 @@ logger/
 debug / info / warn / error(message, meta?)
 setLevel(level)
 getLevel()
-createChild(context: string)   // NOT child(meta)
 ```
 
-`createChild` takes a **string** context (`'Database'` → `[App:Database]`). There is no `child({ ...meta })`.
+`createChild(context: string)` is on `StructuredLogger` and `NullLogger`, **not** on `Logger`. Do not widen `Logger` so watcher no-ops can omit it. There is no `child({ ...meta })`.
 
 Depend on the `Logger` interface, not `StructuredLogger`. DI key is `Logger`.
 
@@ -32,8 +31,8 @@ Depend on the `Logger` interface, not `StructuredLogger`. DI key is `Logger`.
 
 ## MODES
 
-- JSON default: one line `{ level, message, timestamp, requestId?, context, ...meta }` on stderr
-- Pretty (Chalk): `TRACELATTICE_PRETTY_LOG=true` or `pretty: true`
+- Pretty is the default (`pretty ?? true`): `[timestamp] [LEVEL] [context] message {meta}` on stderr. Not Chalk.
+- JSON when `pretty: false`. `meta` stays nested. `TRACELATTICE_PRETTY_LOG=false` is the only env value that turns pretty off.
 
 ## NOTES
 
