@@ -41,6 +41,7 @@ describe('mandatory session-scoped persistence contract', () => {
 		try {
 			for (const backend of [new MemoryPersistence(), file]) {
 				expect(typeof backend.saveThoughtForSession).toBe('function');
+				expect(typeof backend.saveBacktrackForSession).toBe('function');
 				expect(typeof backend.clearAll).toBe('function');
 				expect('saveThought' in backend).toBe(false);
 				expect('loadHistory' in backend).toBe(false);
@@ -151,6 +152,7 @@ describe('File v2 compatibility boundary', () => {
 			continuation_token: 'continuation-full',
 			decomposition_children: ['child-a', 'child-b'],
 			backtrack_target: 2,
+			retracted: true,
 			register_branch_id: 'branch-future',
 		} as const;
 
