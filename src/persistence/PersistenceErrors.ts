@@ -11,6 +11,7 @@ export type PersistenceScope = {
 export type PersistenceWriteOperation =
 	| 'saveThought'
 	| 'saveThoughtForSession'
+	| 'saveBacktrackForSession'
 	| 'saveBranch'
 	| 'saveBranchForSession'
 	| 'saveEdges'
