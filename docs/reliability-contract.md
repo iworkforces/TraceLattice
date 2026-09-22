@@ -9,6 +9,7 @@ Each thought call carries a required, authoritative, explicitly named `session_i
 The persistence surface is:
 
 - `saveThoughtForSession` and `loadHistoryForSession`
+- `saveBacktrackForSession(sessionId, thought, targetThoughtId)`
 - `saveBranchForSession`, `deleteBranchForSession`, `loadBranchForSession`, and `listBranchesForSession`
 - `saveEdges` and `loadEdges`
 - `saveSummaries` and `loadSummaries`
@@ -16,6 +17,8 @@ The persistence surface is:
 - `healthy` and `close`
 
 `clearSession` removes thoughts, branches, edges, and summaries for exactly one session. `clearAll` removes all four collections. Edges and summaries are replacement snapshots per session.
+
+`saveBacktrackForSession` is required for every `PersistenceBackend`, including custom backends. It must atomically mark every retained stable-ID copy of `targetThoughtId` as retracted, append the supplied backtrack thought, and apply configured retention. The correction, append, and retention either all publish or none do. The core does not probe for this capability or fall back to ordinary thought writes; the ordinary persistence methods otherwise keep their existing meanings.
 
 `listSessions`, `clearAll`, `resetAll()`, and complete shutdown are explicit all-session administration. They do not define a default thought session and are never selected by omitting `session_id`.
 
@@ -43,7 +46,7 @@ Serialization is deterministic: session records use code-point order; branches a
 
 SQLite persistence accepts only the exact v2 tables, indexes, constraints, and one `schema_version` row containing `(singleton, version) = (1, 2)`. A new empty database is initialized transactionally. A non-empty database with missing, extra, or structurally different schema objects is rejected.
 
-Thought append and retention, branch replacement, per-session clearing, global clearing, edge replacement, and summary replacement run in transactions. Reads that combine or validate multiple rows use read transactions. Stored JSON is decoded and validated before it is returned.
+Thought append and retention, atomic backtrack correction and append, branch replacement, per-session clearing, global clearing, edge replacement, and summary replacement run in transactions. Reads that combine or validate multiple rows use read transactions. Stored JSON is decoded and validated before it is returned.
 
 WAL is enabled unless `enableWAL` is `false`. Foreign keys, a five-second busy timeout, and normal synchronization are configured at startup. The optional `better-sqlite3` dependency must be available when this backend is selected.
 

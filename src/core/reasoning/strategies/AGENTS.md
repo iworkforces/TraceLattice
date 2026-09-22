@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 
-Pure next-action policy over a `StrategyContext` snapshot. No I/O, no graph mutation.
+Pure next-action policy over an immutable active `StrategyContext` projection. No I/O or graph mutation. The projection deep-copies active retained evidence, preserves main-history order, includes branch-only lookup, and induces a graph only between active endpoints. It never contracts paths or changes the audit store.
 
 `reasoningStrategy` (`sequential` \| `tot`) picks the impl **at wire time** (`createReasoningStrategy`).
 
@@ -35,15 +35,15 @@ Terminates when `next_thought_needed === false`. Otherwise **continue**. Not “
 
 `decide` order:
 
-- No `ctx.graph` → **`continue`** (no snapshot, no search).
+- No `ctx.evidence.graph` → **`continue`** (no active graph, no search).
 - `graph.depthFromRoots(current) >= depthCap` (default **8**) → terminate (`reason: 'depth cap'`). Isolated thoughts are invisible → no cap.
 - Frontier = **`graph.leaves()`**, **not** `breadthFirstFrontier` (`totScoring` helper is unused on this path).
 - Score ≥ `terminationConfidence` (default 0.85) → terminate.
-- `detectPlateau` on **recent history scores** (not frontier) → terminate.
+- `detectPlateau` on **recent active main-history scores** (not frontier) → terminate.
 - Current thought outside top-`beamWidth` leaves → `branch`.
 - Else continue.
 
-Config lives in a **module `WeakMap`**, not on `this`. Defaults: `beamWidth=3`, `depthCap=8`, `terminationConfidence=0.85`, plateau 3/0.02.
+Config lives in a **module `WeakMap`**, not on `this`. Defaults: `beamWidth=3`, `depthCap=8`, `terminationConfidence=0.85`, plateau 3/0.02. `terminationConfidence` is finite and nonnegative; values above 1 are valid.
 
 ## SCORING
 

@@ -23,6 +23,7 @@
 
 import type { PatternSignal } from '../reasoning.js';
 import type { ThoughtData } from '../thought.js';
+import type { VerificationLinks } from './VerificationLinks.js';
 
 /**
  * Stateless service that detects reasoning patterns from thought history.
@@ -49,17 +50,18 @@ export class PatternDetector {
 	 */
 	public computePatternSignals(
 		history: ThoughtData[],
-		branches: Record<string, ThoughtData[]>
+		branches: Record<string, ThoughtData[]>,
+		links: VerificationLinks
 	): PatternSignal[] {
 		if (history.length === 0) return [];
 
 		const signals: PatternSignal[] = [];
 		signals.push(...this._detectConsecutiveWithoutVerification(history));
-		signals.push(...this._detectUnverifiedHypothesis(history));
+		signals.push(...this._detectUnverifiedHypothesis(history, links));
 		signals.push(...this._detectNoAlternativesExplored(history, branches));
 		signals.push(...this._detectMonotonicType(history));
 		signals.push(...this._detectConfidenceDrift(history));
-		signals.push(...this._detectHealthyVerification(history));
+		signals.push(...this._detectHealthyVerification(history, links));
 		return signals;
 	}
 
@@ -89,16 +91,26 @@ export class PatternDetector {
 	}
 
 	/** Detect hypothesis thoughts not verified within 3 subsequent thoughts. */
-	private _detectUnverifiedHypothesis(history: ThoughtData[]): PatternSignal[] {
+	private _detectUnverifiedHypothesis(
+		history: ThoughtData[],
+		links: VerificationLinks
+	): PatternSignal[] {
 		const signals: PatternSignal[] = [];
 		for (let i = 0; i < history.length; i++) {
-			if (history[i]!.thought_type !== 'hypothesis') continue;
+			const hypothesis = history[i]!;
+			if (
+				hypothesis.thought_type !== 'hypothesis' ||
+				!hypothesis.id ||
+				!links.hypothesisIds.has(hypothesis.id)
+			) {
+				continue;
+			}
 			const remaining = history.length - i - 1;
 			if (remaining < 3) continue;
 			const lookahead = history.slice(i + 1, i + 4);
-			const hasVerification = lookahead.some((t) => t.thought_type === 'verification');
+			const hasVerification = lookahead.some((verifier) => links.verifies(verifier, hypothesis));
 			if (!hasVerification) {
-				const n = history[i]!.thought_number ?? i + 1;
+				const n = hypothesis.thought_number ?? i + 1;
 				signals.push({
 					pattern: 'unverified_hypothesis',
 					severity: 'warning',
@@ -237,20 +249,24 @@ export class PatternDetector {
 	}
 
 	/** Detect hypothesis verified within 3 subsequent thoughts — positive signal. */
-	private _detectHealthyVerification(history: ThoughtData[]): PatternSignal[] {
+	private _detectHealthyVerification(
+		history: ThoughtData[],
+		links: VerificationLinks
+	): PatternSignal[] {
 		const signals: PatternSignal[] = [];
 		for (let i = 0; i < history.length; i++) {
-			if (history[i]!.thought_type !== 'hypothesis') continue;
-			const hypId = history[i]!.hypothesis_id;
+			const hypothesis = history[i]!;
+			if (
+				hypothesis.thought_type !== 'hypothesis' ||
+				!hypothesis.id ||
+				!links.hypothesisIds.has(hypothesis.id)
+			) {
+				continue;
+			}
 			const lookahead = history.slice(i + 1, i + 4);
-			const verifier = lookahead.find(
-				(t) =>
-					t.thought_type === 'verification' &&
-					(t.hypothesis_id === hypId ||
-						t.verification_target === (history[i]!.thought_number ?? i + 1))
-			);
+			const verifier = lookahead.find((candidate) => links.verifies(candidate, hypothesis));
 			if (verifier) {
-				const n = history[i]!.thought_number ?? i + 1;
+				const n = hypothesis.thought_number ?? i + 1;
 				const m = verifier.thought_number ?? history.indexOf(verifier) + 1;
 				signals.push({
 					pattern: 'healthy_verification',

@@ -14,19 +14,27 @@ import type { ThoughtData } from '../core/thought.js';
 import type { ReasoningStats } from '../core/reasoning.js';
 import type { GraphView } from '../core/graph/GraphView.js';
 
+export interface ActiveEvidenceProjection {
+	/** Active, immutable deep-copied main-history evidence in retained main order. */
+	readonly mainHistory: readonly ThoughtData[];
+	/** Active, immutable deep-copied thoughts, including branch-only retained evidence. */
+	readonly activeThoughts: readonly ThoughtData[];
+	/** Graph induced only by active endpoints, without path contraction or audit-store mutation. */
+	readonly graph: GraphView | undefined;
+}
 
 /**
  * Read-only snapshot of session state passed to a reasoning strategy.
  *
- * All fields are immutable references. Strategies MUST NOT mutate the
- * history, graph, or stats — doing so will corrupt downstream consumers.
+ * Evidence is a first-class active projection. Its thoughts and graph are immutable deep copies;
+ * `mainHistory` preserves retained main order, `activeThoughts` permits branch-only lookup, and
+ * its graph includes only active endpoints. It never contracts paths or mutates the audit store.
  *
  * @example
  * ```ts
  * const ctx: StrategyContext = {
  *   sessionId: 'sess_42',
- *   history: hm.getHistory('sess_42'),
- *   graph: new GraphView(edgeStore, 'sess_42'),
+ *   evidence: buildActiveEvidenceProjection(...),
  *   stats: evaluator.computeStats(history),
  *   currentThought: latestThought,
  * };
@@ -36,10 +44,7 @@ import type { GraphView } from '../core/graph/GraphView.js';
 export interface StrategyContext {
 	/** Session identifier this context belongs to. */
 	readonly sessionId: SessionId;
-	/** Chronological list of thoughts recorded in this session. */
-	readonly history: readonly ThoughtData[];
-	/** Read-only graph view for traversal (ancestors, descendants, etc.). Undefined when DAG edges are disabled. */
-	readonly graph: GraphView | undefined;
+	readonly evidence: ActiveEvidenceProjection;
 	/** Aggregated reasoning analytics for the session. */
 	readonly stats: ReasoningStats;
 	/** The thought that just triggered the strategy decision. */
@@ -82,7 +87,7 @@ export type StrategyDecision =
  *   }
  *   shouldBranch(_ctx: StrategyContext): boolean { return false; }
  *   shouldTerminate(ctx: StrategyContext): boolean {
- *     return ctx.history.length >= 50;
+ *     return ctx.evidence.mainHistory.length >= 50;
  *   }
  * }
  * ```

@@ -8,6 +8,7 @@ import {
 	asThoughtId,
 	type BranchId,
 	type SessionId,
+	type ThoughtId,
 } from '../../contracts/ids.js';
 import { runWithContext } from '../../context/RequestContext.js';
 import { HistoryManager } from '../../core/HistoryManager.js';
@@ -25,6 +26,7 @@ import type { ThoughtData } from '../../core/thought.js';
 import { ERROR_CODES } from '../../errors.js';
 import type { Summary } from '../../core/compression/Summary.js';
 import type { Edge } from '../../core/graph/Edge.js';
+import { stageBacktrackPersistence } from '../../persistence/BacktrackPersistence.js';
 
 const SESSION_A = asSessionId('session-a');
 const SESSION_B = asSessionId('session-b');
@@ -59,6 +61,27 @@ class ControlledPersistence implements PersistenceBackend {
 		history.push(structuredClone(thought));
 		this.histories.set(sessionId, history);
 		this.events.push(`save:end:${sessionId}:${thought.thought}`);
+	}
+
+	async saveBacktrackForSession(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): Promise<void> {
+		const branches = this.branches.get(sessionId) ?? new Map();
+		const staged = stageBacktrackPersistence(
+			sessionId,
+			this.histories.get(sessionId) ?? [],
+			[...branches].map(([branchId, thoughts]) => ({ branchId, thoughts })),
+			thought,
+			targetThoughtId,
+			0
+		);
+		this.histories.set(sessionId, [...staged.history]);
+		this.branches.set(
+			sessionId,
+			new Map(staged.branches.map((branch) => [branch.branchId, [...branch.thoughts]]))
+		);
 	}
 
 	async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {

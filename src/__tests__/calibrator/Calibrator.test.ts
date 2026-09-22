@@ -59,6 +59,237 @@ function makeOutcome(
 	};
 }
 
+const TEMPERATURE_GRID_VALUES = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] as const;
+const TASK_6_EPSILON = 1e-9;
+
+interface NumericOutcome {
+	readonly predicted: number;
+	readonly actual: 0 | 1;
+}
+
+function applyTemperatureForOracle(probability: number, temperature: number): number {
+	if (temperature === 1) return probability;
+	const clamped = Math.min(1 - TASK_6_EPSILON, Math.max(TASK_6_EPSILON, probability));
+	const scaledLogit = Math.log(clamped / (1 - clamped)) / temperature;
+	return 1 / (1 + Math.exp(-scaledLogit));
+}
+
+function nllForOracle(outcomes: readonly NumericOutcome[], temperature: number): number {
+	let total = 0;
+	for (const outcome of outcomes) {
+		const transformed = applyTemperatureForOracle(outcome.predicted, temperature);
+		const probability = Math.min(1 - TASK_6_EPSILON, Math.max(TASK_6_EPSILON, transformed));
+		total += -(
+			outcome.actual * Math.log(probability) +
+			(1 - outcome.actual) * Math.log(1 - probability)
+		);
+	}
+	return total / outcomes.length;
+}
+
+function selectOracleTemperature(outcomes: readonly NumericOutcome[]): number {
+	let bestTemperature = 1;
+	let bestLoss = nllForOracle(outcomes, bestTemperature);
+	for (const temperature of TEMPERATURE_GRID_VALUES) {
+		const loss = nllForOracle(outcomes, temperature);
+		if (loss < bestLoss) {
+			bestLoss = loss;
+			bestTemperature = temperature;
+		}
+	}
+	return bestTemperature;
+}
+
+function recordTask6OracleTraining(recorder: MockOutcomeRecorder, sessionId: SessionId): void {
+	for (let index = 0; index < 5; index++) {
+		recorder.recordVerification(
+			makeOutcome(0.9, 1, 'hypothesis', sessionId, `oracle-success-${index}`)
+		);
+		recorder.recordVerification(
+			makeOutcome(0.2, 0, 'hypothesis', sessionId, `oracle-failure-${index}`)
+		);
+	}
+}
+
+function recordTask6MixedTypes(recorder: MockOutcomeRecorder, sessionId: SessionId): void {
+	for (let index = 0; index < 5; index++) {
+		recorder.recordVerification(
+			makeOutcome(0.05, 0, 'hypothesis', sessionId, `mixed-hypothesis-${index}`)
+		);
+		recorder.recordVerification(
+			makeOutcome(0.05, index < 2 ? 1 : 0, 'verification', sessionId, `mixed-verification-${index}`)
+		);
+	}
+}
+
+describe('Calibrator — Task 5 baseline characterization', () => {
+	it('preserves valid raw confidence when calibration is disabled', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		recorder.recordVerification(makeOutcome(0.99, 0));
+		const calibrator = new Calibrator(recorder, false);
+
+		// When
+		const result = calibrator.calibrate(0.73, 'hypothesis', asSessionId('s1'));
+
+		// Then
+		expect(result).toEqual({
+			raw: 0.73,
+			calibrated: 0.73,
+			temperature: 1.0,
+			priorWeight: 0,
+		});
+	});
+
+	it('computes metrics from recorded raw predictions', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		recorder.recordVerification(makeOutcome(0.9, 0, 'hypothesis'));
+		recorder.recordVerification(makeOutcome(0.2, 1, 'verification'));
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		const metrics = calibrator.metrics(asSessionId('s1'));
+
+		// Then
+		expect(metrics.brierScore).toBe((0.9 ** 2 + (0.2 - 1) ** 2) / 2);
+		expect(metrics.perTypeBrier.hypothesis).toBe(0.9 ** 2);
+		expect(metrics.perTypeBrier.verification).toBe((0.2 - 1) ** 2);
+	});
+});
+
+describe('Calibrator — Task 5 evidence weighting regression', () => {
+	it('returns raw confidence exactly when the thought type has no outcomes', () => {
+		// Given
+		const calibrator = new Calibrator(new MockOutcomeRecorder(), true);
+
+		// When
+		const result = calibrator.calibrate(0.9, 'hypothesis', asSessionId('cold-start'));
+
+		// Then
+		expect(result.calibrated).toBe(0.9);
+		expect(result.priorWeight).toBe(1);
+		expect(result.temperature).toBe(1);
+	});
+
+	it.each([1, 9, 10, 100])(
+		'returns 9 / (10 + n) for raw 0.9 after %i failures at T=1',
+		(failureCount) => {
+			// Given
+			const recorder = new MockOutcomeRecorder();
+			const sessionId = asSessionId(`failures-${failureCount}`);
+			for (let index = 0; index < failureCount; index++) {
+				recorder.recordVerification(
+					makeOutcome(0.9, 0, 'hypothesis', sessionId, `failure-${index}`)
+				);
+			}
+			const calibrator = new Calibrator(recorder, true);
+
+			// When
+			const result = calibrator.calibrate(0.9, 'hypothesis', sessionId);
+
+			// Then
+			expect(result.priorWeight).toBe(10 / (10 + failureCount));
+			expect(result.temperature).toBe(1);
+			expect(result.calibrated).toBeCloseTo(9 / (10 + failureCount), 14);
+		}
+	);
+
+	it('decreases confidence as failure evidence grows from n=1 to n=9', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		for (let index = 0; index < 9; index++) {
+			recorder.recordVerification(
+				makeOutcome(0.9, 0, 'hypothesis', 'nine-failures', `failure-${index}`)
+			);
+		}
+		recorder.recordVerification(makeOutcome(0.9, 0, 'hypothesis', 'one-failure'));
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		const afterOneFailure = calibrator.calibrate(0.9, 'hypothesis', asSessionId('one-failure'));
+		const afterNineFailures = calibrator.calibrate(0.9, 'hypothesis', asSessionId('nine-failures'));
+
+		// Then
+		expect(afterOneFailure.calibrated).toBeCloseTo(9 / 11, 14);
+		expect(afterNineFailures.calibrated).toBeCloseTo(9 / 19, 14);
+		expect(afterOneFailure.calibrated).toBeGreaterThan(afterNineFailures.calibrated);
+	});
+
+	it('moves confidence toward one as success evidence grows', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		for (let index = 0; index < 9; index++) {
+			recorder.recordVerification(
+				makeOutcome(0.9, 1, 'hypothesis', 'nine-successes', `success-${index}`)
+			);
+		}
+		recorder.recordVerification(makeOutcome(0.9, 1, 'hypothesis', 'one-success'));
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		const afterOneSuccess = calibrator.calibrate(0.9, 'hypothesis', asSessionId('one-success'));
+		const afterNineSuccesses = calibrator.calibrate(
+			0.9,
+			'hypothesis',
+			asSessionId('nine-successes')
+		);
+
+		// Then
+		expect(afterOneSuccess.calibrated).toBeCloseTo(10 / 11, 14);
+		expect(afterNineSuccesses.calibrated).toBeCloseTo(18 / 19, 14);
+		expect(afterNineSuccesses.calibrated).toBeGreaterThan(afterOneSuccess.calibrated);
+	});
+
+	it('isolates empirical evidence by thought type and session', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		for (let index = 0; index < 9; index++) {
+			recorder.recordVerification(
+				makeOutcome(0.9, 0, 'hypothesis', 'session-a', `failure-${index}`)
+			);
+		}
+		recorder.recordVerification(makeOutcome(0.9, 1, 'verification', 'session-a'));
+		recorder.recordVerification(makeOutcome(0.9, 1, 'hypothesis', 'session-b'));
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		const hypothesisA = calibrator.calibrate(0.9, 'hypothesis', asSessionId('session-a'));
+		const verificationA = calibrator.calibrate(0.9, 'verification', asSessionId('session-a'));
+		const regularA = calibrator.calibrate(0.9, 'regular', asSessionId('session-a'));
+		const hypothesisB = calibrator.calibrate(0.9, 'hypothesis', asSessionId('session-b'));
+
+		// Then
+		expect(hypothesisA.calibrated).toBeCloseTo(9 / 19, 14);
+		expect(verificationA.calibrated).toBeCloseTo(10 / 11, 14);
+		expect(regularA.calibrated).toBe(0.9);
+		expect(hypothesisB.calibrated).toBeCloseTo(10 / 11, 14);
+	});
+
+	it('restores cold-start output after outcome and temperature state are reset', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('reset-session');
+		for (let index = 0; index < 10; index++) {
+			recorder.recordVerification(
+				makeOutcome(0.99, 0, 'hypothesis', sessionId, `failure-${index}`)
+			);
+		}
+		const calibrator = new Calibrator(recorder, true);
+		calibrator.refit(sessionId);
+		recorder.clearOutcomes(sessionId);
+		calibrator.clearSession(sessionId);
+
+		// When
+		const result = calibrator.calibrate(0.9, 'hypothesis', sessionId);
+
+		// Then
+		expect(result.calibrated).toBe(0.9);
+		expect(result.priorWeight).toBe(1);
+		expect(result.temperature).toBe(1);
+	});
+});
+
 describe('Calibrator — disabled mode', () => {
 	it('calibrate() returns identity (raw === calibrated, T=1.0, priorWeight=0)', () => {
 		const recorder = new MockOutcomeRecorder();
@@ -99,34 +330,29 @@ describe('Calibrator — disabled mode', () => {
 	});
 });
 
-describe('Calibrator — enabled, no outcomes (prior only)', () => {
-	it('priorWeight = 1.0 when no outcomes (Beta(2,2) full prior weight)', () => {
+describe('Calibrator — enabled, no outcomes (raw prior only)', () => {
+	it('priorWeight = 1.0 when no outcomes', () => {
 		const recorder = new MockOutcomeRecorder();
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(0.9, 'hypothesis', asSessionId('s1'));
-		// n=0 → priorWeight = 1/(1+0/10) = 1.0
 		expect(r.priorWeight).toBe(1.0);
 	});
 
-	it('calibrate(0.9, hypothesis) shrinks toward prior mean 0.5', () => {
+	it('calibrate(0.9, hypothesis) returns raw confidence', () => {
 		const recorder = new MockOutcomeRecorder();
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(0.9, 'hypothesis', asSessionId('s1'));
-		// observedMean defaults to 0.5 with no data → calibrated = 1.0 * 0.5 + 0 * 0.9 = 0.5
-		expect(r.calibrated).toBeLessThan(0.9);
-		expect(r.calibrated).toBeCloseTo(0.5, 10);
+		expect(r.calibrated).toBe(0.9);
 		expect(r.temperature).toBe(1.0); // < MIN_OUTCOMES_FOR_TEMPERATURE
 	});
 
-	it('calibrate(0.9, verification) with no outcomes also shrinks to 0.5 (uniform prior)', () => {
-		// Note: implementation uses Beta(2,2) prior mean = 0.5 for ALL types.
-		// With zero outcomes, both 'hypothesis' and 'verification' shrink identically.
+	it('calibrate(0.9, verification) with no outcomes also returns raw confidence', () => {
 		const recorder = new MockOutcomeRecorder();
 		const calibrator = new Calibrator(recorder, true);
 		const rH = calibrator.calibrate(0.9, 'hypothesis', asSessionId('s1'));
 		const rV = calibrator.calibrate(0.9, 'verification', asSessionId('s1'));
-		expect(rV.calibrated).toBeCloseTo(rH.calibrated, 10);
-		expect(rV.calibrated).toBeCloseTo(0.5, 10);
+		expect(rV.calibrated).toBe(rH.calibrated);
+		expect(rV.calibrated).toBe(0.9);
 	});
 
 	it('clamps raw confidence outside [0, 1] range', () => {
@@ -227,17 +453,269 @@ describe('Calibrator — Brier score and ECE', () => {
 	});
 });
 
-describe('Calibrator — temperature scaling via refit()', () => {
-	it('overconfident data → fitted T > 1.0 after refit()', () => {
+describe('Calibrator — Task 6 baseline characterization', () => {
+	it('distinguishes the former raw-only objective from leave-one-out fitting', () => {
+		// Given
 		const recorder = new MockOutcomeRecorder();
 		const calibrator = new Calibrator(recorder, true);
-		// 20 outcomes: predicted 0.95, actual 0 (model very wrong & overconfident).
+		for (let index = 0; index < 10; index++) {
+			recorder.recordVerification(makeOutcome(0.95, 0, 'hypothesis', 'task-6-baseline'));
+		}
+
+		// When
+		calibrator.refit(asSessionId('task-6-baseline'));
+
+		// Then
+		expect(selectOracleTemperature(recorder.getOutcomes(asSessionId('task-6-baseline')))).toBe(2);
+		expect(
+			calibrator.calibrate(0.9, 'hypothesis', asSessionId('task-6-baseline')).temperature
+		).toBe(1);
+	});
+});
+
+describe('Calibrator — Task 6 leave-one-out composed objective', () => {
+	it('matches the independent numeric oracle and selects T=0.5', () => {
+		// Given
+		const expectedGridLosses = [
+			0.24299407677210988, 0.35103594483532574, 0.41951097554167194, 0.46578280137985173,
+			0.4989018584424624, 0.5429329247650719,
+		];
+		const oracleGridLosses = TEMPERATURE_GRID_VALUES.map(
+			(temperature) =>
+				(Math.log1p((6 / 13) ** (1 / temperature)) + Math.log1p((7 / 12) ** (1 / temperature))) / 2
+		);
+		const maxDelta = Math.max(
+			...oracleGridLosses.map((loss, index) =>
+				Math.abs(loss - (expectedGridLosses[index] ?? Number.NaN))
+			)
+		);
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-oracle');
+		recordTask6OracleTraining(recorder, sessionId);
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(sessionId);
+
+		// Then
+		expect(maxDelta).toBeLessThanOrEqual(1e-12);
+		expect(Math.min(...oracleGridLosses)).toBe(oracleGridLosses[0]);
+		expect(
+			(oracleGridLosses[0] ?? Number.NaN) - (oracleGridLosses[2] ?? Number.NaN)
+		).toBeLessThanOrEqual(1e-12);
+		expect(calibrator.calibrate(0.5, 'regular', sessionId).temperature).toBe(0.5);
+	});
+
+	it('removes the current all-failure label and count before fitting', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-all-failure');
+		for (let index = 0; index < 10; index++) {
+			recorder.recordVerification(
+				makeOutcome(0.95, 0, 'hypothesis', sessionId, `all-failure-${index}`)
+			);
+		}
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(sessionId);
+
+		// Then
+		expect(selectOracleTemperature(recorder.getOutcomes(sessionId))).toBe(2);
+		expect(
+			selectOracleTemperature(
+				Array.from({ length: 10 }, () => ({ predicted: 0.5, actual: 0 as const }))
+			)
+		).toBe(1);
+		expect(calibrator.calibrate(0.9, 'hypothesis', sessionId).temperature).toBe(1);
+	});
+
+	it('uses only same-type leave-one-out labels for mixed types', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-mixed-types');
+		recordTask6MixedTypes(recorder, sessionId);
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(sessionId);
+
+		// Then
+		const oracleSamples: NumericOutcome[] = [
+			...Array.from({ length: 5 }, () => ({ predicted: 1 / 28, actual: 0 as const })),
+			...Array.from({ length: 2 }, () => ({ predicted: 3 / 28, actual: 1 as const })),
+			...Array.from({ length: 3 }, () => ({ predicted: 5 / 28, actual: 0 as const })),
+		];
+		expect(selectOracleTemperature(oracleSamples)).toBe(1.5);
+		expect(calibrator.calibrate(0.5, 'regular', sessionId).temperature).toBe(1.5);
+	});
+
+	it('uses raw 0.37 for an eleventh different-type singleton', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-singleton');
+		for (let index = 0; index < 10; index++) {
+			recorder.recordVerification(
+				makeOutcome(0.05, index === 0 ? 1 : 0, 'hypothesis', sessionId, `singleton-base-${index}`)
+			);
+		}
+		recorder.recordVerification(
+			makeOutcome(0.37, 0, 'verification', sessionId, 'singleton-verification')
+		);
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(sessionId);
+
+		// Then
+		const singletonOracle: NumericOutcome[] = [
+			{ predicted: 0.5 / 19, actual: 1 },
+			...Array.from({ length: 9 }, () => ({ predicted: 1.5 / 19, actual: 0 as const })),
+			{ predicted: 0.37, actual: 0 },
+		];
+		const selfLeakingSingleton = singletonOracle.map((outcome, index) =>
+			index === 10 ? { ...outcome, predicted: 3.7 / 11 } : outcome
+		);
+		expect(selectOracleTemperature(singletonOracle)).toBe(1.5);
+		expect(selectOracleTemperature(selfLeakingSingleton)).toBe(1.25);
+		expect(calibrator.calibrate(0.5, 'regular', sessionId).temperature).toBe(1.5);
+	});
+
+	it('keeps T=1 below the ten-outcome fitting minimum', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-below-minimum');
+		for (let index = 0; index < 9; index++) {
+			recorder.recordVerification(
+				makeOutcome(0.99, 0, 'hypothesis', sessionId, `below-minimum-${index}`)
+			);
+		}
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(sessionId);
+
+		// Then
+		expect(calibrator.calibrate(0.9, 'hypothesis', sessionId).temperature).toBe(1);
+	});
+
+	it('prefers T=1 when p=0/1 boundary losses tie exactly', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-tie-one');
+		for (const [index, type] of ALL_THOUGHT_TYPES.slice(0, 10).entries()) {
+			const actual = index % 2 === 0 ? 0 : 1;
+			recorder.recordVerification(makeOutcome(actual, actual, type, sessionId, `tie-one-${index}`));
+		}
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(sessionId);
+
+		// Then
+		expect(calibrator.calibrate(0.5, 'regular', sessionId).temperature).toBe(1);
+	});
+
+	it('uses grid order for an exact non-identity tie below the T=1 loss', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-grid-order');
+		for (const [index, type] of ALL_THOUGHT_TYPES.slice(0, 10).entries()) {
+			recorder.recordVerification(makeOutcome(1e-8, 0, type, sessionId, `grid-order-${index}`));
+		}
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(sessionId);
+
+		// Then
+		expect(calibrator.calibrate(0.5, 'regular', sessionId).temperature).toBe(0.5);
+	});
+
+	it('fits on training only and applies T after the all-data inference blend', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-holdout');
+		recordTask6OracleTraining(recorder, sessionId);
+		const calibrator = new Calibrator(recorder, true);
+		const holdout = [
+			{ raw: 0.8, actual: 1 },
+			{ raw: 0.6, actual: 0 },
+			{ raw: 0.3, actual: 0 },
+			{ raw: 0.1, actual: 1 },
+		] as const;
+		const preTemperature = holdout.map(({ raw }) => 0.5 * raw + 0.25);
+		const storedBefore = recorder.getOutcomes(sessionId).map((outcome) => ({ ...outcome }));
+		const metricsBefore = calibrator.metrics(sessionId);
+
+		// When
+		calibrator.refit(sessionId);
+		const transformed = holdout.map(({ raw }) =>
+			calibrator.calibrate(raw, 'hypothesis', sessionId)
+		);
+
+		// Then
+		expect(preTemperature).toEqual([0.65, 0.55, 0.4, 0.3]);
+		expect(transformed.map(({ priorWeight }) => priorWeight)).toEqual([0.5, 0.5, 0.5, 0.5]);
+		expect(transformed.map(({ temperature }) => temperature)).toEqual([0.5, 0.5, 0.5, 0.5]);
+		for (const [index, result] of transformed.entries()) {
+			expect(result.calibrated).toBeCloseTo(
+				applyTemperatureForOracle(preTemperature[index] ?? Number.NaN, 0.5),
+				14
+			);
+		}
+		expect(recorder.getOutcomes(sessionId)).toEqual(storedBefore);
+		expect(calibrator.metrics(sessionId)).toEqual(metricsBefore);
+		expect(calibrator.metrics(sessionId).sampleCount).toBe(10);
+	});
+
+	it('keeps fitted temperatures isolated by session', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const oracleSession = asSessionId('task-6-session-oracle');
+		const mixedSession = asSessionId('task-6-session-mixed');
+		recordTask6OracleTraining(recorder, oracleSession);
+		recordTask6MixedTypes(recorder, mixedSession);
+		const calibrator = new Calibrator(recorder, true);
+
+		// When
+		calibrator.refit(oracleSession);
+
+		// Then
+		expect(calibrator.calibrate(0.5, 'regular', oracleSession).temperature).toBe(0.5);
+		expect(calibrator.calibrate(0.5, 'regular', mixedSession).temperature).toBe(1);
+	});
+
+	it('clears and deterministically refits leave-one-out temperature state', () => {
+		// Given
+		const recorder = new MockOutcomeRecorder();
+		const sessionId = asSessionId('task-6-reset');
+		recordTask6OracleTraining(recorder, sessionId);
+		const calibrator = new Calibrator(recorder, true);
+		calibrator.refit(sessionId);
+		calibrator.clearSession(sessionId);
+
+		// When
+		const afterClear = calibrator.calibrate(0.5, 'regular', sessionId);
+		calibrator.refit(sessionId);
+		const afterRefit = calibrator.calibrate(0.5, 'regular', sessionId);
+
+		// Then
+		expect(afterClear.temperature).toBe(1);
+		expect(afterRefit.temperature).toBe(0.5);
+	});
+});
+
+describe('Calibrator — temperature scaling via refit()', () => {
+	it('all-failure leave-one-out blends below 0.5 fit T=0.5', () => {
+		const recorder = new MockOutcomeRecorder();
+		const calibrator = new Calibrator(recorder, true);
 		for (let i = 0; i < 20; i++) {
 			recorder.recordVerification(makeOutcome(0.95, 0));
 		}
 		calibrator.refit(asSessionId('s1'));
 		const r = calibrator.calibrate(0.9, 'hypothesis', asSessionId('s1'));
-		expect(r.temperature).toBeGreaterThan(1.0);
+		expect(r.temperature).toBe(0.5);
 	});
 
 	it('refit() is a no-op below MIN_OUTCOMES_FOR_TEMPERATURE (10)', () => {
@@ -258,11 +736,7 @@ describe('Calibrator — temperature scaling via refit()', () => {
 		for (let i = 0; i < 15; i++) recorder.recordVerification(makeOutcome(0.99, 0));
 		calibrator.refit(asSessionId('s1'));
 		const r = calibrator.calibrate(0.9, 'regular', asSessionId('s1'));
-		// Temperature was applied, calibrated should differ from pure shrinkage.
-		expect(r.temperature).toBeGreaterThan(1.0);
-		// shrunk = priorWeight*0.5 + (1-priorWeight)*0.9 (for 'regular' — n=0 outcomes of type regular)
-		// Actually 'regular' had 0 outcomes (all were default 'hypothesis'), so observedMean = 0.5.
-		// Then temperature is applied to shrunk.
+		expect(r.temperature).toBe(0.5);
 		expect(r.calibrated).toBeGreaterThan(0);
 		expect(r.calibrated).toBeLessThanOrEqual(1);
 	});
@@ -278,10 +752,6 @@ describe('Calibrator — isolation', () => {
 		}
 		const rH = calibrator.calibrate(0.9, 'hypothesis', asSessionId('s1'));
 		const rV = calibrator.calibrate(0.9, 'verification', asSessionId('s1'));
-		// hypothesis: n=20, observedMean=1.0, priorWeight = 1/(1+2) = 1/3
-		// shrunk_H = (1/3)*1.0 + (2/3)*0.9 = 0.9333...
-		// verification: n=0, observedMean=0.5, priorWeight = 1.0
-		// shrunk_V = 1.0 * 0.5 + 0 * 0.9 = 0.5  (then temperature applied since outcomes>=10)
 		expect(rH.priorWeight).toBeCloseTo(1 / 3, 10);
 		expect(rV.priorWeight).toBe(1.0);
 		expect(rH.calibrated).not.toBeCloseTo(rV.calibrated, 2);
@@ -310,7 +780,7 @@ describe('Calibrator — isolation', () => {
 		calibrator.refit(asSessionId('sA'));
 		const rA = calibrator.calibrate(0.9, 'hypothesis', asSessionId('sA'));
 		const rB = calibrator.calibrate(0.9, 'hypothesis', asSessionId('sB'));
-		expect(rA.temperature).toBeGreaterThan(1.0);
+		expect(rA.temperature).toBe(0.5);
 		expect(rB.temperature).toBe(1.0);
 	});
 });
@@ -332,8 +802,7 @@ describe('Calibrator — extreme inputs', () => {
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(Number.POSITIVE_INFINITY, 'regular', asSessionId('s1'));
 		expect(r.raw).toBe(1);
-		expect(r.calibrated).toBeGreaterThanOrEqual(0);
-		expect(r.calibrated).toBeLessThanOrEqual(1);
+		expect(r.calibrated).toBe(1);
 	});
 
 	it('clamps -Infinity raw confidence to 0', () => {
@@ -341,8 +810,7 @@ describe('Calibrator — extreme inputs', () => {
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(Number.NEGATIVE_INFINITY, 'regular', asSessionId('s1'));
 		expect(r.raw).toBe(0);
-		expect(r.calibrated).toBeGreaterThanOrEqual(0);
-		expect(r.calibrated).toBeLessThanOrEqual(1);
+		expect(r.calibrated).toBe(0);
 	});
 
 	it('clamps negative confidence (-1) to 0', () => {
@@ -350,8 +818,7 @@ describe('Calibrator — extreme inputs', () => {
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(-1, 'regular', asSessionId('s1'));
 		expect(r.raw).toBe(0);
-		// no outcomes → shrinks fully to prior 0.5
-		expect(r.calibrated).toBeCloseTo(0.5, 10);
+		expect(r.calibrated).toBe(0);
 	});
 
 	it('clamps confidence > 1 (2.0) to 1', () => {
@@ -359,7 +826,7 @@ describe('Calibrator — extreme inputs', () => {
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(2.0, 'regular', asSessionId('s1'));
 		expect(r.raw).toBe(1);
-		expect(r.calibrated).toBeCloseTo(0.5, 10);
+		expect(r.calibrated).toBe(1);
 	});
 
 	it('handles zero confidence (0.0)', () => {
@@ -367,8 +834,7 @@ describe('Calibrator — extreme inputs', () => {
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(0, 'regular', asSessionId('s1'));
 		expect(r.raw).toBe(0);
-		// shrunk = 1.0 * 0.5 + 0 * 0 = 0.5
-		expect(r.calibrated).toBeCloseTo(0.5, 10);
+		expect(r.calibrated).toBe(0);
 	});
 
 	it('handles perfect confidence (1.0)', () => {
@@ -376,8 +842,7 @@ describe('Calibrator — extreme inputs', () => {
 		const calibrator = new Calibrator(recorder, true);
 		const r = calibrator.calibrate(1, 'regular', asSessionId('s1'));
 		expect(r.raw).toBe(1);
-		// shrunk = 1.0 * 0.5 + 0 * 1 = 0.5
-		expect(r.calibrated).toBeCloseTo(0.5, 10);
+		expect(r.calibrated).toBe(1);
 	});
 });
 
@@ -390,8 +855,7 @@ describe('Calibrator — temperature boundary (MIN_OUTCOMES_FOR_TEMPERATURE = 10
 		const r = calibrator.calibrate(0.9, 'hypothesis', asSessionId('s1'));
 		// fitTemperature returns 1.0 below threshold; calibrate path also gates on count.
 		expect(r.temperature).toBe(1.0);
-		// hypothesis: n=9, observedMean=0, priorWeight = 1/(1+9/10) = 1/1.9 ≈ 0.5263
-		const expected = (1 - 1 / (1 + 9 / 10)) * 0.9;
+		const expected = 9 / 19;
 		expect(r.calibrated).toBeCloseTo(expected, 10);
 	});
 
@@ -411,26 +875,20 @@ describe('Calibrator — temperature boundary (MIN_OUTCOMES_FOR_TEMPERATURE = 10
 		for (let i = 0; i < 11; i++) recorder.recordVerification(makeOutcome(0.99, 0));
 		calibrator.refit(asSessionId('s1'));
 		const r = calibrator.calibrate(0.9, 'hypothesis', asSessionId('s1'));
-		expect(r.temperature).toBeGreaterThan(1.0);
+		expect(r.temperature).toBe(0.5);
 		expect(TEMPERATURE_GRID_VALUES).toContain(r.temperature);
 	});
 
-	it('temperature is 1.0 when 10 outcomes are perfectly calibrated', () => {
+	it('fits the label-excluded objective rather than the raw aggregate rate', () => {
 		const recorder = new MockOutcomeRecorder();
 		const calibrator = new Calibrator(recorder, true);
-		// Mid-range predictions where actual matches probability — NLL is minimized near T=1.0.
-		// Use 0.6/0.4 split so loss strictly varies with T and T=1.0 is the unique grid minimum.
 		for (let i = 0; i < 6; i++) recorder.recordVerification(makeOutcome(0.6, 1));
 		for (let i = 0; i < 4; i++) recorder.recordVerification(makeOutcome(0.6, 0));
 		calibrator.refit(asSessionId('s1'));
 		const r = calibrator.calibrate(0.5, 'regular', asSessionId('s1'));
-		// For predicted=0.6 with 60% accuracy, NLL is minimized at T=1.0 on the grid.
-		expect(r.temperature).toBe(1.0);
+		expect(r.temperature).toBe(2.0);
 	});
 });
-
-// Mirror of TEMPERATURE_GRID in Calibrator.ts for assertion sanity-checks.
-const TEMPERATURE_GRID_VALUES = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] as const;
 
 describe('Calibrator — temperature lifecycle cleanup', () => {
 	it('clearSession() removes that session fitted temperature', () => {
@@ -441,7 +899,7 @@ describe('Calibrator — temperature lifecycle cleanup', () => {
 			recorder.recordVerification(makeOutcome(0.99, 0, 'hypothesis', sessionId));
 		}
 		calibrator.refit(sessionId);
-		expect(calibrator.calibrate(0.9, 'hypothesis', sessionId).temperature).toBeGreaterThan(1.0);
+		expect(calibrator.calibrate(0.9, 'hypothesis', sessionId).temperature).toBe(0.5);
 
 		calibrator.clearSession(sessionId);
 

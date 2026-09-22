@@ -12,6 +12,7 @@
 import type { ReasoningStats } from '../reasoning.js';
 import type { ThoughtData } from '../thought.js';
 import { _computeChainDepth, _countByType } from './internals.js';
+import type { VerificationLinks } from './VerificationLinks.js';
 
 /**
  * Round a numeric value to a fixed number of decimal places to mitigate
@@ -50,7 +51,8 @@ export class Aggregator {
 	 */
 	public computeReasoningStats(
 		history: ThoughtData[],
-		branches: Record<string, ThoughtData[]>
+		branches: Record<string, ThoughtData[]>,
+		links: VerificationLinks
 	): ReasoningStats {
 		const typeCounts = _countByType(history);
 		const allScores = history
@@ -59,15 +61,6 @@ export class Aggregator {
 		const allConfidences = history
 			.map((t) => t.confidence)
 			.filter((c): c is number => c !== undefined);
-
-		const hypotheses = history.filter((t) => t.thought_type === 'hypothesis');
-		const hypothesisIds = new Set(hypotheses.map((t) => t.hypothesis_id).filter(Boolean));
-		const verifiedIds = new Set(
-			history
-				.filter((t) => t.thought_type === 'verification' && t.hypothesis_id)
-				.map((t) => t.hypothesis_id)
-		);
-		const unresolvedCount = [...hypothesisIds].filter((id) => !verifiedIds.has(id)).length;
 
 		return {
 			total_thoughts: history.length,
@@ -78,9 +71,9 @@ export class Aggregator {
 			).length,
 			chain_depth: _computeChainDepth(history),
 			thought_type_counts: typeCounts,
-			hypothesis_count: hypothesisIds.size,
-			verified_hypothesis_count: [...hypothesisIds].filter((id) => verifiedIds.has(id)).length,
-			unresolved_hypothesis_count: unresolvedCount,
+			hypothesis_count: links.hypotheses.length,
+			verified_hypothesis_count: links.verifiedHypothesisCount,
+			unresolved_hypothesis_count: links.hypotheses.length - links.verifiedHypothesisCount,
 			average_quality_score:
 				allScores.length > 0
 					? roundToPrecision(allScores.reduce((a, b) => a + b, 0) / allScores.length)

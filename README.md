@@ -10,7 +10,7 @@ An MCP server that gives AI agents structured sequential thinking with tool and 
 - DAG-based thought graph with 8 edge kinds (sequence, branch, merge, verifies, critiques, derives_from, tool_invocation, revises) and topological traversal
 - Pluggable reasoning strategies. Sequential by default, or Tree-of-Thought with BFS/beam search and plateau detection
 - Tool interleave: suspend a thinking chain, run a tool call, then resume where you left off
-- Confidence calibration using Beta(2,2) priors, Brier score, and Expected Calibration Error (ECE)
+- Confidence calibration with raw-prior shrinkage, plus Brier score and Expected Calibration Error (ECE) for recorded raw predictions
 - Branch compression: cold branches get rolled into summaries automatically, with a sliding-window dehydration policy
 - Outcome recording for tool_call/tool_observation results with metadata
 - Tool and skill recommendations with confidence scores, rationales, and automatic discovery
@@ -164,7 +164,7 @@ All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `f
 | Variable                                   | Description                                                              |
 | ------------------------------------------ | ------------------------------------------------------------------------ |
 | `TRACELATTICE_FEATURES_DAG_EDGES`          | Enable DAG edges for thought relationships                               |
-| `TRACELATTICE_FEATURES_CALIBRATION`        | Enable confidence calibration with Beta(2,2) priors                      |
+| `TRACELATTICE_FEATURES_CALIBRATION`        | Enable raw-prior confidence calibration                                  |
 | `TRACELATTICE_FEATURES_COMPRESSION`        | Enable branch compression for cold branches                              |
 | `TRACELATTICE_FEATURES_TOOL_INTERLEAVE`    | Enable suspend/resume for tool calls                                     |
 | `TRACELATTICE_FEATURES_NEW_THOUGHT_TYPES`  | Enable tool_call, tool_observation, assumption, decomposition, backtrack |
@@ -254,7 +254,23 @@ TraceLattice exposes only the current API and persistence contract. There are no
 | Partial server cleanup                                        | Await `dispose()` to release the server and all container-owned resources                                                                                                            |
 | Unprefixed environment variables                              | The `TRACELATTICE_*` variables documented above                                                                                                                                      |
 
-File persistence accepts the strict v2 `snapshot.json` document. SQLite persistence accepts the exact v2 schema with its authoritative `schema_version` row. Invalid, unknown, or differently versioned storage fails closed; startup does not rewrite it.
+File persistence accepts the strict v2 `snapshot.json` document. SQLite persistence accepts the exact v2 schema with its authoritative `schema_version` row. Invalid, unknown, or differently versioned storage fails closed; startup does not rewrite it. Backtrack support did not change File or SQLite from v2 and requires no migration or version bump.
+
+## Precision behavior
+
+### Calibration and evaluation limits
+
+Calibration blends a raw confidence with the empirical outcome mean for its thought type. For `n` recorded outcomes of that type, `priorWeight = 10 / (10 + n)` and the blended value is `priorWeight * raw + (1 - priorWeight) * perTypeMean`. With no outcomes for a type, the empirical component has zero weight and calibration returns the raw confidence exactly.
+
+Temperature fitting begins at 10 outcomes. It uses per-type leave-one-out blends, the fixed grid `[0.5, 0.75, 1, 1.25, 1.5, 2]`, and deterministic ties that retain `1` before grid order. Temperature is applied after the blend. Brier and ECE reported by `Calibrator.metrics()` always score the stored raw predictions and outcomes, not transformed holdout outputs.
+
+The checked evaluation report separates deterministic structural validation and controlled raw and calibrated probability metrics. `natural_language_accuracy` is unmeasured. These checks do not judge factuality, guarantee better calibration, or promise that every individual confidence changes in one direction.
+
+### Persistence, recovery, and backtracking
+
+`PersistenceBackend` requires `saveBacktrackForSession(sessionId, thought, targetThoughtId)`. Every custom backend must implement it. The operation atomically corrects every retained stable-ID copy of the target, appends the backtrack thought, and applies retention. There is no capability fallback; the ordinary persistence methods retain their existing contracts.
+
+Restore reads retained records only. It repairs retained backtrack copies without writing the snapshot, ignores an absent retained target, and rejects an ambiguous retained numeric target. Evidence already pruned by retention or eviction cannot be recovered.
 
 ## Development
 

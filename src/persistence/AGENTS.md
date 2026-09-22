@@ -32,10 +32,12 @@ All three implement the indivisible, session-scoped `PersistenceBackend`. Every 
 
 - Sinks only: no timers, no batching, no debounce.
 - The contract is all-or-nothing. Never add partial backend capability probes.
+- `saveBacktrackForSession` is required and FIFO work reaches it as one atomic correction: retract every retained stable-ID copy, append the backtrack thought, then apply retention. Custom backends must implement it; no fallback is allowed.
 - Restore session list is `listSessions()`, **not** `listEdgeSessions()`.
 - `listSessions()` and `clearAll()` are explicit all-session administration. They do not imply that a scoped operation may omit its session.
 - Edges/summaries are replace-sets per session. Scope mismatch → `PersistenceScopeMismatchError`.
 - File and SQLite startup validate the exact v2 shape and fail closed on incompatible storage.
+- File and SQLite remain v2 with no migration or version bump. Restore repairs retained copies in memory without writing storage, ignores a missing retained target, and rejects an ambiguous retained numeric target. Already-pruned or evicted evidence cannot be recovered.
 
 ## ANTI-PATTERNS
 

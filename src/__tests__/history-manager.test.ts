@@ -1,4 +1,4 @@
-import { asSessionId } from '../contracts/ids.js';
+import { asSessionId, type ThoughtId } from '../contracts/ids.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { ABSOLUTE_MAX_HISTORY_SIZE, HistoryManager } from '../core/HistoryManager.js';
 import { EdgeStore } from '../core/graph/EdgeStore.js';
@@ -10,6 +10,7 @@ import type { Logger } from '../logger/StructuredLogger.js';
 import type { ThoughtData } from '../core/thought.js';
 import { PersistenceDrainError } from '../core/PersistenceBufferErrors.js';
 import { PersistenceUnavailableError, ValidationError } from '../errors.js';
+import { stageBacktrackPersistence } from '../persistence/BacktrackPersistence.js';
 
 import { asBranchId, type BranchId } from '../contracts/ids.js';
 import type { SessionId } from '../contracts/ids.js';
@@ -36,6 +37,27 @@ class MockPersistence implements PersistenceBackend {
 		const history = this._sessionHistory.get(sessionId) ?? [];
 		history.push(thought);
 		this._sessionHistory.set(sessionId, history);
+	}
+
+	async saveBacktrackForSession(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): Promise<void> {
+		const branches = this._sessionBranches.get(sessionId) ?? new Map();
+		const staged = stageBacktrackPersistence(
+			sessionId,
+			this._sessionHistory.get(sessionId) ?? [],
+			[...branches].map(([branchId, thoughts]) => ({ branchId, thoughts })),
+			thought,
+			targetThoughtId,
+			0
+		);
+		this._sessionHistory.set(sessionId, [...staged.history]);
+		this._sessionBranches.set(
+			sessionId,
+			new Map(staged.branches.map((branch) => [branch.branchId, [...branch.thoughts]]))
+		);
 	}
 
 	async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {

@@ -12,9 +12,14 @@ import type {
 	PersistenceWorkFailure,
 	PersistenceWorkToken,
 } from '../contracts/persistence-work.js';
-import type { BranchId, SessionId } from '../contracts/ids.js';
+import type { BranchId, SessionId, ThoughtId } from '../contracts/ids.js';
 import { assertNever } from '../utils.js';
 import type { Summary } from './compression/Summary.js';
+import {
+	DurableThoughtIdentityIndex,
+	type DurableIdentitySession,
+	normalizeDurableHistoryRetention,
+} from './DurableThoughtIdentityIndex.js';
 import type { Edge } from './graph/Edge.js';
 import type { ThoughtData } from './thought.js';
 
@@ -31,10 +36,11 @@ type QueueEntry<K extends WorkKind> = {
 };
 
 type ThoughtEntry = QueueEntry<'thought'>;
+type BacktrackEntry = QueueEntry<'backtrack'>;
 type BranchEntry = QueueEntry<'branch'>;
 type EdgeEntry = QueueEntry<'edge'>;
 type SummaryEntry = QueueEntry<'summary'>;
-type AnyQueueEntry = ThoughtEntry | BranchEntry | EdgeEntry | SummaryEntry;
+type AnyQueueEntry = ThoughtEntry | BacktrackEntry | BranchEntry | EdgeEntry | SummaryEntry;
 
 type Acceptance = {
 	readonly token: PersistenceWorkToken;
@@ -58,7 +64,10 @@ type Acceptance = {
  * ```
  */
 export class PersistenceWorkQueue {
-	private readonly _thoughts: ThoughtEntry[] = [];
+	private readonly _thoughts: Array<ThoughtEntry | BacktrackEntry> = [];
+	private readonly _thoughtIdentities = new Map<SessionId, Map<ThoughtId, number>>();
+	private readonly _durableThoughtIdentities: DurableThoughtIdentityIndex;
+	private readonly _persistBranches: boolean;
 	private readonly _branches = new Map<SessionId, Map<BranchId, BranchEntry>>();
 	private readonly _edges = new Map<SessionId, EdgeEntry>();
 	private readonly _summaries = new Map<SessionId, SummaryEntry>();
@@ -67,6 +76,13 @@ export class PersistenceWorkQueue {
 	private readonly _edgeVersions = new Map<SessionId, number>();
 	private readonly _summaryVersions = new Map<SessionId, number>();
 	private _nextSequence = 1;
+
+	public constructor(durableHistorySize = 10_000, persistBranches = true) {
+		this._durableThoughtIdentities = new DurableThoughtIdentityIndex(
+			normalizeDurableHistoryRetention(durableHistorySize)
+		);
+		this._persistBranches = persistBranches;
+	}
 
 	/**
 	 * Accepts one thought as a distinct FIFO work item.
@@ -81,14 +97,48 @@ export class PersistenceWorkQueue {
 			kind: 'thought',
 			token: acceptance.token,
 			sessionId,
-			thought,
+			thought: this._freezeClone(thought),
 		});
 		this._thoughts.push({
 			acceptedSequence: acceptance.sequence,
 			work,
 			terminalFailure: undefined,
 		});
+		if (thought.id !== undefined) this._addThoughtIdentity(sessionId, thought.id);
 		return work;
+	}
+
+	public enqueueBacktrack(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): WorkOf<'backtrack'> {
+		const acceptance = this._accept();
+		const work: WorkOf<'backtrack'> = Object.freeze({
+			kind: 'backtrack',
+			token: acceptance.token,
+			sessionId,
+			thought: this._freezeClone(thought),
+			targetThoughtId,
+		});
+		this._thoughts.push({
+			acceptedSequence: acceptance.sequence,
+			work,
+			terminalFailure: undefined,
+		});
+		if (thought.id !== undefined) this._addThoughtIdentity(sessionId, thought.id);
+		return work;
+	}
+
+	public hasThoughtIdentity(sessionId: SessionId, thoughtId: ThoughtId): boolean {
+		return (
+			this._thoughtIdentities.get(sessionId)?.has(thoughtId) === true ||
+			this._durableThoughtIdentities.has(sessionId, thoughtId)
+		);
+	}
+
+	public replaceDurableThoughtIdentities(sessions: readonly DurableIdentitySession[]): void {
+		this._durableThoughtIdentities.replaceAll(sessions);
 	}
 
 	/**
@@ -117,7 +167,7 @@ export class PersistenceWorkQueue {
 			sessionId,
 			key: branchId,
 			version,
-			snapshot: Object.freeze([...thoughts]),
+			snapshot: this._freezeClone(thoughts),
 		});
 		const branchMap = this._branches.get(sessionId) ?? new Map<BranchId, BranchEntry>();
 		this._branches.set(sessionId, branchMap);
@@ -176,7 +226,7 @@ export class PersistenceWorkQueue {
 			sessionId,
 			key: sessionId,
 			version,
-			snapshot: Object.freeze([...edges]),
+			snapshot: this._freezeClone(edges),
 		});
 		this._edges.set(sessionId, {
 			acceptedSequence: acceptance.sequence,
@@ -203,7 +253,7 @@ export class PersistenceWorkQueue {
 			sessionId,
 			key: sessionId,
 			version,
-			snapshot: Object.freeze([...summaries]),
+			snapshot: this._freezeClone(summaries),
 		});
 		this._summaries.set(sessionId, {
 			acceptedSequence: acceptance.sequence,
@@ -259,11 +309,34 @@ export class PersistenceWorkQueue {
 		switch (work.kind) {
 			case 'thought': {
 				const index = this._thoughts.findIndex((candidate) => candidate === entry);
-				if (index >= 0) this._thoughts.splice(index, 1);
+				if (index >= 0) {
+					this._thoughts.splice(index, 1);
+					if (work.thought.id !== undefined) {
+						this._removeThoughtIdentity(work.sessionId, work.thought.id);
+					}
+					this._durableThoughtIdentities.appendThought(work.sessionId, work.thought);
+				}
+				return;
+			}
+			case 'backtrack': {
+				const index = this._thoughts.findIndex((candidate) => candidate === entry);
+				if (index >= 0) {
+					this._thoughts.splice(index, 1);
+					if (work.thought.id !== undefined) {
+						this._removeThoughtIdentity(work.sessionId, work.thought.id);
+					}
+					this._durableThoughtIdentities.appendThought(work.sessionId, work.thought);
+				}
 				return;
 			}
 			case 'branch':
 				this._branches.get(work.sessionId)?.delete(work.key);
+				if (!this._persistBranches) return;
+				if (work.operation === 'save') {
+					this._durableThoughtIdentities.replaceBranch(work.sessionId, work.key, work.snapshot);
+				} else {
+					this._durableThoughtIdentities.deleteBranch(work.sessionId, work.key);
+				}
 				return;
 			case 'edge':
 				this._edges.delete(work.key);
@@ -366,6 +439,8 @@ export class PersistenceWorkQueue {
 		for (let index = this._thoughts.length - 1; index >= 0; index -= 1) {
 			if (this._thoughts[index]?.work.sessionId === sessionId) this._thoughts.splice(index, 1);
 		}
+		this._thoughtIdentities.delete(sessionId);
+		this._durableThoughtIdentities.clearSession(sessionId);
 		this._branches.delete(sessionId);
 		this._edges.delete(sessionId);
 		this._summaries.delete(sessionId);
@@ -377,6 +452,8 @@ export class PersistenceWorkQueue {
 	/** Discards all retained work after a successful durable global reset. */
 	public discardAll(): void {
 		this._thoughts.length = 0;
+		this._thoughtIdentities.clear();
+		this._durableThoughtIdentities.clearAll();
 		this._branches.clear();
 		this._edges.clear();
 		this._summaries.clear();
@@ -389,6 +466,34 @@ export class PersistenceWorkQueue {
 		const sequence = this._nextSequence;
 		this._nextSequence += 1;
 		return { token: `persistence-work-${sequence}`, sequence };
+	}
+
+	private _freezeClone<T>(value: T): T {
+		const clone = structuredClone(value);
+		return this._deepFreeze(clone);
+	}
+
+	private _deepFreeze<T>(value: T): T {
+		if (value !== null && typeof value === 'object') {
+			for (const nested of Object.values(value)) this._deepFreeze(nested);
+			Object.freeze(value);
+		}
+		return value;
+	}
+
+	private _addThoughtIdentity(sessionId: SessionId, thoughtId: ThoughtId): void {
+		const identities = this._thoughtIdentities.get(sessionId) ?? new Map<ThoughtId, number>();
+		identities.set(thoughtId, (identities.get(thoughtId) ?? 0) + 1);
+		this._thoughtIdentities.set(sessionId, identities);
+	}
+
+	private _removeThoughtIdentity(sessionId: SessionId, thoughtId: ThoughtId): void {
+		const identities = this._thoughtIdentities.get(sessionId);
+		const count = identities?.get(thoughtId);
+		if (identities === undefined || count === undefined) return;
+		if (count > 1) identities.set(thoughtId, count - 1);
+		else identities.delete(thoughtId);
+		if (identities.size === 0) this._thoughtIdentities.delete(sessionId);
 	}
 
 	private _entries(): AnyQueueEntry[] {
@@ -428,6 +533,7 @@ export class PersistenceWorkQueue {
 		let entry: AnyQueueEntry | undefined;
 		switch (work.kind) {
 			case 'thought':
+			case 'backtrack':
 				entry = this._thoughts.find((candidate) => candidate.work.token === work.token);
 				break;
 			case 'branch':
@@ -456,6 +562,8 @@ export class PersistenceWorkQueue {
 		switch (selected.kind) {
 			case 'thought':
 				return current.kind === 'thought';
+			case 'backtrack':
+				return current.kind === 'backtrack' && current.targetThoughtId === selected.targetThoughtId;
 			case 'branch':
 				return (
 					current.kind === 'branch' &&
@@ -490,6 +598,7 @@ export class PersistenceWorkQueue {
 		}
 		switch (work.kind) {
 			case 'thought':
+			case 'backtrack':
 				return true;
 			case 'branch':
 				return (

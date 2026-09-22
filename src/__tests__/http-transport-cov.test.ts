@@ -3,6 +3,11 @@ import { request } from 'node:http';
 import { McpServer } from 'tmcp';
 import { ValibotJsonSchemaAdapter } from '@tmcp/adapter-valibot';
 import { HttpTransport } from '../transport/HttpTransport.js';
+import { getListeningPort } from './integration/ProtocolHarness.js';
+
+class HttpFixtureError extends Error {
+	override readonly name = 'HttpFixtureError';
+}
 
 function httpRequest(options: {
 	port: number;
@@ -17,6 +22,7 @@ function httpRequest(options: {
 	headers: Record<string, string | string[] | undefined>;
 }> {
 	return new Promise((resolve, reject) => {
+		let responseEnded = false;
 		const req = request(
 			{
 				hostname: '127.0.0.1',
@@ -31,7 +37,17 @@ function httpRequest(options: {
 				res.on('data', (chunk) => {
 					body += chunk.toString();
 				});
+				res.once('error', reject);
+				res.once('aborted', () => {
+					reject(new HttpFixtureError('Response aborted'));
+				});
+				res.once('close', () => {
+					if (!responseEnded || !res.complete) {
+						reject(new HttpFixtureError('Response closed before completing'));
+					}
+				});
 				res.on('end', () => {
+					responseEnded = true;
 					resolve({
 						statusCode: res.statusCode ?? 0,
 						body,
@@ -40,10 +56,9 @@ function httpRequest(options: {
 				});
 			}
 		);
-		req.on('error', reject);
+		req.once('error', reject);
 		req.on('timeout', () => {
-			req.destroy();
-			reject(new Error('Request timeout'));
+			req.destroy(new HttpFixtureError('Request timeout'));
 		});
 		if (options.body) {
 			req.write(options.body);
@@ -52,20 +67,21 @@ function httpRequest(options: {
 	});
 }
 
+async function connectTransport(transport: HttpTransport, mcpServer: McpServer): Promise<number> {
+	await transport.connect(mcpServer);
+	return getListeningPort(transport);
+}
+
 describe('HttpTransport additional coverage', () => {
 	let transport: HttpTransport;
 	let port: number;
 
-	beforeEach(async () => {
-		port = 7500 + Math.floor(Math.random() * 1000);
+	beforeEach(() => {
+		port = 0;
 	});
 
 	afterEach(async () => {
-		try {
-			await transport.stop();
-		} catch {
-			// ignore
-		}
+		await transport.stop();
 	});
 
 	describe('POST body handling', () => {
@@ -82,7 +98,7 @@ describe('HttpTransport additional coverage', () => {
 					capabilities: { tools: { listChanged: true } },
 				}
 			);
-			await transport.connect(mockMcpServer);
+			port = await connectTransport(transport, mockMcpServer);
 
 			const response = await httpRequest({
 				port,
@@ -109,7 +125,7 @@ describe('HttpTransport additional coverage', () => {
 					capabilities: { tools: { listChanged: true } },
 				}
 			);
-			await transport.connect(mockMcpServer);
+			port = await connectTransport(transport, mockMcpServer);
 			const response = await httpRequest({
 				port,
 				body: '{invalid json',
@@ -131,7 +147,7 @@ describe('HttpTransport additional coverage', () => {
 					capabilities: { tools: { listChanged: true } },
 				}
 			);
-			await transport.connect(mockMcpServer);
+			port = await connectTransport(transport, mockMcpServer);
 			const response = await httpRequest({
 				port,
 				body: JSON.stringify({ method: 'tools/list' }),
@@ -146,7 +162,7 @@ describe('HttpTransport additional coverage', () => {
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
-			await transport.connect({} as McpServer);
+			port = await connectTransport(transport, {} as McpServer);
 			const response = await httpRequest({
 				port,
 				body: JSON.stringify({
@@ -173,7 +189,7 @@ describe('HttpTransport additional coverage', () => {
 					capabilities: { tools: { listChanged: true } },
 				}
 			);
-			await transport.connect(mockMcpServer);
+			port = await connectTransport(transport, mockMcpServer);
 			const response = await httpRequest({
 				port,
 				body: JSON.stringify({
@@ -181,7 +197,8 @@ describe('HttpTransport additional coverage', () => {
 					method: 'notifications/initialized',
 				}),
 			});
-			expect([200, 204]).toContain(response.statusCode);
+			expect(response.statusCode).toBe(204);
+			expect(response.body).toBe('');
 		});
 	});
 
@@ -200,7 +217,7 @@ describe('HttpTransport additional coverage', () => {
 					capabilities: { tools: { listChanged: true } },
 				}
 			);
-			await transport.connect(mockMcpServer);
+			port = await connectTransport(transport, mockMcpServer);
 			const response = await httpRequest({
 				port,
 				body: JSON.stringify({
@@ -228,7 +245,7 @@ describe('HttpTransport additional coverage', () => {
 					capabilities: { tools: { listChanged: true } },
 				}
 			);
-			await transport.connect(mockMcpServer);
+			port = await connectTransport(transport, mockMcpServer);
 			const response = await httpRequest({
 				port,
 				body: JSON.stringify({
@@ -249,7 +266,7 @@ describe('HttpTransport additional coverage', () => {
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
-			await transport.connect({} as McpServer);
+			port = await connectTransport(transport, {} as McpServer);
 			const response = await httpRequest({
 				port,
 				method: 'GET',
@@ -266,7 +283,7 @@ describe('HttpTransport additional coverage', () => {
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
-			await transport.connect({} as McpServer);
+			port = await connectTransport(transport, {} as McpServer);
 			const response = await httpRequest({
 				port,
 				method: 'GET',
@@ -281,7 +298,7 @@ describe('HttpTransport additional coverage', () => {
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
-			await transport.connect({} as McpServer);
+			port = await connectTransport(transport, {} as McpServer);
 			const response = await httpRequest({
 				port,
 				method: 'GET',
@@ -298,7 +315,7 @@ describe('HttpTransport additional coverage', () => {
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
-			await transport.connect({} as McpServer);
+			port = await connectTransport(transport, {} as McpServer);
 			const response = await httpRequest({
 				port,
 				method: 'GET',
@@ -314,7 +331,7 @@ describe('HttpTransport additional coverage', () => {
 				enableRateLimit: false,
 				metricsProvider: () => '# HELP test_metric\n# TYPE test_metric counter\ntest_metric 1\n',
 			});
-			await transport.connect({} as McpServer);
+			port = await connectTransport(transport, {} as McpServer);
 			const response = await httpRequest({
 				port,
 				method: 'GET',
@@ -332,8 +349,8 @@ describe('HttpTransport additional coverage', () => {
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
-			await transport.connect({} as McpServer);
-			await transport.stop();
+			port = await connectTransport(transport, {} as McpServer);
+			Reflect.set(transport, '_isShuttingDown', true);
 			const response = await httpRequest({
 				port,
 				body: JSON.stringify({
@@ -342,7 +359,7 @@ describe('HttpTransport additional coverage', () => {
 					method: 'tools/list',
 					params: {},
 				}),
-			}).catch(() => ({ statusCode: 503, body: '', headers: {} }));
+			});
 			expect(response.statusCode).toBe(503);
 		});
 	});
@@ -354,12 +371,12 @@ describe('HttpTransport additional coverage', () => {
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
-			await transport.connect({} as McpServer);
+			port = await connectTransport(transport, {} as McpServer);
 			expect(transport.requestCount).toBe(0);
 			await httpRequest({
 				port,
 				body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
-			}).catch(() => ({}));
+			});
 			expect(transport.requestCount).toBe(1);
 		});
 	});
@@ -381,7 +398,7 @@ describe('HttpTransport coverage: mcpServer not ready (null)', () => {
 	let port: number;
 
 	beforeEach(() => {
-		port = 8500 + Math.floor(Math.random() * 1000);
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -394,7 +411,7 @@ describe('HttpTransport coverage: mcpServer not ready (null)', () => {
 			host: '127.0.0.1',
 			enableRateLimit: false,
 		});
-		await transport.connect({} as McpServer);
+		port = await connectTransport(transport, {} as McpServer);
 
 		// Force _mcpServer to null to test the 'server not ready' branch
 		(transport as unknown as { _mcpServer: null })._mcpServer = null;
@@ -433,7 +450,7 @@ describe('HttpTransport coverage: OPTIONS preflight', () => {
 	let port: number;
 
 	beforeEach(() => {
-		port = 8500 + Math.floor(Math.random() * 1000);
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -446,7 +463,7 @@ describe('HttpTransport coverage: OPTIONS preflight', () => {
 			host: '127.0.0.1',
 			enableRateLimit: false,
 		});
-		await transport.connect({} as McpServer);
+		port = await connectTransport(transport, {} as McpServer);
 
 		const response = await httpRequest({
 			port,
@@ -462,7 +479,7 @@ describe('HttpTransport coverage: rate limiting', () => {
 	let port: number;
 
 	beforeEach(() => {
-		port = 8500 + Math.floor(Math.random() * 1000);
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -476,7 +493,7 @@ describe('HttpTransport coverage: rate limiting', () => {
 			enableRateLimit: true,
 			maxRequestsPerMinute: 1,
 		});
-		await transport.connect({} as McpServer);
+		port = await connectTransport(transport, {} as McpServer);
 
 		// First request should pass
 		await httpRequest({
@@ -501,7 +518,7 @@ describe('HttpTransport coverage: CORS origin validation', () => {
 	let port: number;
 
 	beforeEach(() => {
-		port = 8500 + Math.floor(Math.random() * 1000);
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -515,7 +532,7 @@ describe('HttpTransport coverage: CORS origin validation', () => {
 			enableRateLimit: false,
 			corsOrigin: 'https://allowed.com',
 		});
-		await transport.connect({} as McpServer);
+		port = await connectTransport(transport, {} as McpServer);
 
 		const response = await httpRequest({
 			port,
@@ -533,7 +550,7 @@ describe('HttpTransport coverage: host header validation', () => {
 	let port: number;
 
 	beforeEach(() => {
-		port = 8500 + Math.floor(Math.random() * 1000);
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -547,7 +564,7 @@ describe('HttpTransport coverage: host header validation', () => {
 			enableRateLimit: false,
 			allowedHosts: ['allowed.com'],
 		});
-		await transport.connect({} as McpServer);
+		port = await connectTransport(transport, {} as McpServer);
 
 		const response = await httpRequest({
 			port,

@@ -12,7 +12,14 @@ interface VerificationOutcomeAdmissionContext {
 	readonly recorder?: IOutcomeRecorder;
 }
 
-/** Builds one immutable calibration sample from the retained pre-admission target. */
+/**
+ * Builds one immutable calibration sample from the canonical retained pre-admission target.
+ *
+ * An explicit stable target resolved during admission is authoritative. Missing, ambiguous,
+ * id-less, or retracted targets fail closed before recorder side effects. Legacy label fallback
+ * is allowed only when it resolves one identity-bearing target. Outcome-key duplicate admission
+ * is separate from duplicate thought-ID admission.
+ */
 export function prepareVerificationOutcome(
 	context: VerificationOutcomeAdmissionContext
 ): Omit<VerificationOutcome, 'recordedAt'> | undefined {

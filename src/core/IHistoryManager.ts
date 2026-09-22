@@ -16,6 +16,7 @@ import type { ThoughtData } from './thought.js';
 export interface HistorySessionSnapshot {
 	readonly history: readonly ThoughtData[];
 	readonly branches: Readonly<Record<BranchId, readonly ThoughtData[]>>;
+	readonly verificationTargets: ReadonlyMap<ThoughtId, ThoughtId>;
 	readonly branchIds: readonly BranchId[];
 	readonly availableMcpTools: readonly string[] | undefined;
 	readonly availableSkills: readonly string[] | undefined;
@@ -74,6 +75,8 @@ export interface IHistoryManager {
 	 * @param thought - The thought data to add
 	 */
 	addThought(thought: ThoughtData, context?: ThoughtAdmissionContext): void;
+
+	assertThoughtIdentityAvailable(thought: ThoughtData): void;
 
 	/** Resolves a retained same-session numeric reference to stable thought identity. */
 	resolveThoughtReference(sessionId: SessionId, thoughtNumber: number): ThoughtReferenceResolution;

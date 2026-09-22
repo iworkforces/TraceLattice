@@ -36,6 +36,7 @@ import { getErrorMessage, WARNING_CODES } from '../errors.js';
 import { enforceJsonShape, JsonShapeError } from '../sanitize.js';
 import { SequentialThinkingSchema } from '../schema.js';
 import { GraphView } from './graph/GraphView.js';
+import { buildActiveEvidenceProjection } from './reasoning/ActiveEvidenceProjection.js';
 import { assertNever } from '../utils.js';
 import type {
 	HistorySessionSnapshot,
@@ -400,6 +401,7 @@ export class ThoughtProcessor {
 		return {
 			history: [],
 			branches: {},
+			verificationTargets: new Map(),
 			branchIds: [],
 			availableMcpTools: undefined,
 			availableSkills: undefined,
@@ -485,6 +487,7 @@ export class ThoughtProcessor {
 			);
 			this.log('State reset for session', { sessionId });
 		}
+		this.historyManager.assertThoughtIdentityAvailable(checkedInput);
 		if (registerBranchId !== undefined) {
 			this.historyManager.registerBranch(sessionId, registerBranchId);
 		}
@@ -540,12 +543,18 @@ export class ThoughtProcessor {
 		const sessionId = input.session_id;
 		const history = this.historyManager.getHistory(sessionId);
 		const branches = this.historyManager.getBranches(sessionId);
+		const verificationTargets = this.historyManager.inspectSession(sessionId).verificationTargets;
 		const confidenceSignals = this._thoughtEvaluator.computeConfidenceSignals(history, branches, {
 			currentThought: input,
 			sessionId,
+			verificationTargets,
 		});
-		const reasoningStats = this._thoughtEvaluator.computeReasoningStats(history, branches);
-		const patternSignals = this._thoughtEvaluator.computePatternSignals(history, branches);
+		const reasoningStats = this._thoughtEvaluator.computeReasoningStats(history, branches, {
+			verificationTargets,
+		});
+		const patternSignals = this._thoughtEvaluator.computePatternSignals(history, branches, {
+			verificationTargets,
+		});
 		const reasoningHints = this._generateHints(patternSignals, input.thought_number, sessionId);
 
 		return {
@@ -608,12 +617,15 @@ export class ThoughtProcessor {
 		const sessionId = currentThought.session_id;
 		let decision: StrategyDecision | undefined;
 		try {
-			const edgeStore = this._getEdgeStore();
-			const graph = edgeStore ? new GraphView(edgeStore) : undefined;
-			decision = this.strategy.decide({
+			const evidence = buildActiveEvidenceProjection({
 				sessionId,
 				history,
-				graph,
+				branches: this.historyManager.getBranches(sessionId),
+				edgeStore: this._getEdgeStore(),
+			});
+			decision = this.strategy.decide({
+				sessionId,
+				evidence,
 				stats,
 				currentThought,
 			});

@@ -86,7 +86,10 @@ function thoughtScope(thought: ThoughtData): PersistenceScope {
 }
 
 export function assertThoughtScope(
-	operation: Extract<PersistenceWriteOperation, 'saveThought' | 'saveThoughtForSession'>,
+	operation: Extract<
+		PersistenceWriteOperation,
+		'saveThought' | 'saveThoughtForSession' | 'saveBacktrackForSession'
+	>,
 	sessionId: SessionId,
 	thought: ThoughtData
 ): void {

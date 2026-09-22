@@ -1,10 +1,23 @@
 import type { ThoughtData } from '../core/thought.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { Summary } from '../core/compression/Summary.js';
-import type { BranchId, SessionId } from './ids.js';
+import type { BranchId, SessionId, ThoughtId } from './ids.js';
 
 export interface PersistenceBackend {
 	saveThoughtForSession(sessionId: SessionId, thought: ThoughtData): Promise<void>;
+	/**
+	 * Atomically persist a backtrack correction for one session.
+	 *
+	 * Implementations must retract every retained stable-ID copy of `targetThoughtId`, append
+	 * `thought`, and apply retention as one all-or-none operation. This is a required contract,
+	 * including for custom backends: callers do not probe for it or fall back to ordinary writes.
+	 * The ordinary persistence methods keep their existing contracts.
+	 */
+	saveBacktrackForSession(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): Promise<void>;
 	loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]>;
 	saveBranchForSession(
 		sessionId: SessionId,

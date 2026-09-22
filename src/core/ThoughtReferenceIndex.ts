@@ -11,6 +11,7 @@ const MISSING: ThoughtReferenceResolution = Object.freeze({ kind: 'missing' });
 /** Ref-counted stable-ID lookup for retained thoughts in each session. */
 export class ThoughtReferenceIndex {
 	private readonly _sessions = new Map<SessionId, Map<number, Map<ThoughtId, number>>>();
+	private readonly _identities = new Map<SessionId, Map<ThoughtId, number>>();
 
 	public add(sessionId: SessionId, thought: ThoughtData): void {
 		if (thought.id === undefined) return;
@@ -20,6 +21,7 @@ export class ThoughtReferenceIndex {
 			this._sessions.set(sessionId, session);
 		}
 		this._addToSession(session, thought);
+		this._addIdentity(sessionId, thought.id);
 	}
 
 	public remove(sessionId: SessionId, thought: ThoughtData): void {
@@ -35,6 +37,11 @@ export class ThoughtReferenceIndex {
 		}
 		if (bucket.size === 0) session.delete(thought.thought_number);
 		if (session.size === 0) this._sessions.delete(sessionId);
+		this._removeIdentity(sessionId, thought.id);
+	}
+
+	public has(sessionId: SessionId, thoughtId: ThoughtId): boolean {
+		return this._identities.get(sessionId)?.has(thoughtId) === true;
 	}
 
 	public resolve(sessionId: SessionId, thoughtNumber: number): ThoughtReferenceResolution {
@@ -50,20 +57,44 @@ export class ThoughtReferenceIndex {
 
 	public replaceSession(sessionId: SessionId, thoughts: Iterable<ThoughtData>): void {
 		const replacement = new Map<number, Map<ThoughtId, number>>();
-		for (const thought of thoughts) this._addToSession(replacement, thought);
+		const identities = new Map<ThoughtId, number>();
+		for (const thought of thoughts) {
+			this._addToSession(replacement, thought);
+			if (thought.id !== undefined)
+				identities.set(thought.id, (identities.get(thought.id) ?? 0) + 1);
+		}
 		if (replacement.size === 0) {
 			this._sessions.delete(sessionId);
 		} else {
 			this._sessions.set(sessionId, replacement);
 		}
+		if (identities.size === 0) this._identities.delete(sessionId);
+		else this._identities.set(sessionId, identities);
 	}
 
 	public clearSession(sessionId: SessionId): void {
 		this._sessions.delete(sessionId);
+		this._identities.delete(sessionId);
 	}
 
 	public clearAll(): void {
 		this._sessions.clear();
+		this._identities.clear();
+	}
+
+	private _addIdentity(sessionId: SessionId, thoughtId: ThoughtId): void {
+		const identities = this._identities.get(sessionId) ?? new Map<ThoughtId, number>();
+		identities.set(thoughtId, (identities.get(thoughtId) ?? 0) + 1);
+		this._identities.set(sessionId, identities);
+	}
+
+	private _removeIdentity(sessionId: SessionId, thoughtId: ThoughtId): void {
+		const identities = this._identities.get(sessionId);
+		const count = identities?.get(thoughtId);
+		if (identities === undefined || count === undefined) return;
+		if (count > 1) identities.set(thoughtId, count - 1);
+		else identities.delete(thoughtId);
+		if (identities.size === 0) this._identities.delete(sessionId);
 	}
 
 	private _addToSession(session: Map<number, Map<ThoughtId, number>>, thought: ThoughtData): void {

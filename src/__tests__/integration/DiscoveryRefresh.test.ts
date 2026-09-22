@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type ToolAwareSequentialThinkingServer } from '../../lib.js';
-import type { Logger, LogLevel } from '../../logger/StructuredLogger.js';
+import { StructuredLogger, type Logger, type LogLevel } from '../../logger/StructuredLogger.js';
 import { SkillRegistry } from '../../registry/SkillRegistry.js';
 import { ToolRegistry } from '../../registry/ToolRegistry.js';
 import { ServerConfig } from '../../ServerConfig.js';
@@ -16,6 +16,12 @@ const EVENT_DEADLINE_MS = 5_000;
 
 type RefreshableRegistry = {
 	refreshAsync(): Promise<number>;
+};
+
+type RefreshWaiter = {
+	readonly isIntended: () => boolean;
+	readonly resolve: (count: number) => void;
+	readonly reject: (error: unknown) => void;
 };
 
 function skillDocument(name: string, description: string): string {
@@ -60,22 +66,41 @@ async function withDeadline<T>(promise: Promise<T>, label: string): Promise<T> {
 	}
 }
 
-function observeRefreshes(registry: RefreshableRegistry): () => Promise<number> {
+function observeRefreshes(
+	registry: RefreshableRegistry
+): (isIntended: () => boolean) => Promise<number> {
 	const originalRefresh = registry.refreshAsync.bind(registry);
-	const refreshSpy = vi.spyOn(registry, 'refreshAsync');
-	return () =>
+	const waiters = new Set<RefreshWaiter>();
+	vi.spyOn(registry, 'refreshAsync').mockImplementation(async () => {
+		try {
+			const count = await originalRefresh();
+			for (const waiter of waiters) {
+				if (!waiter.isIntended()) continue;
+				waiters.delete(waiter);
+				waiter.resolve(count);
+			}
+			return count;
+		} catch (error) {
+			for (const waiter of waiters) waiter.reject(error);
+			waiters.clear();
+			throw error;
+		}
+	});
+	return (isIntended) =>
 		new Promise<number>((resolve, reject) => {
-			refreshSpy.mockImplementationOnce(async () => {
-				try {
-					const count = await originalRefresh();
-					resolve(count);
-					return count;
-				} catch (error) {
-					reject(error);
-					throw error;
-				}
-			});
+			waiters.add({ isIntended, resolve, reject });
 		});
+}
+
+async function withObserver<T>(
+	observer: FSWatcher,
+	action: (observer: FSWatcher) => Promise<T>
+): Promise<T> {
+	try {
+		return await action(observer);
+	} finally {
+		await observer.close();
+	}
 }
 
 describe('Discovery refresh integration', () => {
@@ -109,19 +134,19 @@ describe('Discovery refresh integration', () => {
 		const nextRefresh = observeRefreshes(registry);
 
 		// When/Then: add
-		let refreshed = nextRefresh();
+		let refreshed = nextRefresh(() => registry.has('beta'));
 		await writeFile(betaPath, skillDocument('beta', 'second'), 'utf8');
 		await withDeadline(refreshed, 'skill add refresh');
 		expect(registry.getNames().sort()).toEqual(['alpha', 'beta']);
 
 		// When/Then: change
-		refreshed = nextRefresh();
+		refreshed = nextRefresh(() => registry.get('alpha')?.description === 'updated');
 		await writeFile(alphaPath, skillDocument('alpha', 'updated'), 'utf8');
 		await withDeadline(refreshed, 'skill change refresh');
 		expect(registry.get('alpha')?.description).toBe('updated');
 
 		// When/Then: unlink
-		refreshed = nextRefresh();
+		refreshed = nextRefresh(() => !registry.has('beta'));
 		await unlink(betaPath);
 		await withDeadline(refreshed, 'skill unlink refresh');
 		expect(registry.getNames()).toEqual(['alpha']);
@@ -140,7 +165,14 @@ describe('Discovery refresh integration', () => {
 		activeWatchers.push(watcher);
 		await withDeadline(watcher.ready(), 'malformed skill watcher readiness');
 		await registry.refreshAsync();
-		const refreshed = observeRefreshes(registry)();
+		const refreshed = observeRefreshes(registry)(() =>
+			vi
+				.mocked(logger.warn)
+				.mock.calls.some(
+					([message, meta]) =>
+						message === 'Invalid skill discovery file' && meta?.retainedLastKnownGood === true
+				)
+		);
 
 		// When
 		await writeFile(skillPath, '---\n: invalid: [yaml\n---\n# Body', 'utf8');
@@ -167,23 +199,63 @@ describe('Discovery refresh integration', () => {
 		const nextRefresh = observeRefreshes(registry);
 
 		// When/Then: add
-		let refreshed = nextRefresh();
+		let refreshed = nextRefresh(() => registry.has('search'));
 		await writeFile(toolPath, toolDocument('search', 'first'), 'utf8');
 		await withDeadline(refreshed, 'tool add refresh');
 		expect(registry.getNames()).toEqual(['search']);
 
 		// When/Then: change
-		refreshed = nextRefresh();
+		refreshed = nextRefresh(() => registry.get('search')?.description === 'updated');
 		await writeFile(toolPath, toolDocument('search', 'updated'), 'utf8');
 		await withDeadline(refreshed, 'tool change refresh');
 		expect(registry.get('search')?.description).toBe('updated');
 		expect(registry.size()).toBe(1);
 
 		// When/Then: unlink
-		refreshed = nextRefresh();
+		refreshed = nextRefresh(() => !registry.has('search'));
 		await unlink(toolPath);
 		await withDeadline(refreshed, 'tool unlink refresh');
 		expect(registry.getNames()).toEqual([]);
+	});
+
+	it('waits past an earlier refresh for the intended tool state', async () => {
+		// Given
+		const toolDir = join(rootDir, 'targeted-tools');
+		const toolPath = join(toolDir, 'target.tool.md');
+		await mkdir(toolDir, { recursive: true });
+		const registry = new ToolRegistry({ toolDirs: [toolDir] });
+		await registry.discoverAsync();
+		let waiterResolved = false;
+		const refreshed = observeRefreshes(registry)(() => registry.has('target')).then(() => {
+			waiterResolved = true;
+		});
+
+		// When
+		await registry.refreshAsync();
+
+		// Then
+		expect(waiterResolved).toBe(false);
+		await writeFile(toolPath, toolDocument('target', 'intended'), 'utf8');
+		await registry.refreshAsync();
+		await refreshed;
+		expect(registry.getNames()).toEqual(['target']);
+	});
+
+	it('closes an independent observer when its operation fails', async () => {
+		// Given
+		const observedDir = join(rootDir, 'failing-observer');
+		await mkdir(observedDir);
+		const observer = watch(observedDir, { ignoreInitial: true });
+		await withDeadline(
+			new Promise<void>((resolve) => observer.once('ready', resolve)),
+			'observer ready'
+		);
+		const closeObserver = vi.spyOn(observer, 'close');
+		const failure = new Error('forced observer operation failure');
+
+		// When/Then
+		await expect(withObserver(observer, () => Promise.reject(failure))).rejects.toBe(failure);
+		expect(closeObserver).toHaveBeenCalledOnce();
 	});
 
 	it('joins an accepted refresh on stop and ignores later filesystem events', async () => {
@@ -201,10 +273,15 @@ describe('Discovery refresh integration', () => {
 			markStarted = resolve;
 		});
 		const originalRefresh = registry.refreshAsync.bind(registry);
+		let intendedRefreshStarted = false;
 		const refreshSpy = vi.spyOn(registry, 'refreshAsync').mockImplementation(async () => {
-			markStarted?.();
-			await refreshGate;
-			return originalRefresh();
+			const count = await originalRefresh();
+			if (registry.has('before-stop') && !intendedRefreshStarted) {
+				intendedRefreshStarted = true;
+				markStarted?.();
+				await refreshGate;
+			}
+			return count;
 		});
 		const watcher = new SkillWatcher(registry, undefined, [skillDir]);
 		activeWatchers.push(watcher);
@@ -225,17 +302,17 @@ describe('Discovery refresh integration', () => {
 		await withDeadline(stopping, 'watcher stop');
 		expect(registry.has('before-stop')).toBe(true);
 
-		const observer = watch(skillDir, { ignoreInitial: true });
-		await withDeadline(
-			new Promise<void>((resolve) => observer.once('ready', resolve)),
-			'observer ready'
-		);
-		const observedAdd = waitForEvent(observer, 'add');
-		await writeFile(join(skillDir, 'after-stop.md'), skillDocument('after-stop', 'two'), 'utf8');
-		await withDeadline(observedAdd, 'post-stop filesystem event');
-		await new Promise<void>((resolve) => setImmediate(resolve));
-		expect(refreshSpy).toHaveBeenCalledTimes(1);
-		await observer.close();
+		await withObserver(watch(skillDir, { ignoreInitial: true }), async (observer) => {
+			await withDeadline(
+				new Promise<void>((resolve) => observer.once('ready', resolve)),
+				'observer ready'
+			);
+			const observedAdd = waitForEvent(observer, 'add');
+			await writeFile(join(skillDir, 'after-stop.md'), skillDocument('after-stop', 'two'), 'utf8');
+			await withDeadline(observedAdd, 'post-stop filesystem event');
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(refreshSpy).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it('refreshes both configured registries through a real server watcher lifecycle', async () => {
@@ -270,39 +347,38 @@ describe('Discovery refresh integration', () => {
 		const skillPath = join(skillDir, 'factory.md');
 		const toolPath = join(toolDir, 'factory.tool.md');
 
-		let skillRefreshed = nextSkillRefresh();
-		let toolRefreshed = nextToolRefresh();
-		await Promise.all([
-			writeFile(skillPath, skillDocument('factory-skill', 'first'), 'utf8'),
-			writeFile(toolPath, toolDocument('factory-tool', 'first'), 'utf8'),
-		]);
-		await Promise.all([
-			withDeadline(skillRefreshed, 'factory skill add refresh'),
-			withDeadline(toolRefreshed, 'factory tool add refresh'),
-		]);
+		let skillRefreshed = nextSkillRefresh(
+			() => server.skills.get('factory-skill')?.description === 'first'
+		);
+		await writeFile(skillPath, skillDocument('factory-skill', 'first'), 'utf8');
+		await withDeadline(skillRefreshed, 'factory skill add refresh');
+		let toolRefreshed = nextToolRefresh(
+			() => server.tools.get('factory-tool')?.description === 'first'
+		);
+		await writeFile(toolPath, toolDocument('factory-tool', 'first'), 'utf8');
+		await withDeadline(toolRefreshed, 'factory tool add refresh');
 		expect(server.skills.get('factory-skill')?.description).toBe('first');
 		expect(server.tools.get('factory-tool')?.description).toBe('first');
 
-		skillRefreshed = nextSkillRefresh();
-		toolRefreshed = nextToolRefresh();
-		await Promise.all([
-			writeFile(skillPath, skillDocument('factory-skill', 'updated'), 'utf8'),
-			writeFile(toolPath, toolDocument('factory-tool', 'updated'), 'utf8'),
-		]);
-		await Promise.all([
-			withDeadline(skillRefreshed, 'factory skill change refresh'),
-			withDeadline(toolRefreshed, 'factory tool change refresh'),
-		]);
+		skillRefreshed = nextSkillRefresh(
+			() => server.skills.get('factory-skill')?.description === 'updated'
+		);
+		await writeFile(skillPath, skillDocument('factory-skill', 'updated'), 'utf8');
+		await withDeadline(skillRefreshed, 'factory skill change refresh');
+		toolRefreshed = nextToolRefresh(
+			() => server.tools.get('factory-tool')?.description === 'updated'
+		);
+		await writeFile(toolPath, toolDocument('factory-tool', 'updated'), 'utf8');
+		await withDeadline(toolRefreshed, 'factory tool change refresh');
 		expect(server.skills.get('factory-skill')?.description).toBe('updated');
 		expect(server.tools.get('factory-tool')?.description).toBe('updated');
 
-		skillRefreshed = nextSkillRefresh();
-		toolRefreshed = nextToolRefresh();
-		await Promise.all([unlink(skillPath), unlink(toolPath)]);
-		await Promise.all([
-			withDeadline(skillRefreshed, 'factory skill unlink refresh'),
-			withDeadline(toolRefreshed, 'factory tool unlink refresh'),
-		]);
+		skillRefreshed = nextSkillRefresh(() => !server.skills.has('factory-skill'));
+		await unlink(skillPath);
+		await withDeadline(skillRefreshed, 'factory skill unlink refresh');
+		toolRefreshed = nextToolRefresh(() => !server.tools.has('factory-tool'));
+		await unlink(toolPath);
+		await withDeadline(toolRefreshed, 'factory tool unlink refresh');
 		expect(server.skills.has('factory-skill')).toBe(false);
 		expect(server.tools.has('factory-tool')).toBe(false);
 	});
@@ -328,17 +404,22 @@ describe('Discovery refresh integration', () => {
 			loadFromPersistence: false,
 		});
 		activeServers.push(server);
-		const skillRefreshed = observeRefreshes(server.skills)();
-		const toolRefreshed = observeRefreshes(server.tools)();
+		const warning = vi.spyOn(StructuredLogger.prototype, 'warn');
+		const skillRefreshed = observeRefreshes(server.skills)(() =>
+			warning.mock.calls.some(([message]) => message === 'Invalid skill discovery file')
+		);
+		const toolRefreshed = observeRefreshes(server.tools)(() =>
+			warning.mock.calls.some(([message]) => message === 'Invalid tool discovery file')
+		);
 
-		await Promise.all([
-			writeFile(skillPath, '---\n: invalid: [yaml\n---\n# Body', 'utf8'),
-			writeFile(toolPath, '---\n: invalid: [yaml\n---\n# Body', 'utf8'),
-		]);
-		await Promise.all([
-			withDeadline(skillRefreshed, 'malformed configured skill change'),
-			withDeadline(toolRefreshed, 'malformed configured tool change'),
-		]);
+		try {
+			await writeFile(skillPath, '---\n: invalid: [yaml\n---\n# Body', 'utf8');
+			await withDeadline(skillRefreshed, 'malformed configured skill change');
+			await writeFile(toolPath, '---\n: invalid: [yaml\n---\n# Body', 'utf8');
+			await withDeadline(toolRefreshed, 'malformed configured tool change');
+		} finally {
+			warning.mockRestore();
+		}
 
 		expect(server.skills.get('stable-skill')?.description).toBe('stable');
 		expect(server.tools.get('stable-tool')?.description).toBe('stable');

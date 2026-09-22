@@ -15,10 +15,16 @@ import { ThoughtFormatter } from '../core/ThoughtFormatter.js';
 import type { ThoughtEvaluator } from '../core/ThoughtEvaluator.js';
 import { StructuredLogger } from '../logger/StructuredLogger.js';
 import type { ThoughtData } from '../core/thought.js';
-import type { HistorySessionSnapshot, IHistoryManager } from '../core/IHistoryManager.js';
+import type {
+	HistorySessionSnapshot,
+	IHistoryManager,
+	ThoughtAdmissionContext,
+} from '../core/IHistoryManager.js';
 import { ThoughtReferenceIndex } from '../core/ThoughtReferenceIndex.js';
+import { resolvedVerificationTarget } from '../core/evaluator/VerificationLinks.js';
 import { createTestThought } from './helpers/factories.js';
 import { createDisabledThoughtEvaluator } from './helpers/evaluator.js';
+import { ValidationError } from '../errors.js';
 
 const REASONING_SESSION = asSessionId('test-session');
 
@@ -32,10 +38,17 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 	private _availableMcpTools: string[] | undefined;
 	private _availableSkills: string[] | undefined;
 	private readonly _referenceIndex = new ThoughtReferenceIndex();
+	private readonly _verificationTargets = new Map();
 
-	addThought(thought: ThoughtData): void {
+	addThought(thought: ThoughtData, context?: ThoughtAdmissionContext): void {
 		this._history.push(thought);
 		this._referenceIndex.add(thought.session_id, thought);
+		const targetId = context?.resolvedReferences
+			? resolvedVerificationTarget(thought, context.resolvedReferences)
+			: undefined;
+		if (thought.id !== undefined && targetId !== undefined) {
+			this._verificationTargets.set(thought.id, targetId);
+		}
 		if (thought.branch_id) {
 			if (!this._branches[thought.branch_id]) {
 				this._branches[thought.branch_id] = [];
@@ -47,6 +60,12 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 		}
 		if (thought.available_skills) {
 			this._availableSkills = thought.available_skills;
+		}
+	}
+
+	assertThoughtIdentityAvailable(thought: ThoughtData): void {
+		if (thought.id !== undefined && this._referenceIndex.has(thought.session_id, thought.id)) {
+			throw new ValidationError('id', `Thought id already exists in session: ${thought.id}`);
 		}
 	}
 
@@ -95,12 +114,14 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 		this._availableMcpTools = undefined;
 		this._availableSkills = undefined;
 		this._referenceIndex.clearAll();
+		this._verificationTargets.clear();
 	}
 
 	inspectSession(_sessionId: string): HistorySessionSnapshot {
 		return {
 			history: [...this._history],
 			branches: { ...this._branches } as Record<BranchId, ThoughtData[]>,
+			verificationTargets: new Map(this._verificationTargets),
 			branchIds: Object.keys(this._branches) as BranchId[],
 			availableMcpTools: this._availableMcpTools,
 			availableSkills: this._availableSkills,

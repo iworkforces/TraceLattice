@@ -97,6 +97,12 @@ export class PersistenceWriter {
 		switch (work.kind) {
 			case 'thought':
 				return this._persistence.saveThoughtForSession(work.sessionId, work.thought);
+			case 'backtrack':
+				return this._persistence.saveBacktrackForSession(
+					work.sessionId,
+					work.thought,
+					work.targetThoughtId
+				);
 			case 'branch':
 				if (work.operation === 'delete') {
 					return this._persistence.deleteBranchForSession(work.sessionId, work.key);
@@ -118,6 +124,7 @@ export class PersistenceWriter {
 	): PersistenceWorkFailure {
 		switch (work.kind) {
 			case 'thought':
+			case 'backtrack':
 				return { kind: work.kind, token: work.token, sessionId: work.sessionId, attempts, cause };
 			case 'branch':
 				return {

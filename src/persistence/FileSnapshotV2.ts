@@ -16,14 +16,18 @@ import { validateFileSnapshotV2 } from './FileSnapshotValidation.js';
 
 const SessionIdStringSchema = v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{1,100}$/));
 const BranchIdStringSchema = v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{1,50}$/));
+const PersistedThoughtV2Schema = v.object({
+	...SequentialThinkingSchema.entries,
+	retracted: v.optional(v.boolean()),
+});
 const ThoughtSessionV2Schema = v.strictObject({
 	sessionId: SessionIdStringSchema,
-	thoughts: v.array(SequentialThinkingSchema),
+	thoughts: v.array(PersistedThoughtV2Schema),
 });
 const BranchRecordV2Schema = v.strictObject({
 	sessionId: SessionIdStringSchema,
 	branchId: BranchIdStringSchema,
-	thoughts: v.array(SequentialThinkingSchema),
+	thoughts: v.array(PersistedThoughtV2Schema),
 });
 const EdgeSessionV2Schema = v.strictObject({
 	sessionId: SessionIdStringSchema,

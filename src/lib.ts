@@ -16,7 +16,7 @@ import { assertNever } from './utils.js';
 import { DiscoveryCache } from './cache/DiscoveryCache.js';
 import type { ConfigFileOptions } from './config/ConfigLoader.js';
 import { ConfigLoader } from './config/ConfigLoader.js';
-import { HistoryManager } from './core/HistoryManager.js';
+import { ABSOLUTE_MAX_HISTORY_SIZE, HistoryManager } from './core/HistoryManager.js';
 import { EdgeStore } from './core/graph/EdgeStore.js';
 import { InMemorySummaryStore } from './core/compression/InMemorySummaryStore.js';
 import { CompressionService } from './core/compression/CompressionService.js';
@@ -500,6 +500,9 @@ export class ToolAwareSequentialThinkingServer
 				persistenceBufferSize: cfg.persistenceBufferSize,
 				persistenceFlushInterval: cfg.persistenceFlushInterval,
 				persistenceMaxRetries: cfg.persistenceMaxRetries,
+				persistenceHistorySize:
+					cfg.persistence.options?.maxHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
+				persistBranches: cfg.persistence.options?.persistBranches ?? true,
 				edgeStore,
 				summaryStore,
 				dagEdges: cfg.features.dagEdges,
