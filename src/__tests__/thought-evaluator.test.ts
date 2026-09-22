@@ -10,7 +10,7 @@ import { createTestThought } from './helpers/factories.js';
 import type { ThoughtData } from '../core/thought.js';
 
 import type { CalibrationMetrics, ICalibrator } from '../contracts/calibrator.js';
-import { asBranchId, asSessionId, type SessionId } from '../contracts/ids.js';
+import { asBranchId, asSessionId, asThoughtId, type SessionId } from '../contracts/ids.js';
 import type { ThoughtType } from '../contracts/reasoning-types.js';
 
 const EMPTY_CALIBRATION_METRICS: CalibrationMetrics = {
@@ -330,14 +330,17 @@ describe('ThoughtEvaluator', () => {
 		it('tracks hypothesis + verification chain correctly', () => {
 			const history = [
 				makeThought({
+					id: asThoughtId('stats-hypothesis-one'),
 					thought_type: 'hypothesis',
 					hypothesis_id: 'hyp-1',
 				}),
 				makeThought({
+					id: asThoughtId('stats-hypothesis-two'),
 					thought_type: 'hypothesis',
 					hypothesis_id: 'hyp-2',
 				}),
 				makeThought({
+					id: asThoughtId('stats-verifier'),
 					thought_type: 'verification',
 					hypothesis_id: 'hyp-1',
 				}),
@@ -483,7 +486,11 @@ describe('ThoughtEvaluator', () => {
 		// unverified_hypothesis
 		it('detects hypothesis without verification within 3 thoughts', () => {
 			const history = [
-				makeThought({ thought_number: 1, thought_type: 'hypothesis' }),
+				makeThought({
+					id: asThoughtId('unverified-pattern'),
+					thought_number: 1,
+					thought_type: 'hypothesis',
+				}),
 				makeThought({ thought_number: 2 }),
 				makeThought({ thought_number: 3 }),
 				makeThought({ thought_number: 4 }),
@@ -494,10 +501,20 @@ describe('ThoughtEvaluator', () => {
 			expect(match!.severity).toBe('warning');
 		});
 
-		it('does not fire when verification exists within 3 thoughts', () => {
+		it('does not fire when the same hypothesis has a legacy verification within 3 thoughts', () => {
 			const history = [
-				makeThought({ thought_number: 1, thought_type: 'hypothesis' }),
-				makeThought({ thought_number: 2, thought_type: 'verification' }),
+				makeThought({
+					id: asThoughtId('legacy-pattern-hypothesis'),
+					thought_number: 1,
+					thought_type: 'hypothesis',
+					hypothesis_id: 'matching',
+				}),
+				makeThought({
+					id: asThoughtId('legacy-pattern-verifier'),
+					thought_number: 2,
+					thought_type: 'verification',
+					hypothesis_id: 'matching',
+				}),
 				makeThought({ thought_number: 3 }),
 				makeThought({ thought_number: 4 }),
 			];
@@ -512,6 +529,47 @@ describe('ThoughtEvaluator', () => {
 			];
 			const signals = evaluator.computePatternSignals(history, {});
 			expect(signals.find((s) => s.pattern === 'unverified_hypothesis')).toBeUndefined();
+		});
+
+		it('keeps an unverified warning when a nearby verification targets a different hypothesis', () => {
+			const first = makeThought({
+				id: asThoughtId('first-hypothesis'),
+				thought_number: 1,
+				thought_type: 'hypothesis',
+			});
+			const second = makeThought({
+				id: asThoughtId('second-hypothesis'),
+				thought_number: 2,
+				thought_type: 'hypothesis',
+			});
+			const verifier = makeThought({
+				id: asThoughtId('second-verifier'),
+				thought_number: 3,
+				thought_type: 'verification',
+				verification_target: 2,
+			});
+			const history = [first, second, verifier, makeThought({ thought_number: 4 })];
+
+			const signals = evaluator.computePatternSignals(
+				history,
+				{},
+				{
+					verificationTargets: new Map([
+						[asThoughtId('second-verifier'), asThoughtId('second-hypothesis')],
+					]),
+				}
+			);
+
+			expect(
+				signals.some(
+					(signal) => signal.pattern === 'unverified_hypothesis' && signal.thought_range[0] === 1
+				)
+			).toBe(true);
+			expect(
+				signals.some(
+					(signal) => signal.pattern === 'healthy_verification' && signal.thought_range[0] === 2
+				)
+			).toBe(true);
 		});
 
 		// no_alternatives_explored
@@ -608,12 +666,14 @@ describe('ThoughtEvaluator', () => {
 		it('detects hypothesis followed by verification within 3 thoughts', () => {
 			const history = [
 				makeThought({
+					id: asThoughtId('healthy-pattern-hypothesis'),
 					thought_number: 1,
 					thought_type: 'hypothesis',
 					hypothesis_id: 'hyp-1',
 				}),
 				makeThought({ thought_number: 2 }),
 				makeThought({
+					id: asThoughtId('healthy-pattern-verifier'),
 					thought_number: 3,
 					thought_type: 'verification',
 					hypothesis_id: 'hyp-1',
@@ -662,9 +722,21 @@ describe('ThoughtEvaluator', () => {
 
 		it('returns verification_coverage based on verified/total hypotheses', () => {
 			const history = [
-				makeThought({ thought_type: 'hypothesis', hypothesis_id: 'h1' }),
-				makeThought({ thought_type: 'hypothesis', hypothesis_id: 'h2' }),
-				makeThought({ thought_type: 'verification', hypothesis_id: 'h1' }),
+				makeThought({
+					id: asThoughtId('coverage-hypothesis-one'),
+					thought_type: 'hypothesis',
+					hypothesis_id: 'h1',
+				}),
+				makeThought({
+					id: asThoughtId('coverage-hypothesis-two'),
+					thought_type: 'hypothesis',
+					hypothesis_id: 'h2',
+				}),
+				makeThought({
+					id: asThoughtId('coverage-verifier'),
+					thought_type: 'verification',
+					hypothesis_id: 'h1',
+				}),
 			];
 			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components!.verification_coverage).toBeCloseTo(0.5, 2);
@@ -784,9 +856,21 @@ describe('ThoughtEvaluator', () => {
 
 		it('exposes raw verification_coverage that may differ from floored', () => {
 			const history = [
-				makeThought({ thought_type: 'hypothesis', hypothesis_id: 'h1' }),
-				makeThought({ thought_type: 'hypothesis', hypothesis_id: 'h2' }),
-				makeThought({ thought_type: 'verification', hypothesis_id: 'h1' }),
+				makeThought({
+					id: asThoughtId('raw-coverage-hypothesis-one'),
+					thought_type: 'hypothesis',
+					hypothesis_id: 'h1',
+				}),
+				makeThought({
+					id: asThoughtId('raw-coverage-hypothesis-two'),
+					thought_type: 'hypothesis',
+					hypothesis_id: 'h2',
+				}),
+				makeThought({
+					id: asThoughtId('raw-coverage-verifier'),
+					thought_type: 'verification',
+					hypothesis_id: 'h1',
+				}),
 			];
 			const signals = evaluator.computeConfidenceSignals(history, {}, confidenceContext(history));
 			expect(signals.quality_components_raw!.verification_coverage).toBeCloseTo(0.5, 10);
