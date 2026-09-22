@@ -1,11 +1,11 @@
 # POOL MODULE
 
-**Updated:** 2026-09-17
+**Updated:** 2026-09-22
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
 
-Optional HTTP-layer session isolation. Each slot is a `SessionServer` from `serverFactory`. **Not** `HistoryManager`'s `SessionManager` (thought history keyed by required explicit `session_id`) and not the Streamable HTTP `Mcp-Session-Id` transport session.
+Optional HTTP-layer session isolation. Each slot is a `SessionServer` from `serverFactory`. **Not** `HistoryManager._sessions` (`SessionManager` only plans TTL/LRU) and not the Streamable HTTP `Mcp-Session-Id`.
 
 Unused by `lib.ts` / `cli.ts`. Tests + optional HTTP isolation only. Not a DI key.
 
@@ -32,9 +32,10 @@ Shared types live on `IConnectionPool.ts`: `ContentBlock`, `ProcessResult`, `Ses
 ## API
 
 - `createSession()` → `SessionId`
-- `process(sessionId, thought)`
-- `closeSession(sessionId)`
-- `getStats()` / `dispose()`
+- `process(poolSessionId, input)` — `input.session_id` stays the thought key
+- `runWithSession(sessionId, operation)` → completed / inactive / missing
+- `getSessionInfo` / `getActiveSessions` / `getStats` / `isRunning`
+- `closeSession(sessionId)` / `dispose()`
 
 ## ERRORS
 
