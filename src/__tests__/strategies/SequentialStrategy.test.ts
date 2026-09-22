@@ -1,8 +1,7 @@
 import { asSessionId } from '../../contracts/ids.js';
 import { describe, it, expect } from 'vitest';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
-import { EdgeStore } from '../../core/graph/EdgeStore.js';
-import { GraphView } from '../../core/graph/GraphView.js';
+import { buildActiveEvidenceProjection } from '../../core/reasoning/ActiveEvidenceProjection.js';
 import { createTestThought } from '../helpers/factories.js';
 import type { StrategyContext } from '../../contracts/strategy.js';
 import type { ThoughtData } from '../../core/thought.js';
@@ -27,7 +26,8 @@ function makeStats(): ReasoningStats {
 			tool_observation: 0,
 			assumption: 0,
 			decomposition: 0,
-			backtrack: 0,		},
+			backtrack: 0,
+		},
 		hypothesis_count: 0,
 		verified_hypothesis_count: 0,
 		unresolved_hypothesis_count: 0,
@@ -37,11 +37,14 @@ function makeStats(): ReasoningStats {
 }
 
 function makeContext(thought: ThoughtData): StrategyContext {
-	const store = new EdgeStore();
 	return {
 		sessionId: asSessionId('test-session'),
-		history: [thought],
-		graph: new GraphView(store),
+		evidence: buildActiveEvidenceProjection({
+			sessionId: asSessionId('test-session'),
+			history: [thought],
+			branches: {},
+			edgeStore: undefined,
+		}),
 		stats: makeStats(),
 		currentThought: thought,
 	};
