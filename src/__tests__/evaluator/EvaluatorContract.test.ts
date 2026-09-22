@@ -1,4 +1,4 @@
-import { asBranchId, asSessionId } from '../../contracts/ids.js';
+import { asBranchId, asSessionId, asThoughtId } from '../../contracts/ids.js';
 /**
  * Contract tests for the {@link ThoughtEvaluator} facade.
  *
@@ -86,12 +86,14 @@ function branchingFixture(): Fixture {
 function hypothesisVerificationFixture(): Fixture {
 	const history: ThoughtData[] = [
 		createHypothesisThought({
+			id: asThoughtId('hypothesis-verification-hypothesis'),
 			thought_number: 1,
 			total_thoughts: 3,
 			confidence: 0.6,
 			hypothesis_id: 'hyp-1',
 		}),
 		createVerificationThought({
+			id: asThoughtId('hypothesis-verification-verifier'),
 			thought_number: 2,
 			total_thoughts: 3,
 			confidence: 0.9,
@@ -116,12 +118,14 @@ function mixedTypesFixture(): Fixture {
 			confidence: 0.7,
 		}),
 		createHypothesisThought({
+			id: asThoughtId('mixed-types-hypothesis'),
 			thought_number: 2,
 			total_thoughts: 6,
 			hypothesis_id: 'hyp-1',
 			confidence: 0.65,
 		}),
 		createVerificationThought({
+			id: asThoughtId('mixed-types-verifier'),
 			thought_number: 3,
 			total_thoughts: 6,
 			hypothesis_id: 'hyp-1',
@@ -165,6 +169,7 @@ function longSessionFixture(): Fixture {
 		const conf = 0.5 + ((i * 17) % 50) / 100; // varied confidence in [0.50, 0.99]
 		history.push(
 			createTestThought({
+				id: asThoughtId(`long-session-${i}`),
 				thought: `Step ${i + 1} (${t})`,
 				thought_number: i + 1,
 				total_thoughts: types.length,
