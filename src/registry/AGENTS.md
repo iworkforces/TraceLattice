@@ -1,6 +1,6 @@
 # REGISTRY MODULE
 
-**Updated:** 2026-09-17
+**Updated:** 2026-09-22
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
@@ -32,7 +32,7 @@ Subclasses implement: `_fileExtensions`, `_entityName`, `_shouldSkipFile`, `_par
 
 ## RULES
 
-- Manual `add()` wins over files. Discovery skips names already in `_manualItems`.
+- Manual `add()` wins on name. Discovered rows are keyed by path (`_discoveredItemsByPath`). `refreshAsync` coalesces to one in-flight scan plus one queued pass.
 - Tools: `.tool.md`. Skills: `.md`, `.yml`, `.yaml`.
 - Both registries use `add`, `remove`, `update`, `get`, `getAll`, `has`, `getNames`, `clear`, and `size` from `BaseRegistry`.
 - `lazyDiscovery` is accepted on the options type but **unused in the class**. Gated in `lib.ts` (`autoDiscover` vs `lazyDiscovery`).
