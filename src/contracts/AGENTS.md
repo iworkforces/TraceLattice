@@ -1,6 +1,6 @@
 # CONTRACTS MODULE
 
-**Updated:** 2026-09-17
+**Updated:** 2026-09-22
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
@@ -11,9 +11,9 @@ Cross-module type hub. No barrel. Import the specific file.
 
 | File                    | Exports                                                                                                                                                       |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `interfaces.ts`         | `IMetrics`, `IDiscoveryCache`, `IEdgeStore` (+ `pruneSession`/`clearAll`), `IOutcomeRecorder`, `IToolRegistry`, `ISessionLock` (`withLock`/`isActive`/`size`) |
+| `interfaces.ts`         | `IMetrics`, `IDiscoveryCache`, `IEdgeStore` (+ `pruneSession`/`clearAll`), `IGraphViewStore`, `IOutcomeRecorder`, `IToolRegistry`, `ISessionLock` (`withLock`/`isActive`/`size`) |
 | `strategy.ts`           | `IReasoningStrategy.decide` (not `decideNext`), `shouldBranch`, `shouldTerminate`                                                                             |
-| `summary.ts`            | `ISummaryStore` (`add`/`get`/`forSession`/`forBranch`/`clearSession`). `Summary` value type stays in `core/compression/Summary.ts`                            |
+| `summary.ts`            | `ISummaryStore` (`add`/`get`/`forSession`/`forBranch`/`clearSession`/`clearAll`/`size`). `Summary` value stays in `core/compression/Summary.ts`                  |
 | `calibrator.ts`         | `ICalibrator`, metrics/result types                                                                                                                           |
 | `suspension.ts`         | `ISuspensionStore` (`suspend`/`resume`→null/`compareAndAdmit`/`peek`/`expireOlderThan`)                                                                       |
 | `ids.ts`                | branded IDs. Only `asSessionId()` validates, including rejection of retired `__global__`. `asBranchId()` does **not**.                                        |
@@ -21,7 +21,7 @@ Cross-module type hub. No barrel. Import the specific file.
 | `features.ts`           | `FeatureFlags`, `DEFAULT_FLAGS`. **No `hasFeature()`**.                                                                                                       |
 | `transport.ts`          | `ITransport`                                                                                                                                                  |
 | `PersistenceBackend.ts` | Session-scoped persistence contract + config                                                                                                                  |
-| `persistence-work.ts`   | buffer job/token types                                                                                                                                        |
+| `persistence-work.ts`   | Queue jobs (`thought`, `backtrack`, coalesced branch/edge/summary snapshots) and tokens                                                                       |
 
 ## RULES
 
