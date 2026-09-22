@@ -9,8 +9,13 @@ import type { Metrics } from '../metrics/metrics.impl.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { SkillRegistry } from '../registry/SkillRegistry.js';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import type { BranchId, SessionId, ThoughtId } from '../contracts/ids.js';
 import { SessionLifecycleCoordinator } from '../core/SessionLifecycleCoordinator.js';
-import { asSessionId } from '../contracts/ids.js';
+import { asSessionId, asThoughtId } from '../contracts/ids.js';
+import type { ThoughtData } from '../core/thought.js';
+import type { Edge } from '../core/graph/Edge.js';
+import type { Summary } from '../core/compression/Summary.js';
+import { createTestThought } from './helpers/factories.js';
 
 function createMockContainer() {
 	const container = new Container();
@@ -95,6 +100,49 @@ function createMockContainer() {
 		mockToolRegistry,
 		mockSkillRegistry,
 	};
+}
+
+function createCloseOnlyPersistence(close = vi.fn().mockResolvedValue(undefined)) {
+	return {
+		async saveThoughtForSession(_sessionId: SessionId, _thought: ThoughtData) {},
+		async saveBacktrackForSession(
+			_sessionId: SessionId,
+			_thought: ThoughtData,
+			_targetThoughtId: ThoughtId
+		) {},
+		async loadHistoryForSession(_sessionId: SessionId) {
+			return [];
+		},
+		async saveBranchForSession(
+			_sessionId: SessionId,
+			_branchId: BranchId,
+			_thoughts: readonly ThoughtData[]
+		) {},
+		async deleteBranchForSession(_sessionId: SessionId, _branchId: BranchId) {},
+		async loadBranchForSession(_sessionId: SessionId, _branchId: BranchId) {
+			return undefined;
+		},
+		async listBranchesForSession(_sessionId: SessionId) {
+			return [];
+		},
+		async listSessions() {
+			return [];
+		},
+		async healthy() {
+			return true;
+		},
+		async clearSession(_sessionId: SessionId) {},
+		async clearAll() {},
+		async saveEdges(_sessionId: SessionId, _edges: readonly Edge[]) {},
+		async loadEdges(_sessionId: SessionId) {
+			return [];
+		},
+		async saveSummaries(_sessionId: SessionId, _summaries: readonly Summary[]) {},
+		async loadSummaries(_sessionId: SessionId) {
+			return [];
+		},
+		close,
+	} satisfies PersistenceBackend;
 }
 
 describe('ToolAwareSequentialThinkingServer', () => {
@@ -345,6 +393,20 @@ describe('ToolAwareSequentialThinkingServer', () => {
 	});
 
 	describe('stop', () => {
+		it('provides the required backtrack operation on the close-observable backend', async () => {
+			const mockPersistence = createCloseOnlyPersistence();
+
+			await mockPersistence.saveBacktrackForSession(
+				asSessionId('close-only-persistence'),
+				createTestThought({ id: 'backtrack' }),
+				asThoughtId('target')
+			);
+			await mockPersistence.close();
+
+			expect(mockPersistence.saveBacktrackForSession).toBeTypeOf('function');
+			expect(mockPersistence.close).toHaveBeenCalledOnce();
+		});
+
 		it('should join the history-owned callback to the exact server stop promise', async () => {
 			// Given
 			const shutdownOwner = mocks.mockHistoryManager.bindShutdownOwner.mock.calls[0]?.[0];
@@ -374,12 +436,9 @@ describe('ToolAwareSequentialThinkingServer', () => {
 		});
 
 		it('should close persistence if available', async () => {
-			const mockPersistence = { close: vi.fn().mockResolvedValue(undefined) };
+			const mockPersistence = createCloseOnlyPersistence();
 			mocks.container.unregister('Persistence');
-			mocks.container.registerInstance(
-				'Persistence',
-				mockPersistence as unknown as PersistenceBackend
-			);
+			mocks.container.registerInstance('Persistence', mockPersistence);
 
 			await server.stop();
 			expect(mockPersistence.close).toHaveBeenCalled();
@@ -387,12 +446,9 @@ describe('ToolAwareSequentialThinkingServer', () => {
 
 		it('should surface persistence close errors', async () => {
 			const failure = new Error('Close failed');
-			const mockPersistence = { close: vi.fn().mockRejectedValue(failure) };
+			const mockPersistence = createCloseOnlyPersistence(vi.fn().mockRejectedValue(failure));
 			mocks.container.unregister('Persistence');
-			mocks.container.registerInstance(
-				'Persistence',
-				mockPersistence as unknown as PersistenceBackend
-			);
+			mocks.container.registerInstance('Persistence', mockPersistence);
 
 			await expect(server.stop()).rejects.toMatchObject({ errors: [failure] });
 			expect(mocks.mockLogger.error).toHaveBeenCalled();
@@ -402,13 +458,12 @@ describe('ToolAwareSequentialThinkingServer', () => {
 			// Given
 			const historyFailure = new Error('History drain failed');
 			const persistenceFailure = new Error('Persistence close failed');
-			const mockPersistence = { close: vi.fn().mockRejectedValue(persistenceFailure) };
+			const mockPersistence = createCloseOnlyPersistence(
+				vi.fn().mockRejectedValue(persistenceFailure)
+			);
 			mocks.mockHistoryManager.shutdownWithinLifecycle.mockRejectedValue(historyFailure);
 			mocks.container.unregister('Persistence');
-			mocks.container.registerInstance(
-				'Persistence',
-				mockPersistence as unknown as PersistenceBackend
-			);
+			mocks.container.registerInstance('Persistence', mockPersistence);
 			const shutdownOwner = mocks.mockHistoryManager.bindShutdownOwner.mock.calls[0]?.[0];
 
 			// When
@@ -582,12 +637,9 @@ describe('lib.ts — uncovered branches', () => {
 
 		it('should surface a non-Error thrown during persistence close', async () => {
 			const mocks = createMockContainer();
-			const mockPersistence = { close: vi.fn().mockRejectedValue(42) };
+			const mockPersistence = createCloseOnlyPersistence(vi.fn().mockRejectedValue(42));
 			mocks.container.unregister('Persistence');
-			mocks.container.registerInstance(
-				'Persistence',
-				mockPersistence as unknown as PersistenceBackend
-			);
+			mocks.container.registerInstance('Persistence', mockPersistence);
 			const server = new ToolAwareSequentialThinkingServer({
 				container: mocks.container,
 				autoDiscover: false,
