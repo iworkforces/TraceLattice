@@ -25,6 +25,7 @@ import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import { GraphView } from '../../core/graph/GraphView.js';
 import { generateUlid } from '../../core/ids.js';
 import { TreeOfThoughtStrategy } from '../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
+import { buildActiveEvidenceProjection } from '../../core/reasoning/ActiveEvidenceProjection.js';
 import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { FilePersistence } from '../../persistence/FilePersistence.js';
 import { SqlitePersistence } from '../../persistence/SqlitePersistence.js';
@@ -537,8 +538,12 @@ describe('DAG edges integration — Scenario 5: restart + GraphView', () => {
 		if (beforeCurrent === undefined) throw new TypeError('Expected current thought before restore');
 		const before = strategy.decide({
 			sessionId: DAG_SESSION,
-			history: beforeHistory,
-			graph: new GraphView(edgeStore),
+			evidence: buildActiveEvidenceProjection({
+				sessionId: DAG_SESSION,
+				history: beforeHistory,
+				branches: manager.getBranches(DAG_SESSION),
+				edgeStore,
+			}),
 			stats: evaluator.computeReasoningStats(beforeHistory, manager.getBranches(DAG_SESSION)),
 			currentThought: beforeCurrent,
 		});
@@ -560,8 +565,12 @@ describe('DAG edges integration — Scenario 5: restart + GraphView', () => {
 			throw new TypeError('Expected current thought after restore');
 		const after = strategy.decide({
 			sessionId: DAG_SESSION,
-			history: restoredHistory,
-			graph: new GraphView(restoredStore),
+			evidence: buildActiveEvidenceProjection({
+				sessionId: DAG_SESSION,
+				history: restoredHistory,
+				branches: restored.getBranches(DAG_SESSION),
+				edgeStore: restoredStore,
+			}),
 			stats: evaluator.computeReasoningStats(restoredHistory, restored.getBranches(DAG_SESSION)),
 			currentThought: restoredCurrent,
 		});
