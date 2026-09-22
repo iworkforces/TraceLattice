@@ -12,6 +12,7 @@ Scored category regression + ToT-vs-Sequential behavioral diff. Not CI-default. 
 eval/
 ├── battleTest.eval.ts          # Gate: RUN_EVAL; runs runBattleTest()
 ├── totVsSequential.eval.ts     # ToT vs Sequential report (not battle)
+├── precisionRegression.eval.ts # Gate: RUN_EVAL; fixed clock 2026-01-01
 ├── fixtures/scenarios.ts       # 10 ToT trajectories — not battle cases
 └── battleTest/
     ├── runner.ts / calculator.ts / gates.ts / reporter.ts / baseline.ts
@@ -24,7 +25,7 @@ eval/
 `scenarios/*.ts` → `runScenarios` → calculator → gates vs `baseline.json` + `overrides.json` → reporter.
 
 - 11 categories × 3 scenarios = 33. Unique `caseId`. Register in the category file **and** `scenarios/all.ts`.
-- `run()` is sync + deterministic. Double-run equality is required (`scenarios.test.ts`).
+- `BattleScenario.run()` may return a `Promise` (`stateIsolation` awaits `resetSession`). Double-run equality is still required (`scenarios.test.ts`). `battleTest/**/*.test.ts` runs in default CI; only the three `*.eval.ts` files are `RUN_EVAL`-gated.
 - `scoreChecks({ checks })` → 0/100 dimensions; average is the case score.
 - Isolation (`state-isolation-and-reset`) + malformed (`malformed-and-edge-inputs`) gate **0**. Other categories allow drop **5**.
 - `overrides.json` entries need `owner`, `reason`; optional `expiresAt` / `caseIds`. Empty array is fine.

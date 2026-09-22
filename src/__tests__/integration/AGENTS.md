@@ -4,15 +4,16 @@
 
 ## OVERVIEW
 
-Cross-module + child-process harnesses. 35 files. New multi-module work goes HERE, not suite root. Unit facets stay in `core/`, `compression/`, `strategies/`. Battle scoring stays in `eval/`.
+Cross-module + child-process harnesses. New multi-module work goes HERE, not suite root. Unit facets stay in `core/`, `compression/`, `strategies/`. Battle scoring stays in `eval/`.
 
 ## CLUSTERS
 
 | Cluster | Files |
 |---------|-------|
-| Persistence matrix | PersistenceConformance, NativeSqliteConformance, PartitionedRestore, dag-edges, FileWriterOwnership |
+| Persistence matrix | PersistenceConformance, NativeSqliteConformance, PartitionedRestore, dag-edges, FileWriterOwnership, RetractionPersistence |
+| Verification / precision | VerificationOutcome, VerificationTargetPersistence, NativeVerificationTargetRestore, PrecisionRegression |
 | Compression e2e | CompressionAutoTrigger, CompressionPersistence, CompressionCoordinatorPersistence — not `__tests__/compression/` |
-| Strategy e2e | StrategyIntegration, ToTStrategyIntegration, VerificationOutcome |
+| Strategy e2e | StrategyIntegration, ToTStrategyIntegration |
 | Session / config | SessionLifecycle, SessionReset*, ContinuationOwnership, EffectiveConfiguration, ServerLifecycleConfiguration, DiscoveryRefresh |
 | Transport / protocol | TransportContract, TransportLifecycle, ShutdownContract + `*Harness.ts` |
 | Reliability | ReliabilityScenarios* + ReliabilityScenarioHarness + `reliability-scenarios.fixture.mjs` |

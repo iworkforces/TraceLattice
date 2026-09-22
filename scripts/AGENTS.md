@@ -4,19 +4,20 @@
 
 ## OVERVIEW
 
-Packed-CLI release pipeline. Not `src/`. Builds the publishable CLI artifact: Bun shebang, pack, runtime smoke, cleanup. CD publishes the CI tarball and does **not** rebuild.
+Packed-CLI release pipeline. Not `src/`. Builds the publishable CLI artifact: Bun shebang, pack, runtime smoke, cleanup. CD `publish` ships that artifact and does not build again.
 
 ## STRUCTURE
 
 ```
 scripts/
-├── postbuild-cli.mjs          # After rsbuild: inject shebang + chmod
-├── verify-packed-cli.mjs      # npm run verify:packed entry
-├── packed-cli-package.mjs     # npm pack + required-file / export / contract checks
-├── current-contract.mjs       # Source/build/packed bans for retired or implicit contracts
-├── packed-library-api.mjs     # Installed package-root runtime + declaration consumer
-├── packed-cli-runtime.mjs     # Packed bin: named call + omitted/retired rejection + shutdown
-└── packed-cli-cleanup.mjs     # PackedCliError + temp-root removal
+├── postbuild-cli.mjs              # After rsbuild: inject shebang + chmod
+├── verify-packed-cli.mjs          # npm run verify:packed entry
+├── validate-release-receipt.mjs   # Receipt contract; CD runs this CLI
+├── packed-cli-package.mjs         # npm pack + required-file / export / contract checks
+├── current-contract.mjs           # Source/build/packed bans for retired or implicit contracts
+├── packed-library-api.mjs         # Installed package-root runtime + declaration consumer
+├── packed-cli-runtime.mjs         # Packed bin: named call + omitted/retired rejection + shutdown
+└── packed-cli-cleanup.mjs         # PackedCliError + temp-root removal
 ```
 
 ## PIPELINE
@@ -24,20 +25,17 @@ scripts/
 1. `npm run build` → rslib + rsbuild + `node scripts/postbuild-cli.mjs`.
 2. `postbuild-cli.mjs` injects `#!/usr/bin/env bun` (if missing) and `chmod 755 dist/cli.js`.
 3. `verify-packed-cli.mjs` checks source/build contracts, packs and installs, checks the installed artifact, runs library and CLI runtime checks, then writes the receipt + `SHA256SUMS`.
-4. Optional `--package-dir` / `TRACELATTICE_PACK_OUTPUT_DIR` preserves the tarball.
+4. `--package-dir` is the package root to pack. `TRACELATTICE_PACK_OUTPUT_DIR` (missing or empty) keeps the tarball, `verification.json`, and `SHA256SUMS`. CI sets `TRACELATTICE_SOURCE_SHA`.
 
 ## CI / CD
 
 - CI job `packed-cli`: Node **26** + Bun **1.4.2** asserted (`test "$(bun --version)" = "1.4.2"`).
 - Uploads artifact `tracelattice-release-${{ github.sha }}` from `TRACELATTICE_PACK_OUTPUT_DIR`.
-- CD downloads that tarball, checks `SHA256SUMS` + `verification.json`, publishes. No rebuild.
+- CD `gates` re-runs CI, and that job builds. `publish` (Node 24) checks `SHA256SUMS`, runs `validate-release-receipt.mjs`, then `npm publish <tarball> --ignore-scripts --provenance` unless that version is already on npm.
 
 ## TESTS
 
-Live in `src/__tests__/release/` (not here):
-
-- `PackedCliArtifact.test.ts` — shebang, pack contents, runtime contract.
-- `ReleaseGateScripts.test.ts` — `verify:packed` / `verify:release` / `prepublishOnly` wiring.
+Policy locks live in `src/__tests__/release/` (see that AGENTS.md): pack artifact, gate scripts, receipt validator, CI/CD workflows, SSE resurrection, Vitest authority.
 
 ## CONVENTIONS
 

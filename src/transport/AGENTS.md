@@ -1,6 +1,6 @@
 # TRANSPORT MODULE
 
-**Updated:** 2026-09-19
+**Updated:** 2026-09-22
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
@@ -49,4 +49,4 @@ Shared GET: `/health`, `/ready`, `/metrics`.
 ## FORBIDDEN
 
 - `transport → core`, `transport → registry`.
-- **Known exception:** `BaseTransport` imports `SESSION_ID_PATTERN` from `core/ids.ts`. Do not add more core imports.
+- **Known exception:** `BaseTransport` imports `SESSION_ID_PATTERN` and `MAX_SESSION_ID_LENGTH` (100) from `core/ids.ts`. Do not add more core imports. `asSessionId` stays in `contracts/ids.ts`.
