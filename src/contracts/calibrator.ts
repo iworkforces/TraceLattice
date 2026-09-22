@@ -2,7 +2,8 @@
  * Calibrator contracts — interfaces for confidence calibration.
  *
  * Defines the shape of calibration metrics, results, and the calibrator
- * service that maps raw model confidence to calibrated probabilities.
+ * service that maps raw model confidence to calibrated probabilities. It does not guarantee
+ * factuality, universal improvement, or monotonic change for each example.
  *
  * @module contracts/calibrator
  */
@@ -20,9 +21,9 @@ import type { ThoughtType } from './reasoning-types.js';
  * ```
  */
 export interface CalibrationMetrics {
-	/** Brier score across all samples (lower is better). `null` if no samples. */
+	/** Brier score across stored raw predictions and outcomes (lower is better). `null` if empty. */
 	readonly brierScore: number | null;
-	/** Expected Calibration Error (lower is better). `null` if no samples. */
+	/** ECE across stored raw predictions and outcomes (lower is better). `null` if empty. */
 	readonly ece: number | null;
 	/** Number of (prediction, outcome) samples backing the metrics. */
 	readonly sampleCount: number;
@@ -46,7 +47,7 @@ export interface CalibrationResult {
 	readonly calibrated: number;
 	/** Temperature used in the calibration mapping (1.0 = identity). */
 	readonly temperature: number;
-	/** Weight applied to the prior when blending with the raw signal. */
+	/** Weight applied to the raw confidence prior when blending with empirical evidence. */
 	readonly priorWeight: number;
 }
 
@@ -55,7 +56,9 @@ export interface CalibrationResult {
  * probabilities and reports calibration quality.
  *
  * Implementations should be deterministic for the same `(raw, type, sessionId)`
- * triple given a fixed internal state.
+ * triple given a fixed internal state. They blend raw confidence with the per-type empirical
+ * outcome mean using `priorWeight = 10 / (10 + n)`. At `n = 0`, the empirical component has
+ * zero weight and the result is raw exactly. Temperature, when fitted, is applied after blending.
  *
  * @example
  * ```typescript
@@ -65,7 +68,7 @@ export interface CalibrationResult {
  * ```
  */
 export interface ICalibrator {
-	/** Whether calibration is enabled. When `false`, `calibrate()` returns `raw` unchanged. */
+	/** Whether calibration is enabled. When `false`, `calibrate()` returns raw unchanged. */
 	readonly enabled: boolean;
 	/**
 	 * Map a raw confidence value to a calibrated value.
