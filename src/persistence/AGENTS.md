@@ -1,20 +1,21 @@
 # PERSISTENCE MODULE
 
-**Updated:** 2026-09-17
+**Updated:** 2026-09-22
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
 
-Dumb session-scoped sinks. Buffering / flush / restore live in `src/core/`. Contract is `src/contracts/PersistenceBackend.ts` (not in this folder).
+Dumb session-scoped sinks. Buffering and flush live in `src/core/`. `repairRetainedBacktracks` here rewrites restored copies in memory only. Contract is `src/contracts/PersistenceBackend.ts`.
 
 ## STRUCTURE
 
 ```
 persistence/
-├── PersistenceFactory.ts     # file | sqlite | memory | null
+├── PersistenceFactory.ts     # file | sqlite | memory, or null when disabled
 ├── MemoryPersistence.ts
-├── FilePersistence.ts + FileWriter + FileSnapshotV2
-├── SqlitePersistence.ts + SqliteDriver + SqliteSchemaV2
+├── FilePersistence.ts + FileWriter + FileSnapshotV2 + types/validation
+├── SqlitePersistence.ts + SqliteDriver + SqliteSchemaV2 + SqliteSnapshotWriter
+├── BacktrackPersistence.ts   # stageBacktrackPersistence + repairRetainedBacktracks
 └── PersistenceScope.ts / PersistenceCodec.ts / PersistenceErrors.ts
 ```
 
@@ -22,7 +23,7 @@ persistence/
 
 | Backend   | Storage                           | Notes                                                       |
 | --------- | --------------------------------- | ----------------------------------------------------------- |
-| Memory    | 4 `Map`s by `SessionId`           | Tests / default                                             |
+| Memory    | 4 `Map`s by `SessionId`           | Enabled fallback and tests. Omitted config is `enabled: false` → factory `null` |
 | File v2   | **one** `<dataDir>/snapshot.json` | Exclusive lock; full rewrite; not `edges/{session}.json`    |
 | SQLite v2 | tables + `schema_version=(1,2)`   | WAL unless `enableWAL === false`; `better-sqlite3` optional |
 
@@ -37,7 +38,7 @@ All three implement the indivisible, session-scoped `PersistenceBackend`. Every 
 - `listSessions()` and `clearAll()` are explicit all-session administration. They do not imply that a scoped operation may omit its session.
 - Edges/summaries are replace-sets per session. Scope mismatch → `PersistenceScopeMismatchError`.
 - File and SQLite startup validate the exact v2 shape and fail closed on incompatible storage.
-- File and SQLite remain v2 with no migration or version bump. Restore repairs retained copies in memory without writing storage, ignores a missing retained target, and rejects an ambiguous retained numeric target. Already-pruned or evicted evidence cannot be recovered.
+- File and SQLite remain v2 with no migration or version bump. `repairRetainedBacktracks` rewrites retained copies in memory only (no storage write), ignores a missing target, and rejects an ambiguous numeric target. Already-pruned or evicted evidence cannot be recovered.
 
 ## ANTI-PATTERNS
 
