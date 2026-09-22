@@ -7,7 +7,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
-import type { BranchId, SessionId } from '../contracts/ids.js';
+import type { BranchId, SessionId, ThoughtId } from '../contracts/ids.js';
 import type { PersistenceWork, PersistenceWorkToken } from '../contracts/persistence-work.js';
 import {
 	PersistenceDrainError,
@@ -18,6 +18,7 @@ import { NullLogger } from '../logger/NullLogger.js';
 import type { Logger } from '../logger/StructuredLogger.js';
 import { assertNever } from '../utils.js';
 import type { Summary } from './compression/Summary.js';
+import type { DurableIdentitySession } from './DurableThoughtIdentityIndex.js';
 import type { Edge } from './graph/Edge.js';
 import { PersistenceWorkQueue, type PersistenceSelectionMode } from './PersistenceWorkQueue.js';
 import { PersistenceWriter, type PersistenceDelay } from './PersistenceWriter.js';
@@ -42,6 +43,8 @@ export interface PersistenceBufferConfig {
 	readonly logger?: Logger;
 	/** Optional retry scheduler for deterministic coordination and testing. */
 	readonly delay?: PersistenceDelay;
+	readonly durableHistorySize?: number;
+	readonly persistBranches?: boolean;
 }
 
 type ActiveDrain = {
@@ -80,7 +83,7 @@ type SessionQuiescence =
 export class PersistenceBuffer {
 	private readonly _bufferSize: number;
 	private readonly _flushInterval: number;
-	private readonly _queue = new PersistenceWorkQueue();
+	private readonly _queue: PersistenceWorkQueue;
 	private readonly _writer: PersistenceWriter;
 	private _eventEmitter: PersistenceEventEmitter | null;
 	private readonly _logger: Logger;
@@ -102,6 +105,7 @@ export class PersistenceBuffer {
 	 * @param config - Persistence dependencies, trigger thresholds, and retry policy.
 	 */
 	public constructor(config: PersistenceBufferConfig) {
+		this._queue = new PersistenceWorkQueue(config.durableHistorySize, config.persistBranches);
 		this._bufferSize = config.bufferSize;
 		this._flushInterval = config.flushInterval;
 		this._eventEmitter = config.eventEmitter ?? null;
@@ -126,6 +130,14 @@ export class PersistenceBuffer {
 	/** @returns Number of accepted thought writes not yet acknowledged successful. */
 	public get pendingThoughtCount(): number {
 		return this._queue.pendingThoughtCount;
+	}
+
+	public hasThoughtIdentity(sessionId: SessionId, thoughtId: ThoughtId): boolean {
+		return this._queue.hasThoughtIdentity(sessionId, thoughtId);
+	}
+
+	public replaceDurableThoughtIdentities(sessions: readonly DurableIdentitySession[]): void {
+		this._queue.replaceDurableThoughtIdentities(sessions);
 	}
 
 	/**
@@ -153,6 +165,16 @@ export class PersistenceBuffer {
 		}
 
 		this._queue.enqueueThought(sessionId, thought);
+		if (this._queue.pendingThoughtCount >= this._bufferSize) this._triggerBackgroundDrain();
+	}
+
+	public bufferBacktrack(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): void {
+		this._assertSessionAdmissionOpen(sessionId);
+		this._queue.enqueueBacktrack(sessionId, thought, targetThoughtId);
 		if (this._queue.pendingThoughtCount >= this._bufferSize) this._triggerBackgroundDrain();
 	}
 
