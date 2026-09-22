@@ -67,6 +67,7 @@ class FakeHistoryManager implements IHistoryManager {
 	addThought(t: ThoughtData): void {
 		this._thoughts.push(t);
 	}
+	assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 	resolveThoughtReference(
 		_sessionId: SessionId,
 		_thoughtNumber: number
@@ -115,6 +116,7 @@ class FakeHistoryManager implements IHistoryManager {
 			branches: Object.fromEntries(
 				this._branchIds.map((branchId) => [branchId, [...(this._branches[branchId] ?? [])]])
 			) as Record<BranchId, readonly ThoughtData[]>,
+			verificationTargets: new Map(),
 			branchIds: [...this._branchIds],
 			availableMcpTools: undefined,
 			availableSkills: undefined,

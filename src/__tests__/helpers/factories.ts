@@ -14,9 +14,15 @@ import { asBranchId, type BranchId } from '../../contracts/ids.js';
 import type { ToolRecommendation } from '../../types/tool.js';
 import type { SkillRecommendation } from '../../types/skill.js';
 import type { StepRecommendation } from '../../core/step.js';
-import type { HistorySessionSnapshot, IHistoryManager } from '../../core/IHistoryManager.js';
+import type {
+	HistorySessionSnapshot,
+	IHistoryManager,
+	ThoughtAdmissionContext,
+} from '../../core/IHistoryManager.js';
 import { ThoughtReferenceIndex } from '../../core/ThoughtReferenceIndex.js';
+import { resolvedVerificationTarget } from '../../core/evaluator/VerificationLinks.js';
 import type { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
+import { ValidationError } from '../../errors.js';
 
 // === Branded ID Helpers ===
 
@@ -172,6 +178,7 @@ export class MockHistoryManager implements IHistoryManager {
 			branches: Record<string, ThoughtData[]>;
 			mcpTools: string[] | undefined;
 			skills: string[] | undefined;
+			verificationTargets: Map<ThoughtId, ThoughtId>;
 		}
 	>();
 	private _resetCallCount = 0;
@@ -184,17 +191,30 @@ export class MockHistoryManager implements IHistoryManager {
 				branches: {},
 				mcpTools: undefined,
 				skills: undefined,
+				verificationTargets: new Map(),
 			});
 		}
 		return this._sessions.get(sessionId)!;
 	}
 
-	addThought(thought: ThoughtData): void {
+	addThought(thought: ThoughtData, context?: ThoughtAdmissionContext): void {
 		const s = this._getSession(thought.session_id);
 		s.history.push(thought);
 		this._referenceIndex.add(thought.session_id, thought);
+		const targetId =
+			context?.resolvedReferences === undefined
+				? undefined
+				: resolvedVerificationTarget(thought, context.resolvedReferences);
+		if (thought.id !== undefined && targetId !== undefined)
+			s.verificationTargets.set(thought.id, targetId);
 		if (thought.available_mcp_tools) s.mcpTools = thought.available_mcp_tools;
 		if (thought.available_skills) s.skills = thought.available_skills;
+	}
+
+	assertThoughtIdentityAvailable(thought: ThoughtData): void {
+		if (thought.id !== undefined && this._referenceIndex.has(thought.session_id, thought.id)) {
+			throw new ValidationError('id', `Thought id already exists in session: ${thought.id}`);
+		}
 	}
 
 	resolveThoughtReference(sessionId: SessionId, thoughtNumber: number) {
@@ -259,6 +279,7 @@ export class MockHistoryManager implements IHistoryManager {
 				BranchId,
 				ThoughtData[]
 			>,
+			verificationTargets: new Map(session?.verificationTargets),
 			branchIds: Object.keys(session?.branches ?? {}) as BranchId[],
 			availableMcpTools: session?.mcpTools,
 			availableSkills: session?.skills,
