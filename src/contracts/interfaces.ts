@@ -227,6 +227,13 @@ export interface IEdgeStore {
 	size(sessionId?: SessionId): number;
 }
 
+export interface IGraphViewStore {
+	outgoing(sessionId: SessionId, from: ThoughtId): readonly Edge[];
+	incoming(sessionId: SessionId, to: ThoughtId): readonly Edge[];
+	edgesForSession(sessionId: SessionId): readonly Edge[];
+	nodesForSession?(sessionId: SessionId): readonly ThoughtId[];
+}
+
 /**
  * Tool registry interface used for tool_name allowlisting in ThoughtProcessor.
  *
