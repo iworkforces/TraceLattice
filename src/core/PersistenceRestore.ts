@@ -15,6 +15,7 @@ import {
 import type { Edge } from './graph/Edge.js';
 import { EdgeStore } from './graph/EdgeStore.js';
 import type { ThoughtData } from './thought.js';
+import { repairRetainedBacktracks } from '../persistence/BacktrackPersistence.js';
 
 export type RestoredBranch = {
 	readonly branchId: BranchId;
@@ -75,7 +76,11 @@ async function stageSession(
 		}
 		branches.push(Object.freeze({ branchId, thoughts: Object.freeze([...thoughts]) }));
 	}
-	validateThoughts(sessionId, history, branches);
+	const repaired = repairRetainedBacktracks(sessionId, history, branches);
+	const repairedBranches = repaired.branches.map((branch) =>
+		Object.freeze({ branchId: branch.branchId, thoughts: Object.freeze([...branch.thoughts]) })
+	);
+	validateThoughts(sessionId, repaired.history, repairedBranches);
 
 	const edges = await persistence.loadEdges(sessionId);
 	assertEdgeScopes(sessionId, edges);
@@ -89,8 +94,8 @@ async function stageSession(
 
 	return Object.freeze({
 		sessionId,
-		history: Object.freeze([...history]),
-		branches: Object.freeze(branches),
+		history: Object.freeze([...repaired.history]),
+		branches: Object.freeze(repairedBranches),
 		edges: Object.freeze([...edges]),
 		summaries: Object.freeze([...summaries]),
 	});
