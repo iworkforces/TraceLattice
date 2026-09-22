@@ -12,6 +12,7 @@ import { ValibotJsonSchemaAdapter } from '@tmcp/adapter-valibot';
 import { HttpTransport } from '../transport/HttpTransport.js';
 import { StreamableHttpTransport } from '../transport/StreamableHttpTransport.js';
 import { getOwner, getRequestId } from '../context/RequestContext.js';
+import { getListeningPort } from './integration/ProtocolHarness.js';
 
 interface CapturedContext {
 	owner: string | undefined;
@@ -57,6 +58,15 @@ function postJson(
 				res.on('data', (chunk) => {
 					buf += chunk.toString();
 				});
+				res.once('error', reject);
+				res.once('aborted', () => {
+					reject(new Error('Response aborted before completion'));
+				});
+				res.once('close', () => {
+					if (!res.complete) {
+						reject(new Error('Response closed before completion'));
+					}
+				});
 				res.on('end', () => {
 					resolve({
 						statusCode: res.statusCode ?? 0,
@@ -89,19 +99,25 @@ function spyContext(transport: { _mcpServer?: unknown }): CapturedContext[] {
 
 describe('Transport owner identity propagation (WU-3.2)', () => {
 	describe('HttpTransport', () => {
-		let transport: HttpTransport;
+		let transport: HttpTransport | undefined;
 		let port: number;
 		let captured: CapturedContext[];
 
 		beforeEach(async () => {
-			port = 9100 + Math.floor(Math.random() * 500);
-			transport = new HttpTransport({ port, host: '127.0.0.1', maxRequestsPerMinute: 1000 });
-			await transport.connect(makeMcpServer());
-			captured = spyContext(transport as unknown as { _mcpServer?: unknown });
+			transport = undefined;
+			const nextTransport = new HttpTransport({
+				port: 0,
+				host: '127.0.0.1',
+				maxRequestsPerMinute: 1000,
+			});
+			transport = nextTransport;
+			await nextTransport.connect(makeMcpServer());
+			port = getListeningPort(nextTransport);
+			captured = spyContext(nextTransport as unknown as { _mcpServer?: unknown });
 		});
 
 		afterEach(async () => {
-			await transport.stop();
+			if (transport !== undefined) await transport.stop();
 		});
 
 		it('sets a unique owner per request (stateless UUID)', async () => {
@@ -127,24 +143,26 @@ describe('Transport owner identity propagation (WU-3.2)', () => {
 	});
 
 	describe('StreamableHttpTransport (stateful)', () => {
-		let transport: StreamableHttpTransport;
+		let transport: StreamableHttpTransport | undefined;
 		let port: number;
 		let captured: CapturedContext[];
 
 		beforeEach(async () => {
-			port = 9700 + Math.floor(Math.random() * 200);
-			transport = new StreamableHttpTransport({
-				port,
+			transport = undefined;
+			const nextTransport = new StreamableHttpTransport({
+				port: 0,
 				host: '127.0.0.1',
 				stateful: true,
 				maxRequestsPerMinute: 1000,
 			});
-			await transport.connect(makeMcpServer());
-			captured = spyContext(transport as unknown as { _mcpServer?: unknown });
+			transport = nextTransport;
+			await nextTransport.connect(makeMcpServer());
+			port = getListeningPort(nextTransport);
+			captured = spyContext(nextTransport as unknown as { _mcpServer?: unknown });
 		});
 
 		afterEach(async () => {
-			await transport.stop();
+			if (transport !== undefined) await transport.stop();
 		});
 
 		it('sets owner = sessionId for stateful sessions', async () => {
@@ -176,24 +194,26 @@ describe('Transport owner identity propagation (WU-3.2)', () => {
 	});
 
 	describe('StreamableHttpTransport (stateless)', () => {
-		let transport: StreamableHttpTransport;
+		let transport: StreamableHttpTransport | undefined;
 		let port: number;
 		let captured: CapturedContext[];
 
 		beforeEach(async () => {
-			port = 9300 + Math.floor(Math.random() * 200);
-			transport = new StreamableHttpTransport({
-				port,
+			transport = undefined;
+			const nextTransport = new StreamableHttpTransport({
+				port: 0,
 				host: '127.0.0.1',
 				stateful: false,
 				maxRequestsPerMinute: 1000,
 			});
-			await transport.connect(makeMcpServer());
-			captured = spyContext(transport as unknown as { _mcpServer?: unknown });
+			transport = nextTransport;
+			await nextTransport.connect(makeMcpServer());
+			port = getListeningPort(nextTransport);
+			captured = spyContext(nextTransport as unknown as { _mcpServer?: unknown });
 		});
 
 		afterEach(async () => {
-			await transport.stop();
+			if (transport !== undefined) await transport.stop();
 		});
 
 		it('sets a unique owner per request (UUID)', async () => {
@@ -206,5 +226,4 @@ describe('Transport owner identity propagation (WU-3.2)', () => {
 			expect(captured[0]!.owner).not.toBe(captured[1]!.owner);
 		});
 	});
-
 });

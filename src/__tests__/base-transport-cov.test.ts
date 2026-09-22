@@ -72,8 +72,12 @@ function createMockResponse(): MockServerResponse & ServerResponse {
 	const headers: Record<string, string> = {};
 	let statusCode = 200;
 	const mock: MockServerResponse = {
-		get statusCode() { return statusCode; },
-		set statusCode(v: number) { statusCode = v; },
+		get statusCode() {
+			return statusCode;
+		},
+		set statusCode(v: number) {
+			statusCode = v;
+		},
 		writeHead: vi.fn((code: number, hdrs?: Record<string, string>) => {
 			statusCode = code;
 			if (hdrs) Object.assign(headers, hdrs);
@@ -90,6 +94,7 @@ function createMockPersistence(healthy: boolean): PersistenceBackend {
 	return {
 		healthy: async () => healthy,
 		saveThoughtForSession: vi.fn(),
+		saveBacktrackForSession: vi.fn(),
 		loadHistoryForSession: vi.fn().mockResolvedValue([]),
 		saveBranchForSession: vi.fn(),
 		deleteBranchForSession: vi.fn(),
@@ -303,7 +308,11 @@ describe('BaseTransport coverage: NoopLogger setLevel/getLevel', () => {
 	it('should use NoopLogger when no logger provided and exercise setLevel/getLevel', () => {
 		const transport = new TestableTransport();
 		// Access the private _logger to exercise NoopLogger methods
-		const noopLogger = (transport as unknown as { _logger: { setLevel: (level: string) => void; getLevel: () => string } })._logger;
+		const noopLogger = (
+			transport as unknown as {
+				_logger: { setLevel: (level: string) => void; getLevel: () => string };
+			}
+		)._logger;
 		noopLogger.setLevel('debug');
 		expect(noopLogger.getLevel()).toBe('debug');
 		noopLogger.setLevel('warn');
@@ -316,10 +325,13 @@ describe('BaseTransport coverage: _startRateLimitCleanup clears existing interva
 		const transport = new TestableTransport({ enableRateLimit: true });
 		// _rateLimitCleanupIntervalId is already set from constructor
 		// Call _startRateLimitCleanup again to exercise the clearInterval branch
-		const startCleanup = (transport as unknown as { _startRateLimitCleanup: () => void })._startRateLimitCleanup;
+		const startCleanup = (transport as unknown as { _startRateLimitCleanup: () => void })
+			._startRateLimitCleanup;
 		startCleanup.call(transport);
 		// Verify it didn't throw and interval is still set
-		const intervalId = (transport as unknown as { _rateLimitCleanupIntervalId: NodeJS.Timeout | null })._rateLimitCleanupIntervalId;
+		const intervalId = (
+			transport as unknown as { _rateLimitCleanupIntervalId: NodeJS.Timeout | null }
+		)._rateLimitCleanupIntervalId;
 		expect(intervalId).not.toBeNull();
 		transport.stop();
 	});
