@@ -1,6 +1,6 @@
 # DI MODULE
 
-**Updated:** 2026-09-17
+**Updated:** 2026-09-22
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
@@ -28,4 +28,5 @@ Not in the registry: `DiscoveryCache`, watchers, `ConnectionPool`, `HealthChecke
 
 - New service: extend `ServiceRegistry` **and** register in `lib.ts` `_createContainerCore()`.
 - Never `resolveDynamic` for registry keys.
-- `sessionLock` / `sessionLifecycle` are `@internal`.
+- `suspensionStore` is always on the type. `lib.ts` registers an instance only when `toolInterleave` is on.
+- There is no `@internal` tag on `sessionLock` / `sessionLifecycle`. Keep lock call sites on HistoryManager, ThoughtProcessor, and this registry.
