@@ -4,15 +4,20 @@
 
 ## OVERVIEW
 
-Two unrelated seams: `OutcomeRecorder` (calibration samples) and `strategies/` (policy). No shared state.
+Three seams, no shared mutable store: `OutcomeRecorder` (calibration samples), `ActiveEvidenceProjection` (what `decide()` reads), and `strategies/` (policy).
 
 ## STRUCTURE
 
 ```
 reasoning/
 ├── OutcomeRecorder.ts
-└── strategies/          # own AGENTS.md — contract method is decide(), not decideNext
+├── ActiveEvidenceProjection.ts   # retained copy + induced GraphView
+└── strategies/                   # own AGENTS.md — decide(), not decideNext
 ```
+
+## ACTIVE EVIDENCE
+
+`buildActiveEvidenceProjection` deep-copies retained main history plus branch-only thoughts and induces a graph on active endpoints only. `decide()` reads that projection, not the live `EdgeStore`.
 
 ## OUTCOMERECORDER
 

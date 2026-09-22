@@ -47,7 +47,7 @@ Config lives in a **module `WeakMap`**, not on `this`. Defaults: `beamWidth=3`, 
 
 ## SCORING
 
-`(calibrated_confidence ?? confidence ?? 0) * (quality_score ?? 0.5) * typeWeight`
+`(calibrated_confidence ?? confidence ?? 0) * (quality_score ?? 0.5) * typeWeight`, clamped to `[0, 1]`.
 
 **No novelty term.**
 

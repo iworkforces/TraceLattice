@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 
-Specialists only. Facade is parent `ThoughtEvaluator` — filters `retracted` first, then delegates.
+Specialists only. Facade is parent `ThoughtEvaluator`. Patterns drop `retracted` thoughts. Signals and stats use `VerificationLinks` (active main plus branch-only).
 
 ## COMPONENTS
 
@@ -16,6 +16,7 @@ Specialists only. Facade is parent `ThoughtEvaluator` — filters `retracted` fi
 | `Calibrator.ts` | Shrinkage + optional temperature |
 | `calibration-math.ts` | `TEMPERATURE_GRID`, `MIN_OUTCOMES_FOR_TEMPERATURE=10` |
 | `internals.ts` | `ALL_THOUGHT_TYPES` — **must stay 11-wide** |
+| `VerificationLinks.ts` | Active set + canonical verification targets |
 
 ## SIGNALCOMPUTER
 

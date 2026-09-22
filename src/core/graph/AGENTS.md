@@ -32,6 +32,8 @@ graph/
 
 Endpoints are `thought.id`, never `thought_number`.
 
+Direction: `branch`, `merge`, `derives_from`, `tool_invocation`, and `sequence` run source → current. `verifies`, `critiques`, and `revises` run current → target. `verifies` uses `resolvedVerificationTarget`; `critiques` uses `references.verificationTargetThoughtId`.
+
 ## IEDGESTORE
 
 `addEdge` · `getEdge` · `outgoing` · `incoming` · `edgesForSession` · `pruneSession` · `clearSession` · `clearAll` · `size`
@@ -46,7 +48,8 @@ Endpoints are `thought.id`, never `thought_number`.
 
 Read-only. Returns **ids only**. Live / uncached (no snapshot).
 
-- Isolated thoughts (zero edges) are **invisible** — nodes come from edges.
+- Isolated thoughts are **invisible** when nodes come only from edges (`depthFromRoots` → `undefined`). A store `nodesForSession` (the strategy projection) makes those ids visible.
+- `chronological` is BFS from roots. Neighbors follow `outgoing` order (`createdAt`), not a pure timestamp sort.
 - `branchThoughts` follows `kind === 'branch'` only (includes root).
 - `descendants` / `ancestors` / `depthFromRoots` follow **all** kinds.
 - `depthFromRoots`: 0 at a root; `undefined` if unreachable or isolated. Used by ToT `depthCap` (default 8).
