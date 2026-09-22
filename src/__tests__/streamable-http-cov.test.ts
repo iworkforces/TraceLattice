@@ -8,6 +8,7 @@ import {
 } from '../transport/StreamableHttpTransport.js';
 import { HealthChecker } from '../health/HealthChecker.js';
 import type { IMetrics } from '../contracts/interfaces.js';
+import { getListeningPort } from './integration/ProtocolHarness.js';
 
 /**
  * Helper: send an HTTP request and collect the full response.
@@ -36,6 +37,11 @@ function httpRequest(options: {
 				let body = '';
 				res.on('data', (chunk) => {
 					body += chunk.toString();
+				});
+				res.on('error', reject);
+				res.on('aborted', () => reject(new Error('HTTP response aborted')));
+				res.on('close', () => {
+					if (!res.complete) reject(new Error('HTTP response closed before completion'));
 				});
 				res.on('end', () => {
 					resolve({
@@ -122,8 +128,8 @@ describe('StreamableHttpTransport — coverage gaps', () => {
 	let transport: StreamableHttpTransport;
 	let port: number;
 
-	beforeEach(async () => {
-		port = 8000 + Math.floor(Math.random() * 1000);
+	beforeEach(() => {
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -137,13 +143,14 @@ describe('StreamableHttpTransport — coverage gaps', () => {
 		overrides: ConstructorParameters<typeof StreamableHttpTransport>[0] = {}
 	): Promise<void> {
 		transport = new StreamableHttpTransport({
-			port,
+			port: 0,
 			host: '127.0.0.1',
 			enableRateLimit: false,
 			...overrides,
 		});
 		const mcpServer = createMockMcpServer();
 		await transport.connect(mcpServer);
+		port = getListeningPort(transport);
 	}
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -306,7 +313,7 @@ describe('StreamableHttpTransport — coverage gaps', () => {
 			const metrics = createMockMetrics();
 			const healthChecker = new HealthChecker();
 			transport = createStreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				stateful: true,
 				enableRateLimit: false,
@@ -318,6 +325,7 @@ describe('StreamableHttpTransport — coverage gaps', () => {
 			expect(transport).toBeInstanceOf(StreamableHttpTransport);
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			// Verify health checker is wired
 			const healthRes = await httpRequest({ port, method: 'GET', path: '/health' });
@@ -444,8 +452,8 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	let transport: StreamableHttpTransport;
 	let port: number;
 
-	beforeEach(async () => {
-		port = 8000 + Math.floor(Math.random() * 1000);
+	beforeEach(() => {
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -457,13 +465,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('_handleMcpPost catch block (internal error)', () => {
 		it('should return JSON-RPC internal error when mcpServer.receive throws', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: false,
 			});
 			// Connect with a broken mcpServer that throws on receive
 			await transport.connect({} as McpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({
 				port,
@@ -481,7 +490,7 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 
 		it('should handle non-Error thrown objects in catch', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: false,
@@ -493,6 +502,7 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 				},
 			} as unknown as McpServer;
 			await transport.connect(brokenServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({
 				port,
@@ -509,13 +519,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('stop() force-close timeout path', () => {
 		it('should force-close and log warning when server.close is slow', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: true,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const hangingPost = request(
 				{
@@ -558,12 +569,13 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('mcpServer not ready', () => {
 		it('should return 503 when mcpServer is null', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: false,
 			});
 			await transport.connect({} as McpServer);
+			port = getListeningPort(transport);
 
 			// Force _mcpServer to null
 			(transport as unknown as { _mcpServer: null })._mcpServer = null;
@@ -582,13 +594,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('stateless mode — GET /mcp returns 405', () => {
 		it('should reject GET /mcp in stateless mode', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: false,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({
 				port,
@@ -605,13 +618,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('session validation', () => {
 		it('should return 400 for invalid Mcp-Session-Id format', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: true,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({
 				port,
@@ -628,13 +642,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 
 		it('should return 404 for unknown Mcp-Session-Id', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: true,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({
 				port,
@@ -653,13 +668,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('_sendJsonRpcError with extra data', () => {
 		it('should include extra properties in error response', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: false,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			// Invalid JSON triggers the parse error path which uses _sendJsonRpcError
 			const res = await httpRequest({
@@ -677,7 +693,7 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('body size limit enforcement', () => {
 		it('should return 413 when body exceeds max size', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: false,
@@ -685,6 +701,7 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({
 				port,
@@ -705,13 +722,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('JSON-RPC validation error', () => {
 		it('should return validation error for invalid JSON-RPC schema', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: false,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			// Valid JSON but not valid JSON-RPC
 			const res = await httpRequest({
@@ -729,13 +747,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('notification response (no body, 202)', () => {
 		it('should return 202 for notification without response', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: true,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			// Notification (no id) — server returns null response
 			const res = await httpRequest({
@@ -754,12 +773,13 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('readiness check fallback', () => {
 		it('should return default ok readiness when no healthChecker', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({ port, method: 'GET', path: '/ready' });
 			expect(res.statusCode).toBe(200);
@@ -772,12 +792,13 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('metrics endpoint', () => {
 		it('should return 404 when no metricsProvider', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({ port, method: 'GET', path: '/metrics' });
 			expect(res.statusCode).toBe(404);
@@ -787,12 +808,13 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('unsupported method on MCP endpoint', () => {
 		it('should return 405 for PUT /mcp', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({ port, method: 'PUT', path: '/mcp' });
 			expect(res.statusCode).toBe(405);
@@ -804,13 +826,14 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 	describe('GET /mcp is not allowed in stateful mode', () => {
 		it('should return 405 for GET /mcp', async () => {
 			transport = new StreamableHttpTransport({
-				port,
+				port: 0,
 				host: '127.0.0.1',
 				enableRateLimit: false,
 				stateful: true,
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
 
 			const res = await httpRequest({ port, method: 'GET', path: '/mcp' });
 			expect(res.statusCode).toBe(405);
