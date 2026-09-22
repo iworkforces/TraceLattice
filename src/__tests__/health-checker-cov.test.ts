@@ -28,6 +28,8 @@ function createMockBackend(overrides: Partial<PersistenceBackend> = {}): Persist
 		saveSummaries: vi.fn().mockResolvedValue(undefined),
 		loadSummaries: vi.fn().mockResolvedValue([]),
 		...overrides,
+		saveBacktrackForSession:
+			overrides.saveBacktrackForSession ?? vi.fn().mockResolvedValue(undefined),
 	};
 }
 
@@ -164,7 +166,11 @@ describe('HealthChecker — coverage gaps', () => {
 
 			// Now verify the NoopLogger's info() and debug() don't throw when called
 			// Access the private _logger (NoopLogger instance) to exercise uncovered methods
-			const loggerRef = (checker as unknown as { _logger: { info: () => void; debug: () => void; warn: () => void; error: () => void } })._logger;
+			const loggerRef = (
+				checker as unknown as {
+					_logger: { info: () => void; debug: () => void; warn: () => void; error: () => void };
+				}
+			)._logger;
 			expect(() => loggerRef.info()).not.toThrow();
 			expect(() => loggerRef.debug()).not.toThrow();
 			// Also verify warn and error still work
