@@ -7,9 +7,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { TreeOfThoughtStrategy } from '../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
+import {
+	TreeOfThoughtStrategy,
+	type TotConfig,
+} from '../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
-import { GraphView } from '../../core/graph/GraphView.js';
+import { buildActiveEvidenceProjection } from '../../core/reasoning/ActiveEvidenceProjection.js';
 import { createTestThought } from '../helpers/factories.js';
 import type { StrategyContext } from '../../contracts/strategy.js';
 import type { ThoughtData } from '../../core/thought.js';
@@ -37,7 +40,8 @@ function makeStats(chainDepth = 0): ReasoningStats {
 			tool_observation: 0,
 			assumption: 0,
 			decomposition: 0,
-			backtrack: 0,		},
+			backtrack: 0,
+		},
 		hypothesis_count: 0,
 		verified_hypothesis_count: 0,
 		unresolved_hypothesis_count: 0,
@@ -70,20 +74,19 @@ function makeCtx(opts: CtxOpts): StrategyContext {
 	for (const [from, to, kind] of opts.edges ?? []) addEdge(store, from, to, kind);
 	return {
 		sessionId: SID,
-		history: opts.history,
-		graph: new GraphView(store),
+		evidence: buildActiveEvidenceProjection({
+			sessionId: SID,
+			history: opts.history,
+			branches: {},
+			edgeStore: store,
+		}),
 		stats: opts.stats ?? makeStats(),
 		currentThought: opts.current,
 	};
 }
 
 /** Helper: thought with id + score-shaping fields set for predictable scoring. */
-function tot(
-	id: string,
-	number: number,
-	confidence: number,
-	quality: number = 1
-): ThoughtData {
+function tot(id: string, number: number, confidence: number, quality: number = 1): ThoughtData {
 	return createTestThought({
 		id,
 		thought_number: number,
@@ -101,16 +104,167 @@ describe('TreeOfThoughtStrategy', () => {
 	});
 
 	describe('config', () => {
-		it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
-			'rejects invalid depthCap %s',
-			(depthCap) => {
+		it('preserves omitted defaults and thresholds above one', () => {
+			// Given
+			const root = tot('root', 0, 0.1);
+			const leaf = tot('leaf', 1, 1);
+			const ctx = makeCtx({ history: [root, leaf], current: leaf, edges: [['root', 'leaf']] });
+			const omitted = new TreeOfThoughtStrategy();
+			const aboveOne = new TreeOfThoughtStrategy({ terminationConfidence: 1.25 });
+
+			// When
+			const omittedDecision = omitted.decide(ctx);
+
+			// Then
+			expect(omittedDecision).toEqual({ action: 'terminate', reason: 'confidence threshold' });
+			expect(aboveOne.decide(ctx)).toEqual({ action: 'continue', nextHint: 'explore frontier' });
+			expect(Object.getOwnPropertyNames(aboveOne)).toEqual(['name']);
+		});
+
+		it.each([
+			['beamWidth', { beamWidth: Number.NaN }, 'beamWidth must be a finite positive integer'],
+			[
+				'beamWidth',
+				{ beamWidth: Number.POSITIVE_INFINITY },
+				'beamWidth must be a finite positive integer',
+			],
+			[
+				'beamWidth',
+				{ beamWidth: Number.NEGATIVE_INFINITY },
+				'beamWidth must be a finite positive integer',
+			],
+			['beamWidth', { beamWidth: -1 }, 'beamWidth must be a finite positive integer'],
+			['beamWidth', { beamWidth: 0 }, 'beamWidth must be a finite positive integer'],
+			['beamWidth', { beamWidth: 1.5 }, 'beamWidth must be a finite positive integer'],
+			['depthCap', { depthCap: Number.NaN }, 'depthCap must be a finite nonnegative integer'],
+			[
+				'depthCap',
+				{ depthCap: Number.POSITIVE_INFINITY },
+				'depthCap must be a finite nonnegative integer',
+			],
+			[
+				'depthCap',
+				{ depthCap: Number.NEGATIVE_INFINITY },
+				'depthCap must be a finite nonnegative integer',
+			],
+			['depthCap', { depthCap: -1 }, 'depthCap must be a finite nonnegative integer'],
+			['depthCap', { depthCap: 1.5 }, 'depthCap must be a finite nonnegative integer'],
+			[
+				'plateauWindow',
+				{ plateauWindow: Number.NaN },
+				'plateauWindow must be a finite integer of at least 2',
+			],
+			[
+				'plateauWindow',
+				{ plateauWindow: Number.POSITIVE_INFINITY },
+				'plateauWindow must be a finite integer of at least 2',
+			],
+			[
+				'plateauWindow',
+				{ plateauWindow: Number.NEGATIVE_INFINITY },
+				'plateauWindow must be a finite integer of at least 2',
+			],
+			[
+				'plateauWindow',
+				{ plateauWindow: -1 },
+				'plateauWindow must be a finite integer of at least 2',
+			],
+			[
+				'plateauWindow',
+				{ plateauWindow: 0 },
+				'plateauWindow must be a finite integer of at least 2',
+			],
+			[
+				'plateauWindow',
+				{ plateauWindow: 1 },
+				'plateauWindow must be a finite integer of at least 2',
+			],
+			[
+				'plateauWindow',
+				{ plateauWindow: 2.5 },
+				'plateauWindow must be a finite integer of at least 2',
+			],
+			[
+				'plateauEpsilon',
+				{ plateauEpsilon: Number.NaN },
+				'plateauEpsilon must be a finite nonnegative number',
+			],
+			[
+				'plateauEpsilon',
+				{ plateauEpsilon: Number.POSITIVE_INFINITY },
+				'plateauEpsilon must be a finite nonnegative number',
+			],
+			[
+				'plateauEpsilon',
+				{ plateauEpsilon: Number.NEGATIVE_INFINITY },
+				'plateauEpsilon must be a finite nonnegative number',
+			],
+			[
+				'plateauEpsilon',
+				{ plateauEpsilon: -0.01 },
+				'plateauEpsilon must be a finite nonnegative number',
+			],
+			[
+				'terminationConfidence',
+				{ terminationConfidence: Number.NaN },
+				'terminationConfidence must be a finite nonnegative number',
+			],
+			[
+				'terminationConfidence',
+				{ terminationConfidence: Number.POSITIVE_INFINITY },
+				'terminationConfidence must be a finite nonnegative number',
+			],
+			[
+				'terminationConfidence',
+				{ terminationConfidence: Number.NEGATIVE_INFINITY },
+				'terminationConfidence must be a finite nonnegative number',
+			],
+			[
+				'terminationConfidence',
+				{ terminationConfidence: -0.01 },
+				'terminationConfidence must be a finite nonnegative number',
+			],
+		] satisfies ReadonlyArray<readonly [string, TotConfig, string]>)(
+			'rejects invalid %s configuration',
+			(_field, config, message) => {
 				// Given
-				const construct = (): TreeOfThoughtStrategy => new TreeOfThoughtStrategy({ depthCap });
+				const construct = (): TreeOfThoughtStrategy => new TreeOfThoughtStrategy(config);
 
 				// When / Then
-				expect(construct).toThrow(TypeError);
+				expect(construct).toThrowError(new TypeError(message));
 			}
 		);
+
+		it.each([
+			{ beamWidth: 1 },
+			{ depthCap: 0 },
+			{ plateauWindow: 2 },
+			{ plateauEpsilon: 0 },
+			{ terminationConfidence: 0 },
+			{ terminationConfidence: 1.25 },
+		] satisfies readonly TotConfig[])('accepts numeric boundary configuration %o', (config) => {
+			// Given / When / Then
+			expect(() => new TreeOfThoughtStrategy(config)).not.toThrow();
+		});
+
+		it('treats explicit undefined configuration as omitted defaults', () => {
+			// Given
+			const root = tot('root', 0, 0.1);
+			const leaf = tot('leaf', 1, 1);
+			const ctx = makeCtx({ history: [root, leaf], current: leaf, edges: [['root', 'leaf']] });
+			const omitted = new TreeOfThoughtStrategy();
+			const explicitUndefined = new TreeOfThoughtStrategy({
+				beamWidth: undefined,
+				depthCap: undefined,
+				plateauWindow: undefined,
+				plateauEpsilon: undefined,
+				terminationConfidence: undefined,
+			});
+
+			// When / Then
+			expect(explicitUndefined.decide(ctx)).toEqual(omitted.decide(ctx));
+			expect(Object.getOwnPropertyNames(explicitUndefined)).toEqual(['name']);
+		});
 
 		it('applies default config when none provided', () => {
 			// 5 leaves > default beamWidth (3) → branch when current outside beam
@@ -268,11 +422,19 @@ describe('TreeOfThoughtStrategy', () => {
 
 		it.each([
 			['missing graph', undefined],
-			['empty graph', new GraphView(new EdgeStore())],
-		] as const)('does not invent depth termination for a %s', (_label, graph) => {
+			['empty graph', new EdgeStore()],
+		] as const)('does not invent depth termination for a %s', (_label, edgeStore) => {
 			// Given
 			const current = tot('current', 1, 0.1);
-			const ctx: StrategyContext = { ...makeCtx({ history: [current], current }), graph };
+			const ctx: StrategyContext = {
+				...makeCtx({ history: [current], current }),
+				evidence: buildActiveEvidenceProjection({
+					sessionId: SID,
+					history: [current],
+					branches: {},
+					edgeStore,
+				}),
+			};
 
 			// When
 			const decision = new TreeOfThoughtStrategy({ depthCap: 0 }).decide(ctx);
@@ -456,13 +618,7 @@ describe('TreeOfThoughtStrategy', () => {
 		it('returns true when frontier > beamWidth', () => {
 			const root = tot('root', 0, 0.05);
 			const ctx = makeCtx({
-				history: [
-					root,
-					tot('t1', 1, 0.1),
-					tot('t2', 2, 0.2),
-					tot('t3', 3, 0.3),
-					tot('t4', 4, 0.4),
-				],
+				history: [root, tot('t1', 1, 0.1), tot('t2', 2, 0.2), tot('t3', 3, 0.3), tot('t4', 4, 0.4)],
 				current: root,
 				edges: [
 					['root', 't1'],
@@ -631,6 +787,112 @@ describe('TreeOfThoughtStrategy', () => {
 				expect(decision.fromThought).toBe(42);
 				expect(decision.branchId).toBe('tot-42');
 			}
+		});
+	});
+
+	describe('active evidence projection', () => {
+		it('matches an active-only fixture when a high-score leaf is retracted and preserves audit inputs', () => {
+			const root = tot('root', 1, 0.1);
+			const high = tot('high', 2, 1);
+			const low = tot('low', 3, 0.1);
+			const retractedHistory = [root, { ...high, retracted: true }, low];
+			const activeOnlyHistory = [root, low];
+			const retracted = makeCtx({
+				history: retractedHistory,
+				current: low,
+				edges: [
+					['root', 'high'],
+					['root', 'low'],
+				],
+			});
+			const activeOnly = makeCtx({
+				history: activeOnlyHistory,
+				current: low,
+				edges: [['root', 'low']],
+			});
+			const before = structuredClone(retracted);
+			const strategy = new TreeOfThoughtStrategy({ plateauWindow: 10 });
+
+			expect(strategy.decide(retracted)).toEqual(strategy.decide(activeOnly));
+			expect(strategy.shouldBranch(retracted)).toBe(strategy.shouldBranch(activeOnly));
+			expect(strategy.shouldTerminate(retracted)).toBe(strategy.shouldTerminate(activeOnly));
+			expect(retracted).toEqual(before);
+		});
+
+		it('uses retraction-filtered main order for plateau equivalence', () => {
+			const root = tot('root', 1, 0.2);
+			const removed = tot('removed', 2, 0.2);
+			const current = tot('current', 3, 0.6);
+			const strategy = new TreeOfThoughtStrategy({
+				terminationConfidence: 1.1,
+				plateauWindow: 2,
+				plateauEpsilon: 0.02,
+			});
+			const retracted = makeCtx({
+				history: [root, { ...removed, retracted: true }, current],
+				current,
+				edges: [
+					['root', 'removed'],
+					['root', 'current'],
+				],
+			});
+			const activeOnly = makeCtx({
+				history: [root, current],
+				current,
+				edges: [['root', 'current']],
+			});
+
+			expect(strategy.decide(retracted)).toEqual(strategy.decide(activeOnly));
+			expect(strategy.shouldTerminate(retracted)).toBe(strategy.shouldTerminate(activeOnly));
+		});
+
+		it('scores an active branch-only leaf in all three decision methods', () => {
+			const store = new EdgeStore();
+			addEdge(store, 'root', 'branch-leaf');
+			const root = tot('root', 1, 0.1);
+			const branchLeaf = tot('branch-leaf', 2, 0.95);
+			const context: StrategyContext = {
+				sessionId: SID,
+				evidence: buildActiveEvidenceProjection({
+					sessionId: SID,
+					history: [root],
+					branches: { alt: [branchLeaf] },
+					edgeStore: store,
+				}),
+				stats: makeStats(),
+				currentThought: branchLeaf,
+			};
+			const strategy = new TreeOfThoughtStrategy({ plateauWindow: 10 });
+
+			expect(strategy.decide(context)).toEqual({
+				action: 'terminate',
+				reason: 'confidence threshold',
+			});
+			expect(strategy.shouldTerminate(context)).toBe(true);
+			expect(strategy.shouldBranch(context)).toBe(false);
+		});
+
+		it('does not retain depth through a retracted interior node', () => {
+			const root = tot('root', 1, 0.1);
+			const interior = tot('interior', 2, 0.1);
+			const current = tot('current', 3, 0.1);
+			const context = makeCtx({
+				history: [root, { ...interior, retracted: true }, current],
+				current,
+				edges: [
+					['root', 'interior'],
+					['interior', 'current'],
+				],
+			});
+			const strategy = new TreeOfThoughtStrategy({
+				depthCap: 1,
+				terminationConfidence: 1.1,
+				plateauWindow: 10,
+			});
+
+			expect(strategy.decide(context).action).toBe('continue');
+			expect(strategy.shouldTerminate(context)).toBe(false);
+			expect(strategy.shouldBranch(context)).toBe(false);
 		});
 	});
 

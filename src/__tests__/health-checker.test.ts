@@ -24,6 +24,8 @@ function createMockBackend(overrides: Partial<PersistenceBackend> = {}): Persist
 		saveSummaries: vi.fn().mockResolvedValue(undefined),
 		loadSummaries: vi.fn().mockResolvedValue([]),
 		...overrides,
+		saveBacktrackForSession:
+			overrides.saveBacktrackForSession ?? vi.fn().mockResolvedValue(undefined),
 	};
 }
 
@@ -164,7 +166,7 @@ describe('HealthChecker', () => {
 			const result = await checker.checkReadiness();
 
 			expect(result.components['persistence']!.details).toBe(
-					'Health check error: Connection refused'
+				'Health check error: Connection refused'
 			);
 		});
 

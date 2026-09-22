@@ -47,6 +47,8 @@ import { getOwner } from '../context/RequestContext.js';
 import { ThoughtReferenceIndex, type ThoughtReferenceResolution } from './ThoughtReferenceIndex.js';
 import { resolveThoughtReferencesForAdmission } from './CrossReferenceValidator.js';
 import { SessionLifecycleCoordinator } from './SessionLifecycleCoordinator.js';
+import { resolvedVerificationTarget } from './evaluator/VerificationLinks.js';
+import { reconstructVerificationTargets } from './VerificationTargetRestore.js';
 
 /** Absolute maximum history size (~20MB at 2KB/thought). Cannot be overridden. */
 export const ABSOLUTE_MAX_HISTORY_SIZE = 10_000;
@@ -54,6 +56,7 @@ export const ABSOLUTE_MAX_HISTORY_SIZE = 10_000;
 interface SessionState {
 	thought_history: ThoughtData[];
 	branches: Record<string, ThoughtData[]>;
+	verificationTargets: Map<ThoughtId, ThoughtId>;
 	availableMcpTools: string[] | undefined;
 	availableSkills: string[] | undefined;
 	lastAccessedAt: number;
@@ -81,6 +84,8 @@ export interface HistoryManagerConfig {
 	persistenceFlushInterval?: number;
 	/** Max retries for failed persistence flushes. @default 3 */
 	persistenceMaxRetries?: number;
+	persistenceHistorySize?: number;
+	persistBranches?: boolean;
 	eventEmitter?: PersistenceEventEmitter;
 	edgeStore?: IEdgeStore;
 	summaryStore?: ISummaryStore;
@@ -181,6 +186,8 @@ export class HistoryManager implements IHistoryManager {
 				bufferSize: config.persistenceBufferSize ?? 100,
 				flushInterval: config.persistenceFlushInterval ?? 1000,
 				maxRetries: config.persistenceMaxRetries ?? 3,
+				durableHistorySize: config.persistenceHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
+				persistBranches: config.persistBranches ?? true,
 				eventEmitter: this._eventEmitter,
 				logger: this._logger,
 			});
@@ -389,6 +396,7 @@ export class HistoryManager implements IHistoryManager {
 		return {
 			thought_history: [],
 			branches: {},
+			verificationTargets: new Map<ThoughtId, ThoughtId>(),
 			availableMcpTools: undefined,
 			availableSkills: undefined,
 			lastAccessedAt: Date.now(),
@@ -437,6 +445,18 @@ export class HistoryManager implements IHistoryManager {
 		);
 	}
 
+	public assertThoughtIdentityAvailable(thought: ThoughtData): void {
+		if (thought.id === undefined) return;
+		const sessionId = asSessionId(thought.session_id);
+		this._authorizeExistingSession(sessionId, this._getCurrentOwner());
+		if (
+			this._referenceIndex.has(sessionId, thought.id) ||
+			this._persistenceBuffer?.hasThoughtIdentity(sessionId, thought.id) === true
+		) {
+			throw new ValidationError('id', `Thought id already exists in session: ${thought.id}`);
+		}
+	}
+
 	private _addThoughtWithinOperation(
 		sessionId: SessionId,
 		thought: ThoughtData,
@@ -445,6 +465,7 @@ export class HistoryManager implements IHistoryManager {
 		this._persistenceBuffer?.assertSessionAdmissionOpen(sessionId);
 		const owner = this._getCurrentOwner();
 		this._authorizeExistingSession(sessionId, owner);
+		this.assertThoughtIdentityAvailable(thought);
 		const resolvedReferences = this._resolveAdmissionReferences(sessionId, thought, context);
 		const session = this._getSessionWithinOperation(sessionId, owner);
 		this._metrics?.counter(
@@ -455,6 +476,7 @@ export class HistoryManager implements IHistoryManager {
 		);
 
 		session.thought_history.push(thought);
+		this._recordVerificationTarget(session, thought, resolvedReferences);
 
 		// Logical retraction: when a backtrack thought is added, mark its target
 		// as retracted (append-only — target remains in history).
@@ -488,6 +510,7 @@ export class HistoryManager implements IHistoryManager {
 			resolvedReferences,
 		});
 		const evictedBranchIds = this._enforceRetention(session, thought.branch_id);
+		this._pruneVerificationTargets(session);
 		this._rebuildReferenceIndex(sessionId, session);
 		const prunedEdges = this._pruneUnretainedEdges(sessionId, session);
 		this._bufferRetainedState(
@@ -496,7 +519,8 @@ export class HistoryManager implements IHistoryManager {
 			thought,
 			evictedBranchIds,
 			edgeAdded,
-			prunedEdges
+			prunedEdges,
+			resolvedReferences.backtrackTargetThoughtId
 		);
 	}
 
@@ -536,6 +560,30 @@ export class HistoryManager implements IHistoryManager {
 		return this._cleanupSessionBranches(session);
 	}
 
+	private _recordVerificationTarget(
+		session: SessionState,
+		thought: ThoughtData,
+		references: NonNullable<ThoughtAdmissionContext['resolvedReferences']>
+	): void {
+		const targetId = resolvedVerificationTarget(thought, references);
+		if (thought.id !== undefined && targetId !== undefined) {
+			session.verificationTargets.set(thought.id, targetId);
+		}
+	}
+
+	private _pruneVerificationTargets(session: SessionState): void {
+		const retainedIds = new Set(
+			[session.thought_history, ...Object.values(session.branches)]
+				.flat()
+				.flatMap((thought) => (thought.id === undefined ? [] : [thought.id]))
+		);
+		for (const [verifierId, targetId] of session.verificationTargets) {
+			if (!retainedIds.has(verifierId) || !retainedIds.has(targetId)) {
+				session.verificationTargets.delete(verifierId);
+			}
+		}
+	}
+
 	private _pruneUnretainedEdges(sessionId: SessionId, session: SessionState): number {
 		if (this._edgeStore === undefined) return 0;
 		const retainedIds = new Set<ThoughtId>();
@@ -555,13 +603,16 @@ export class HistoryManager implements IHistoryManager {
 		thought: ThoughtData,
 		evictedBranchIds: readonly BranchId[],
 		edgeAdded: boolean,
-		prunedEdges: number
+		prunedEdges: number,
+		backtrackTargetThoughtId?: ThoughtId
 	): void {
 		const buffer = this._persistenceBuffer;
 		if (buffer === null) return;
-		buffer.bufferThought(sessionId, thought);
+		if (backtrackTargetThoughtId === undefined) buffer.bufferThought(sessionId, thought);
+		else buffer.bufferBacktrack(sessionId, thought, backtrackTargetThoughtId);
 		if (
 			thought.branch_id !== undefined ||
+			backtrackTargetThoughtId !== undefined ||
 			evictedBranchIds.length > 0 ||
 			session.pendingRestoreBranchDeletes.size > 0
 		) {
@@ -705,6 +756,7 @@ export class HistoryManager implements IHistoryManager {
 			return {
 				history: [],
 				branches: {},
+				verificationTargets: new Map(),
 				branchIds: [],
 				availableMcpTools: undefined,
 				availableSkills: undefined,
@@ -715,6 +767,7 @@ export class HistoryManager implements IHistoryManager {
 			branches: Object.fromEntries(
 				Object.entries(session.branches).map(([branchId, thoughts]) => [branchId, [...thoughts]])
 			) as Record<BranchId, readonly ThoughtData[]>,
+			verificationTargets: new Map(session.verificationTargets),
 			branchIds: Array.from(session.branchIdentities),
 			availableMcpTools:
 				session.availableMcpTools === undefined ? undefined : [...session.availableMcpTools],
@@ -823,6 +876,11 @@ export class HistoryManager implements IHistoryManager {
 
 	private _restoredState(restored: RestoredSession): SessionState {
 		const session = this._createSessionState(undefined, 'restored');
+		session.verificationTargets = reconstructVerificationTargets(
+			restored.sessionId,
+			restored.history,
+			restored.branches
+		);
 		for (let index = restored.history.length - 1; index >= 0; index--) {
 			const thought = restored.history[index];
 			if (thought === undefined) continue;
@@ -844,6 +902,7 @@ export class HistoryManager implements IHistoryManager {
 			session.branchIdentities.add(branch.branchId);
 			session.branches[branch.branchId] = branch.thoughts.slice(-this._maxBranchSize);
 		}
+		this._pruneVerificationTargets(session);
 		return session;
 	}
 
@@ -876,6 +935,7 @@ export class HistoryManager implements IHistoryManager {
 				)
 			);
 		}
+		this._persistenceBuffer?.replaceDurableThoughtIdentities(restored.sessions);
 
 		this._edgeStore?.clearAll();
 		this._summaryStore?.clearAll();

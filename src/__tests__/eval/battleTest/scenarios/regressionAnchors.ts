@@ -1,5 +1,5 @@
 import { EdgeStore } from '../../../../core/graph/EdgeStore.js';
-import { GraphView } from '../../../../core/graph/GraphView.js';
+import { buildActiveEvidenceProjection } from '../../../../core/reasoning/ActiveEvidenceProjection.js';
 import { TreeOfThoughtStrategy } from '../../../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
 import type { StrategyContext } from '../../../../contracts/strategy.js';
 import { createTestSessionId, createTestThought } from '../../../helpers/factories.js';
@@ -11,7 +11,7 @@ const category = 'regression-anchors-and-calibration';
 
 type ContextInput = {
 	readonly history: ReturnType<typeof createTestThought>[];
-	readonly graph: GraphView | undefined;
+	readonly edgeStore: EdgeStore | undefined;
 };
 
 function createContext(input: ContextInput): StrategyContext {
@@ -23,8 +23,12 @@ function createContext(input: ContextInput): StrategyContext {
 	}
 	return {
 		sessionId,
-		history: input.history,
-		graph: input.graph,
+		evidence: buildActiveEvidenceProjection({
+			sessionId,
+			history: input.history,
+			branches: {},
+			edgeStore: input.edgeStore,
+		}),
 		stats: evaluator.computeReasoningStats(input.history, {}),
 		currentThought,
 	};
@@ -38,7 +42,7 @@ export const REGRESSION_ANCHOR_SCENARIOS = [
 		run: () => {
 			const context = createContext({
 				history: [createTestThought({ id: 'root', thought_number: 1 })],
-				graph: undefined,
+				edgeStore: undefined,
 			});
 			const decision = new TreeOfThoughtStrategy().decide(context);
 			return scoreChecks({
@@ -72,7 +76,7 @@ export const REGRESSION_ANCHOR_SCENARIOS = [
 				createTestThought({ id: 'root', thought_number: 1, confidence: 0.5, quality_score: 0.5 }),
 				createTestThought({ id: 'leaf', thought_number: 2, confidence: 1, quality_score: 1 }),
 			];
-			const context = createContext({ history, graph: new GraphView(store) });
+			const context = createContext({ history, edgeStore: store });
 			const decision = new TreeOfThoughtStrategy().decide(context);
 			return scoreChecks({
 				caseId: 'regression-anchor-tot-confidence-terminates',
@@ -128,7 +132,7 @@ export const REGRESSION_ANCHOR_SCENARIOS = [
 				createTestThought({ id: 'b', thought_number: 3, confidence: 0.8, quality_score: 0.8 }),
 				createTestThought({ id: 'c', thought_number: 4, confidence: 0.2, quality_score: 0.5 }),
 			];
-			const context = createContext({ history, graph: new GraphView(store) });
+			const context = createContext({ history, edgeStore: store });
 			const decision = new TreeOfThoughtStrategy({
 				beamWidth: 2,
 				terminationConfidence: 1.1,

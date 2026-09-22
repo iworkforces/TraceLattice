@@ -101,6 +101,13 @@ function parseStepRecommendation(
 }
 
 export function parseThoughtData(raw: unknown, sourcePath: string): ThoughtData {
+	const retracted =
+		typeof raw === 'object' && raw !== null && 'retracted' in raw
+			? Reflect.get(raw, 'retracted')
+			: undefined;
+	if (retracted !== undefined && typeof retracted !== 'boolean') {
+		throw new PersistenceCompatibilityError(sourcePath, 'thought retracted flag is not boolean');
+	}
 	const parsed = v.parse(SequentialThinkingSchema, raw);
 	const {
 		id,
@@ -133,6 +140,7 @@ export function parseThoughtData(raw: unknown, sourcePath: string): ThoughtData 
 			: {
 					previous_steps: previous_steps.map((step) => parseStepRecommendation(step, sourcePath)),
 				}),
+		...(retracted === undefined ? {} : { retracted }),
 	};
 }
 

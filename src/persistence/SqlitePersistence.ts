@@ -1,11 +1,8 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type {
-	PersistenceConfig,
-	PersistenceBackend,
-} from '../contracts/PersistenceBackend.js';
-import { asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
+import type { PersistenceConfig, PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import { asSessionId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { ThoughtData } from '../core/thought.js';
@@ -31,6 +28,7 @@ import {
 	type PersistedThoughtCollection,
 } from './PersistenceScope.js';
 import { initializeOrValidateSqliteV2 } from './SqliteSchemaV2.js';
+import { stageBacktrackPersistence } from './BacktrackPersistence.js';
 
 type SqliteOptions = PersistenceConfig['options'];
 
@@ -97,6 +95,38 @@ export class SqlitePersistence implements PersistenceBackend {
 		const validatedSessionId = asSessionId(sessionId);
 		assertThoughtScope('saveThoughtForSession', validatedSessionId, thought);
 		this._saveThought(validatedSessionId, thought);
+	}
+
+	public async saveBacktrackForSession(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): Promise<void> {
+		const validatedSessionId = asSessionId(sessionId);
+		runSqliteTransaction(this._db, () => {
+			const current = this._loadValidatedThoughtState(validatedSessionId);
+			const staged = stageBacktrackPersistence(
+				validatedSessionId,
+				current.history,
+				[...current.branches].map(([branchId, thoughts]) => ({ branchId, thoughts })),
+				thought,
+				targetThoughtId,
+				this._maxHistorySize
+			);
+			this._db.prepare('DELETE FROM thoughts WHERE session_id = ?').run(validatedSessionId);
+			const insertThought = this._db.prepare(
+				'INSERT INTO thoughts (session_id, data) VALUES (?, ?)'
+			);
+			for (const retained of staged.history) {
+				insertThought.run(validatedSessionId, JSON.stringify(retained));
+			}
+			const replaceBranch = this._db.prepare(
+				'INSERT OR REPLACE INTO branches (session_id, branch_id, data) VALUES (?, ?, ?)'
+			);
+			for (const branch of staged.branches) {
+				replaceBranch.run(validatedSessionId, branch.branchId, JSON.stringify(branch.thoughts));
+			}
+		});
 	}
 
 	private _saveThought(sessionId: SessionId, thought: ThoughtData): void {

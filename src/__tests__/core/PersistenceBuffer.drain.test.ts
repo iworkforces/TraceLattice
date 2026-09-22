@@ -32,6 +32,10 @@ interface ThoughtWrite {
 	readonly thought: ThoughtData;
 }
 
+interface BacktrackWrite extends ThoughtWrite {
+	readonly targetThoughtId: ReturnType<typeof asThoughtId>;
+}
+
 interface BranchWrite {
 	readonly sessionId: SessionId;
 	readonly branchId: BranchId;
@@ -50,6 +54,7 @@ interface SnapshotWrite<T> {
 
 interface PersistenceHandlers {
 	readonly thought?: (write: ThoughtWrite) => Promise<void>;
+	readonly backtrack?: (write: BacktrackWrite) => Promise<void>;
 	readonly branch?: (write: BranchWrite) => Promise<void>;
 	readonly branchDelete?: (write: BranchDelete) => Promise<void>;
 	readonly edges?: (write: SnapshotWrite<Edge>) => Promise<void>;
@@ -73,6 +78,7 @@ class CoordinatorFault extends Error {
 
 class RecordingPersistence implements PersistenceBackend {
 	public readonly thoughtWrites: ThoughtWrite[] = [];
+	public readonly backtrackWrites: BacktrackWrite[] = [];
 	public readonly branchWrites: BranchWrite[] = [];
 	public readonly branchDeletes: BranchDelete[] = [];
 	public readonly edgeWrites: SnapshotWrite<Edge>[] = [];
@@ -87,6 +93,16 @@ class RecordingPersistence implements PersistenceBackend {
 		this.scopedThoughts.push(write);
 		this.thoughtWrites.push(write);
 		await this._handlers.thought?.(write);
+	}
+
+	public async saveBacktrackForSession(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ReturnType<typeof asThoughtId>
+	): Promise<void> {
+		const write = { sessionId, thought, targetThoughtId };
+		this.backtrackWrites.push(write);
+		await this._handlers.backtrack?.(write);
 	}
 
 	public async loadHistoryForSession(_sessionId: SessionId): Promise<ThoughtData[]> {
@@ -566,6 +582,120 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 });
 
 describe('PersistenceBuffer auxiliary-only work', () => {
+	it('dispatches a frozen backtrack payload with its accepted stable target id', async () => {
+		const sessionId = asSessionId('frozen-backtrack');
+		const persistence = new RecordingPersistence();
+		const harness = createHarness({ persistence });
+		const accepted = createTestThought({
+			id: 'backtrack-id',
+			session_id: sessionId,
+			thought_type: 'backtrack',
+			backtrack_target: 1,
+			available_mcp_tools: ['before'],
+		});
+		harness.buffer.bufferBacktrack(sessionId, accepted, asThoughtId('stable-target'));
+		accepted.retracted = true;
+		accepted.available_mcp_tools?.push('after');
+
+		await drain(harness.buffer);
+
+		expect(persistence.backtrackWrites).toHaveLength(1);
+		expect(persistence.backtrackWrites[0]).toMatchObject({
+			sessionId,
+			targetThoughtId: asThoughtId('stable-target'),
+			thought: { available_mcp_tools: ['before'] },
+		});
+		expect(persistence.backtrackWrites[0]?.thought).not.toHaveProperty('retracted');
+	});
+
+	it('orders a corrected replacement after an already selected stale branch snapshot', async () => {
+		const sessionId = asSessionId('stale-branch-correction');
+		const branchId = asBranchId('branch');
+		const gate = createDeferred();
+		const events: string[] = [];
+		const persistence = new RecordingPersistence({
+			branch: async () => {
+				events.push('branch');
+				if (persistence.branchWrites.length === 1) await gate.promise;
+			},
+			backtrack: async () => {
+				events.push('backtrack');
+			},
+		});
+		const harness = createHarness({ persistence });
+		const retainedTarget = createTestThought({
+			id: 'target-id',
+			session_id: sessionId,
+			branch_id: branchId,
+		});
+		acceptBranch(harness.buffer, sessionId, branchId, [retainedTarget]);
+		const draining = drain(harness.buffer);
+		await flushMicrotasks();
+		harness.buffer.bufferBacktrack(
+			sessionId,
+			createTestThought({
+				id: 'backtrack-id',
+				session_id: sessionId,
+				thought_type: 'backtrack',
+				backtrack_target: 1,
+			}),
+			asThoughtId('target-id')
+		);
+		acceptBranch(harness.buffer, sessionId, branchId, [{ ...retainedTarget, retracted: true }]);
+		gate.resolve();
+
+		await draining;
+
+		expect(events).toEqual(['branch', 'backtrack', 'branch']);
+		expect(persistence.branchWrites.map((write) => write.thoughts)).toEqual([
+			[retainedTarget],
+			[{ ...retainedTarget, retracted: true }],
+		]);
+	});
+
+	it('attributes an atomic backtrack failure to its originating token and retries it', async () => {
+		const sessionId = asSessionId('backtrack-token-failure');
+		const failure = new ExpectedWriteError('atomic backtrack failed');
+		let shouldFail = true;
+		const persistence = new RecordingPersistence({
+			backtrack: async () => {
+				if (shouldFail) throw failure;
+			},
+		});
+		const harness = createHarness({ persistence, maxRetries: 0 });
+		harness.buffer.bufferBacktrack(
+			sessionId,
+			createTestThought({
+				id: 'backtrack-id',
+				session_id: sessionId,
+				thought_type: 'backtrack',
+				backtrack_target: 1,
+			}),
+			asThoughtId('target-id')
+		);
+
+		const first = await settle(drain(harness.buffer));
+		shouldFail = false;
+		const second = await settle(drain(harness.buffer));
+
+		expect(first).toMatchObject({
+			status: 'rejected',
+			reason: {
+				failures: [
+					{
+						kind: 'backtrack',
+						token: 'persistence-work-1',
+						sessionId,
+						attempts: 1,
+						cause: failure,
+					},
+				],
+			},
+		});
+		expect(second).toEqual({ status: 'fulfilled' });
+		expect(persistence.backtrackWrites).toHaveLength(2);
+	});
+
 	it('drains edge-only work without requiring a thought', async () => {
 		// Given
 		const sessionId = asSessionId('edge-only');
@@ -963,6 +1093,42 @@ describe('PersistenceBuffer session-filtered barriers', () => {
 		// Then
 		expect(ranBeforeRelease).toBe(false);
 		expect(continuationRan).toBe(true);
+	});
+
+	it('keeps a reset barrier behind an accepted atomic backtrack', async () => {
+		const sessionId = asSessionId('backtrack-reset-order');
+		const gate = createDeferred();
+		const events: string[] = [];
+		const persistence = new RecordingPersistence({
+			backtrack: async () => {
+				events.push('backtrack:start');
+				await gate.promise;
+				events.push('backtrack:complete');
+			},
+		});
+		const harness = createHarness({ persistence });
+		harness.buffer.bufferBacktrack(
+			sessionId,
+			createTestThought({
+				id: 'reset-race-backtrack',
+				session_id: sessionId,
+				thought_type: 'backtrack',
+				backtrack_target: 1,
+			}),
+			asThoughtId('reset-race-target')
+		);
+		const activeDrain = drain(harness.buffer);
+		await flushMicrotasks();
+
+		const barrier = harness.buffer.withSessionResetBarrier(sessionId, async () => {
+			events.push('reset');
+		});
+		await flushMicrotasks();
+		expect(events).toEqual(['backtrack:start']);
+
+		gate.resolve();
+		await Promise.all([activeDrain, barrier]);
+		expect(events).toEqual(['backtrack:start', 'backtrack:complete', 'reset']);
 	});
 });
 

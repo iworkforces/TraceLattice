@@ -15,12 +15,9 @@
 
 import { describe, it } from 'vitest';
 
-import type {
-	StrategyContext,
-	StrategyDecision,
-} from '../../contracts/strategy.js';
+import type { StrategyContext, StrategyDecision } from '../../contracts/strategy.js';
+import { buildActiveEvidenceProjection } from '../../core/reasoning/ActiveEvidenceProjection.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
-import { GraphView } from '../../core/graph/GraphView.js';
 import type { Edge, EdgeKind } from '../../core/graph/Edge.js';
 import { generateUlid } from '../../core/ids.js';
 import { asSessionId, asThoughtId, type EdgeId, type SessionId } from '../../contracts/ids.js';
@@ -51,7 +48,8 @@ function emptyStats(): ReasoningStats {
 			tool_observation: 0,
 			assumption: 0,
 			decomposition: 0,
-			backtrack: 0,		},
+			backtrack: 0,
+		},
 		hypothesis_count: 0,
 		verified_hypothesis_count: 0,
 		unresolved_hypothesis_count: 0,
@@ -102,8 +100,12 @@ function buildContext(scenario: EvalScenario): StrategyContext {
 	const last = scenario.thoughts[scenario.thoughts.length - 1]!;
 	return {
 		sessionId: SESSION_ID,
-		history: scenario.thoughts,
-		graph: new GraphView(store),
+		evidence: buildActiveEvidenceProjection({
+			sessionId: SESSION_ID,
+			history: scenario.thoughts,
+			branches: {},
+			edgeStore: store,
+		}),
 		stats: emptyStats(),
 		currentThought: last,
 	};
@@ -162,7 +164,7 @@ describe.skipIf(!process.env.RUN_EVAL)('ToT vs Sequential Eval', () => {
 			};
 			reports.push(report);
 			// One JSON line per scenario for downstream tooling.
-			 
+
 			console.log(JSON.stringify(report));
 		});
 	}
@@ -177,7 +179,7 @@ describe.skipIf(!process.env.RUN_EVAL)('ToT vs Sequential Eval', () => {
 			failed: total - passed,
 			pass_rate: total === 0 ? 0 : passed / total,
 		};
-		 
+
 		console.log(JSON.stringify(summary));
 	});
 });

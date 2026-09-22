@@ -1,6 +1,6 @@
 {
 	"name": "@iworkforces/tracelattice",
-	"version": "2.1.2",
+	"version": "2.2.0",
 	"description": "Semantic Sequential Thinking Layer For AI Agents.",
 	"type": "module",
 	"main": "dist/lib.js",
@@ -78,6 +78,7 @@
 		"@valibot/to-json-schema": "^1.8.0",
 		"chalk": "^6.0.0",
 		"chokidar": "^5.0.0",
+		"or": "^0.2.0",
 		"tmcp": "^1.20.0",
 		"valibot": "^1.5.0",
 		"yaml": "^2.9.1"
@@ -88,8 +89,8 @@
 		"@rsbuild/core": "^2.2.8",
 		"@rslib/core": "^1.0.1",
 		"@types/node": "^26.6.2",
-		"@typescript-eslint/eslint-plugin": "^8.70.0",
-		"@typescript-eslint/parser": "^8.70.0",
+		"@typescript-eslint/eslint-plugin": "^8.70.1",
+		"@typescript-eslint/parser": "^8.70.1",
 		"@vitest/coverage-v8": "^5.0.1",
 		"better-sqlite3": "13.0.3",
 		"eslint": "^10.11.0",

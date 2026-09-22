@@ -15,6 +15,7 @@ import type { ThoughtType } from '../../contracts/reasoning-types.js';
 import type { ConfidenceSignals } from '../reasoning.js';
 import type { ThoughtData } from '../thought.js';
 import { ALL_THOUGHT_TYPES, _computeChainDepth, _countByType } from './internals.js';
+import type { VerificationLinks } from './VerificationLinks.js';
 
 /** Floor value applied to each quality component to prevent geometric mean collapse. */
 const FLOOR = 0.01;
@@ -108,7 +109,8 @@ export class SignalComputer {
 	 */
 	public computeConfidenceSignals(
 		history: ThoughtData[],
-		branches: Record<string, ThoughtData[]>
+		branches: Record<string, ThoughtData[]>,
+		links: VerificationLinks
 	): ConfidenceSignals {
 		const typeDistribution = _countByType(history);
 		const allConfidences = history
@@ -120,7 +122,8 @@ export class SignalComputer {
 			history,
 			branches,
 			typeDistribution,
-			allConfidences
+			allConfidences,
+			links
 		);
 
 		return {
@@ -162,7 +165,8 @@ export class SignalComputer {
 		history: ThoughtData[],
 		branches: Record<string, ThoughtData[]>,
 		typeDistribution: Record<ThoughtType, number>,
-		confidences: number[]
+		confidences: number[],
+		links: VerificationLinks
 	): StructuralQualityResult | null {
 		if (history.length === 0) return null;
 
@@ -180,17 +184,8 @@ export class SignalComputer {
 		const typeDiversity = Math.max(rawTypeDiversity, FLOOR);
 
 		// 2. verification_coverage: verified / total hypotheses (1.0 if none)
-		const hypotheses = history.filter((t) => t.thought_type === 'hypothesis');
-		const hypothesisIds = new Set(hypotheses.map((t) => t.hypothesis_id).filter(Boolean));
-		const verifiedIds = new Set(
-			history
-				.filter((t) => t.thought_type === 'verification' && t.hypothesis_id)
-				.map((t) => t.hypothesis_id)
-		);
 		const rawVerificationCoverage =
-			hypothesisIds.size === 0
-				? 1.0
-				: [...hypothesisIds].filter((id) => verifiedIds.has(id)).length / hypothesisIds.size;
+			links.hypotheses.length === 0 ? 1.0 : links.verifiedHypothesisCount / links.hypotheses.length;
 		const verificationCoverage = Math.max(rawVerificationCoverage, FLOOR);
 
 		// 3. depth_efficiency: max(chain_depth, branch_count + 1) / total_thoughts, clamped to 1.0

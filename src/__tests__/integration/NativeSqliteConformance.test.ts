@@ -155,6 +155,38 @@ describe('native SQLite conformance', () => {
 		});
 	});
 
+	it('preserves atomic target retraction in history and branch after close and reopen', async () => {
+		const dbPath = join(root, 'history.db');
+		const target = createTestThought({
+			id: 'native-target',
+			session_id: sessionA,
+			branch_id: branchId,
+			thought_number: 1,
+		});
+		const backtrack = createTestThought({
+			id: 'native-backtrack',
+			session_id: sessionA,
+			thought_number: 2,
+			thought_type: 'backtrack',
+			backtrack_target: 1,
+		});
+		backend = await openBackend(dbPath);
+		await backend.saveThoughtForSession(sessionA, target);
+		await backend.saveBranchForSession(sessionA, branchId, [target]);
+
+		await backend.saveBacktrackForSession(sessionA, backtrack, asThoughtId('native-target'));
+		await closeBackend();
+		backend = await openBackend(dbPath);
+
+		expect(await backend.loadHistoryForSession(sessionA)).toEqual([
+			{ ...target, retracted: true },
+			backtrack,
+		]);
+		expect(await backend.loadBranchForSession(sessionA, branchId)).toEqual([
+			{ ...target, retracted: true },
+		]);
+	});
+
 	it('clears only one session namespace across close and reopen', async () => {
 		const dbPath = join(root, 'history.db');
 		backend = await openBackend(dbPath);

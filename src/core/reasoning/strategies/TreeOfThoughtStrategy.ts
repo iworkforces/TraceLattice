@@ -4,7 +4,8 @@
  * Observes the frontier (graph leaves), scores each leaf via
  * {@link scoreThought}, and decides whether to continue, branch (when the
  * current thought falls outside the beam), or terminate (on depth cap,
- * confidence threshold, or score plateau).
+ * confidence threshold, or score plateau). It reads only the immutable active evidence projection;
+ * the audit history and graph remain unchanged.
  *
  * Pure policy: configuration lives in a module-level {@link WeakMap}, not
  * on the instance, so `Object.getOwnPropertyNames(strategy)` only ever
@@ -33,7 +34,7 @@ export interface TotConfig {
 	readonly beamWidth?: number;
 	/** Maximum exploration depth before forcing termination (default `8`). */
 	readonly depthCap?: number;
-	/** Score at/above which the chain terminates (default `0.85`). */
+	/** Finite nonnegative score at/above which the chain terminates (default `0.85`; values >1 valid). */
 	readonly terminationConfidence?: number;
 	/** Window size for plateau detection (default `3`). */
 	readonly plateauWindow?: number;
@@ -105,7 +106,7 @@ function recentScores(history: readonly ThoughtData[], window: number): number[]
 
 /** Whether the current graph-visible thought has reached the configured depth cap. */
 function isAtDepthCap(ctx: StrategyContext, depthCap: number): boolean {
-	const depth = ctx.graph?.depthFromRoots(ctx.sessionId, thoughtKey(ctx.currentThought));
+	const depth = ctx.evidence.graph?.depthFromRoots(ctx.sessionId, thoughtKey(ctx.currentThought));
 	return depth !== undefined && depth >= depthCap;
 }
 
@@ -123,35 +124,57 @@ export class TreeOfThoughtStrategy implements IReasoningStrategy {
 
 	/** @param config - See {@link TotConfig}. */
 	constructor(config?: TotConfig) {
+		const beamWidth = config?.beamWidth ?? DEFAULTS.beamWidth;
 		const depthCap = config?.depthCap ?? DEFAULTS.depthCap;
+		const terminationConfidence = config?.terminationConfidence ?? DEFAULTS.terminationConfidence;
+		const plateauWindow = config?.plateauWindow ?? DEFAULTS.plateauWindow;
+		const plateauEpsilon = config?.plateauEpsilon ?? DEFAULTS.plateauEpsilon;
+		if (!Number.isFinite(beamWidth) || !Number.isInteger(beamWidth) || beamWidth < 1) {
+			throw new TypeError('beamWidth must be a finite positive integer');
+		}
 		if (!Number.isFinite(depthCap) || !Number.isInteger(depthCap) || depthCap < 0) {
 			throw new TypeError('depthCap must be a finite nonnegative integer');
 		}
-		CONFIGS.set(this, { ...DEFAULTS, ...config, depthCap });
+		if (!Number.isFinite(plateauWindow) || !Number.isInteger(plateauWindow) || plateauWindow < 2) {
+			throw new TypeError('plateauWindow must be a finite integer of at least 2');
+		}
+		if (!Number.isFinite(plateauEpsilon) || plateauEpsilon < 0) {
+			throw new TypeError('plateauEpsilon must be a finite nonnegative number');
+		}
+		if (!Number.isFinite(terminationConfidence) || terminationConfidence < 0) {
+			throw new TypeError('terminationConfidence must be a finite nonnegative number');
+		}
+		CONFIGS.set(this, {
+			beamWidth,
+			depthCap,
+			terminationConfidence,
+			plateauWindow,
+			plateauEpsilon,
+		});
 	}
 
 	/**
 	 * Compute the next action for the chain.
 	 *
-	 * Order of checks: depth cap → confidence → plateau → branch when the
-	 * current thought is outside the beam → continue. Missing graphs continue.
+	 * Order of checks: depth cap, frontier confidence, plateau over retained main-history scores,
+	 * branch when the current thought is outside the beam, then continue. Missing graphs continue.
 	 */
 	decide(ctx: StrategyContext): StrategyDecision {
 		const cfg = configOf(this);
-		if (!ctx.graph) {
+		if (!ctx.evidence.graph) {
 			return { action: 'continue' };
 		}
 		if (isAtDepthCap(ctx, cfg.depthCap)) {
 			return { action: 'terminate', reason: 'depth cap' };
 		}
-		const frontier = ctx.graph.leaves(ctx.sessionId);
-		const byKey = indexHistory(ctx.history);
+		const frontier = ctx.evidence.graph.leaves(ctx.sessionId);
+		const byKey = indexHistory(ctx.evidence.activeThoughts);
 		const scored = scoreFrontier(frontier, byKey);
 		if (scored.length > 0 && bestScore(scored) >= cfg.terminationConfidence) {
 			return { action: 'terminate', reason: 'confidence threshold' };
 		}
 
-		const recent = recentScores(ctx.history, cfg.plateauWindow);
+		const recent = recentScores(ctx.evidence.mainHistory, cfg.plateauWindow);
 		if (detectPlateau(recent, cfg.plateauWindow, cfg.plateauEpsilon)) {
 			return { action: 'terminate', reason: 'plateau' };
 		}
@@ -175,24 +198,24 @@ export class TreeOfThoughtStrategy implements IReasoningStrategy {
 	/** True below the depth cap when the frontier is wider than the beam. */
 	shouldBranch(ctx: StrategyContext): boolean {
 		const cfg = configOf(this);
-		if (!ctx.graph) return false;
+		if (!ctx.evidence.graph) return false;
 		if (isAtDepthCap(ctx, cfg.depthCap)) return false;
-		const frontier = ctx.graph.leaves(ctx.sessionId);
+		const frontier = ctx.evidence.graph.leaves(ctx.sessionId);
 		return frontier.length > cfg.beamWidth;
 	}
 
 	/** True at the depth cap, confidence threshold, or score plateau. */
 	shouldTerminate(ctx: StrategyContext): boolean {
 		const cfg = configOf(this);
-		if (!ctx.graph) return false;
+		if (!ctx.evidence.graph) return false;
 		if (isAtDepthCap(ctx, cfg.depthCap)) return true;
-		const frontier = ctx.graph.leaves(ctx.sessionId);
-		const byKey = indexHistory(ctx.history);
+		const frontier = ctx.evidence.graph.leaves(ctx.sessionId);
+		const byKey = indexHistory(ctx.evidence.activeThoughts);
 		const scored = scoreFrontier(frontier, byKey);
 		if (scored.length > 0 && bestScore(scored) >= cfg.terminationConfidence) {
 			return true;
 		}
-		const recent = recentScores(ctx.history, cfg.plateauWindow);
+		const recent = recentScores(ctx.evidence.mainHistory, cfg.plateauWindow);
 		return detectPlateau(recent, cfg.plateauWindow, cfg.plateauEpsilon);
 	}
 }

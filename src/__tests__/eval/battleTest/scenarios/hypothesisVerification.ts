@@ -12,8 +12,18 @@ export const HYPOTHESIS_VERIFICATION_SCENARIOS = [
 		description: 'Evaluator counts a verified hypothesis as resolved in reasoning stats.',
 		run: () => {
 			const history = [
-				createTestThought({ thought_number: 1, thought_type: 'hypothesis', hypothesis_id: 'h1' }),
-				createTestThought({ thought_number: 2, thought_type: 'verification', hypothesis_id: 'h1' }),
+				createTestThought({
+					id: 'hypothesis-verified-stats-hypothesis',
+					thought_number: 1,
+					thought_type: 'hypothesis',
+					hypothesis_id: 'h1',
+				}),
+				createTestThought({
+					id: 'hypothesis-verified-stats-verification',
+					thought_number: 2,
+					thought_type: 'verification',
+					hypothesis_id: 'h1',
+				}),
 			];
 			const stats = createDisabledThoughtEvaluator().computeReasoningStats(history, {});
 			return scoreChecks({
@@ -34,9 +44,19 @@ export const HYPOTHESIS_VERIFICATION_SCENARIOS = [
 			'Pattern detector emits healthy_verification when verification follows within three thoughts.',
 		run: () => {
 			const history = [
-				createTestThought({ thought_number: 1, thought_type: 'hypothesis', hypothesis_id: 'h2' }),
+				createTestThought({
+					id: 'hypothesis-healthy-pattern-hypothesis',
+					thought_number: 1,
+					thought_type: 'hypothesis',
+					hypothesis_id: 'h2',
+				}),
 				createTestThought({ thought_number: 2, thought_type: 'regular' }),
-				createTestThought({ thought_number: 3, thought_type: 'verification', hypothesis_id: 'h2' }),
+				createTestThought({
+					id: 'hypothesis-healthy-pattern-verification',
+					thought_number: 3,
+					thought_type: 'verification',
+					hypothesis_id: 'h2',
+				}),
 			];
 			const signals = createDisabledThoughtEvaluator().computePatternSignals(history, {});
 			return scoreChecks({
@@ -61,7 +81,12 @@ export const HYPOTHESIS_VERIFICATION_SCENARIOS = [
 			'Pattern detector warns when a hypothesis has no verification within three thoughts.',
 		run: () => {
 			const history = [
-				createTestThought({ thought_number: 1, thought_type: 'hypothesis', hypothesis_id: 'h3' }),
+				createTestThought({
+					id: 'hypothesis-unverified-warning-hypothesis',
+					thought_number: 1,
+					thought_type: 'hypothesis',
+					hypothesis_id: 'h3',
+				}),
 				createTestThought({ thought_number: 2, thought_type: 'regular' }),
 				createTestThought({ thought_number: 3, thought_type: 'critique' }),
 				createTestThought({ thought_number: 4, thought_type: 'synthesis' }),

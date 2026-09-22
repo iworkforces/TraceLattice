@@ -2,21 +2,25 @@
  * Confidence calibration for sequential thinking reasoning.
  *
  * Provides the {@link Calibrator} class — maps raw model confidence values
- * to calibrated probabilities using per-type Beta(2, 2) priors and
+ * to calibrated probabilities using per-type empirical evidence blending and
  * grid-searched temperature scaling. Reports calibration quality through
  * Brier score and 10-bin Expected Calibration Error (ECE).
  *
  * Math summary:
- * - **Per-type prior**: Beta(α=2, β=2), prior mean = 0.5. As outcomes accumulate
- *   for a type, the calibrated value shrinks toward the observed mean of that
- *   type with weight `priorWeight = 1 / (1 + n / 10)` where `n` is the type's
- *   sample count.
+ * - **Per-type evidence blend**: Raw confidence is the prior signal, weighted by
+ *   `priorWeight = 10 / (10 + n)` where `n` is the type's outcome count. The
+ *   remaining weight is applied to the observed per-type mean. An empty type
+ *   defaults its mean to 0.5 but has zero empirical weight, so cold start returns raw.
  * - **Temperature scaling**: Grid search T ∈ {0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
- *   minimizing negative log-likelihood (NLL) over recorded outcomes. Default T=1.0.
- *   Requires ≥10 outcomes; below that threshold only prior shrinkage is applied.
- * - **Brier score**: `mean((predicted - actual)^2)` over recorded outcomes.
+ *   minimizing negative log-likelihood (NLL) over per-type leave-one-out evidence blends.
+ *   Exact ties retain T=1.0, then follow grid order. Requires at least 10 outcomes; below that
+ *   threshold the evidence blend is returned unchanged.
+ * - **Brier score**: `mean((predicted - actual)^2)` over stored raw outcomes.
  * - **ECE (10-bin)**: bucket predictions in 0.1 increments, compute weighted
- *   absolute deviation between bin mean confidence and bin accuracy.
+ *   absolute deviation between raw bin mean confidence and bin accuracy.
+ *
+ * Stored outcomes and metrics remain raw. This transform does not guarantee factuality, better
+ * metrics for every dataset, or monotonic per-example changes.
  *
  * @module core/evaluator/Calibrator
  */
@@ -33,6 +37,7 @@ import {
 	EPSILON,
 	MIN_OUTCOMES_FOR_TEMPERATURE,
 	applyTemperature,
+	blendWithRawPrior,
 	fitTemperature,
 } from './calibration-math.js';
 import { ALL_THOUGHT_TYPES } from './internals.js';
@@ -41,27 +46,37 @@ import { ALL_THOUGHT_TYPES } from './internals.js';
 const ECE_BINS = 10;
 
 /**
- * Build per-type empirical means + counts from a list of outcomes.
+ * Build per-type empirical sums + counts from a list of outcomes.
  *
  * @param outcomes - Outcomes to aggregate.
- * @returns Map of thought type to `{ mean, count }`. Types with no outcomes
+ * @returns Map of thought type to `{ sum, count }`. Types with no outcomes
  *          are absent from the map.
  */
 function aggregatePerType(
 	outcomes: readonly VerificationOutcome[]
-): Map<string, { mean: number; count: number }> {
-	const sums = new Map<string, { sum: number; count: number }>();
+): Map<ThoughtType, { sum: number; count: number }> {
+	const sums = new Map<ThoughtType, { sum: number; count: number }>();
 	for (const o of outcomes) {
 		const prev = sums.get(o.type) ?? { sum: 0, count: 0 };
 		prev.sum += o.actual;
 		prev.count += 1;
 		sums.set(o.type, prev);
 	}
-	const result = new Map<string, { mean: number; count: number }>();
-	for (const [type, { sum, count }] of sums) {
-		result.set(type, { mean: sum / count, count });
-	}
-	return result;
+	return sums;
+}
+
+function leaveOneOutBlendedOutcomes(
+	outcomes: readonly VerificationOutcome[]
+): VerificationOutcome[] {
+	const perType = aggregatePerType(outcomes);
+	return outcomes.map((outcome) => {
+		const typeStats = perType.get(outcome.type) ?? { sum: outcome.actual, count: 1 };
+		const sampleCount = typeStats.count - 1;
+		if (sampleCount === 0) return { ...outcome };
+		const empiricalMean = (typeStats.sum - outcome.actual) / sampleCount;
+		const { blended } = blendWithRawPrior(outcome.predicted, empiricalMean, sampleCount);
+		return { ...outcome, predicted: blended };
+	});
 }
 
 /**
@@ -186,14 +201,13 @@ export class Calibrator implements ICalibrator {
 		const perType = aggregatePerType(outcomes);
 		const typeStats = perType.get(type);
 		const n = typeStats?.count ?? 0;
-		const observedMean = typeStats?.mean ?? 0.5;
-		const priorWeight = 1 / (1 + n / 10);
-		const shrunk = priorWeight * observedMean + (1 - priorWeight) * raw;
+		const observedMean = typeStats === undefined ? 0.5 : typeStats.sum / typeStats.count;
+		const { blended, priorWeight } = blendWithRawPrior(raw, observedMean, n);
 		const temperature = this._temperatures.get(sessionId) ?? 1.0;
 		const calibrated =
 			outcomes.length >= MIN_OUTCOMES_FOR_TEMPERATURE
-				? applyTemperature(shrunk, temperature)
-				: shrunk;
+				? applyTemperature(blended, temperature)
+				: blended;
 		return { raw, calibrated, temperature, priorWeight };
 	}
 
@@ -213,7 +227,8 @@ export class Calibrator implements ICalibrator {
 
 	public refit(sessionId: SessionId): void {
 		if (!this.enabled) return;
-		this._temperatures.set(sessionId, fitTemperature(this._recorder.getOutcomes(sessionId)));
+		const outcomes = this._recorder.getOutcomes(sessionId);
+		this._temperatures.set(sessionId, fitTemperature(leaveOneOutBlendedOutcomes(outcomes)));
 	}
 
 	public clearSession(sessionId: SessionId): void {

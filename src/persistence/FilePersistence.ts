@@ -3,11 +3,8 @@ import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { IMetrics } from '../contracts/interfaces.js';
-import type {
-	PersistenceConfig,
-	PersistenceBackend,
-} from '../contracts/PersistenceBackend.js';
-import { asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
+import type { PersistenceConfig, PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import { asSessionId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { ThoughtData } from '../core/thought.js';
@@ -19,11 +16,8 @@ import {
 	sessionsInSnapshot,
 } from './FileSnapshotV2.js';
 import type { FileSnapshotV2 } from './FileSnapshotTypes.js';
-import {
-	FILE_WRITER_LOCK_NAME,
-	FileWriter,
-	type FileWriterOperations,
-} from './FileWriter.js';
+import { stageBacktrackPersistence } from './BacktrackPersistence.js';
+import { FILE_WRITER_LOCK_NAME, FileWriter, type FileWriterOperations } from './FileWriter.js';
 import {
 	assertBranchScope,
 	assertEdgeScopes,
@@ -76,6 +70,41 @@ export class FilePersistence implements PersistenceBackend {
 		const validatedSessionId = asSessionId(sessionId);
 		assertThoughtScope('saveThoughtForSession', validatedSessionId, thought);
 		await this._saveThought(validatedSessionId, thought);
+	}
+
+	public async saveBacktrackForSession(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): Promise<void> {
+		const validatedSessionId = asSessionId(sessionId);
+		await this._mutate('save_backtrack', (snapshot) => {
+			const staged = stageBacktrackPersistence(
+				validatedSessionId,
+				snapshot.thoughts.find((record) => record.sessionId === validatedSessionId)?.thoughts ?? [],
+				snapshot.branches
+					.filter((record) => record.sessionId === validatedSessionId)
+					.map((record) => ({ branchId: record.branchId, thoughts: record.thoughts })),
+				thought,
+				targetThoughtId,
+				this._maxHistorySize
+			);
+			return {
+				...snapshot,
+				thoughts: [
+					...snapshot.thoughts.filter((record) => record.sessionId !== validatedSessionId),
+					{ sessionId: validatedSessionId, thoughts: staged.history },
+				],
+				branches: [
+					...snapshot.branches.filter((record) => record.sessionId !== validatedSessionId),
+					...staged.branches.map((branch) => ({
+						sessionId: validatedSessionId,
+						branchId: branch.branchId,
+						thoughts: branch.thoughts,
+					})),
+				],
+			};
+		});
 	}
 
 	private async _saveThought(sessionId: SessionId, thought: ThoughtData): Promise<void> {
@@ -308,10 +337,7 @@ export class FilePersistence implements PersistenceBackend {
 		);
 		if (layoutEntries.length === 0) return EMPTY_FILE_SNAPSHOT_V2;
 		if (layoutEntries.length !== 1 || layoutEntries[0] !== SNAPSHOT_NAME) {
-			throw new PersistenceCompatibilityError(
-				dataDir,
-				'directory does not match File v2 layout'
-			);
+			throw new PersistenceCompatibilityError(dataDir, 'directory does not match File v2 layout');
 		}
 		return parseFileSnapshotV2(await readFile(snapshotPath, 'utf-8'), snapshotPath);
 	}

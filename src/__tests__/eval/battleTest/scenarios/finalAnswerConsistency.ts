@@ -9,7 +9,9 @@ type TraceAnswerInput = {
 	readonly finalAnswer: string;
 };
 
-function scoreTraceAnswer(input: TraceAnswerInput): ReturnType<BattleScenario['run']> {
+function scoreSyntheticFixtureConsistency(
+	input: TraceAnswerInput
+): ReturnType<BattleScenario['run']> {
 	const matchedFacts = input.traceFacts.filter((fact) => input.finalAnswer.includes(fact));
 	const hasContradiction = input.finalAnswer.includes('contradiction');
 	const dimensions = {
@@ -30,9 +32,9 @@ export const FINAL_ANSWER_CONSISTENCY_SCENARIOS = [
 	{
 		caseId: 'final-answer-hypothesis-trace',
 		category,
-		description: 'Final answer preserves verified hypothesis facts from the trace.',
+		description: 'Synthetic fixture output contains the expected hypothesis trace tokens.',
 		run: () =>
-			scoreTraceAnswer({
+			scoreSyntheticFixtureConsistency({
 				caseId: 'final-answer-hypothesis-trace',
 				traceFacts: ['hypothesis h1', 'verified at thought 3'],
 				finalAnswer: 'The trace records hypothesis h1 and says it was verified at thought 3.',
@@ -41,9 +43,9 @@ export const FINAL_ANSWER_CONSISTENCY_SCENARIOS = [
 	{
 		caseId: 'final-answer-tool-trace',
 		category,
-		description: 'Final answer preserves the selected tool and observed result from the trace.',
+		description: 'Synthetic fixture output contains the expected tool trace tokens.',
 		run: () =>
-			scoreTraceAnswer({
+			scoreSyntheticFixtureConsistency({
 				caseId: 'final-answer-tool-trace',
 				traceFacts: ['Read', 'schema.ts'],
 				finalAnswer:
@@ -53,9 +55,9 @@ export const FINAL_ANSWER_CONSISTENCY_SCENARIOS = [
 	{
 		caseId: 'final-answer-scope-trace',
 		category,
-		description: 'Final answer preserves scope limits from the reasoning trace.',
+		description: 'Synthetic fixture output is checked for expected scope trace tokens.',
 		run: () =>
-			scoreTraceAnswer({
+			scoreSyntheticFixtureConsistency({
 				caseId: 'final-answer-scope-trace',
 				traceFacts: ['no runtime files', 'test-only catalog'],
 				finalAnswer: 'The result is a test-only catalog.',

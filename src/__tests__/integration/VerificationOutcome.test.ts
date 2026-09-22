@@ -64,6 +64,134 @@ async function configuredServer(
 }
 
 describe('explicit verification outcomes', () => {
+	it.each([true, false])(
+		'keeps target-only verification analytics stable when dagEdges=%s after a duplicate number arrives',
+		async (dagEdges) => {
+			const server = await configuredServer({ dagEdges });
+			const sessionId = asSessionId(`target-only-${dagEdges}`);
+			try {
+				await server.processThought(
+					input('first hypothesis', 1, {
+						session_id: sessionId,
+						thought_type: 'hypothesis',
+						hypothesis_id: 'shared-label',
+					})
+				);
+				await server.processThought(
+					input('target-only verification', 2, {
+						session_id: sessionId,
+						thought_type: 'verification',
+						verification_target: 1,
+					})
+				);
+				const duplicate = await server.processThought(
+					input('second hypothesis with duplicate number', 1, {
+						session_id: sessionId,
+						thought_type: 'hypothesis',
+						hypothesis_id: 'shared-label',
+					})
+				);
+
+				const response = payload(duplicate);
+				const stats = response.reasoning_stats as Record<string, unknown>;
+				const signals = response.confidence_signals as Record<string, unknown>;
+				const qualityComponents = signals.quality_components_raw as
+					Record<string, unknown> | undefined;
+				expect(stats.hypothesis_count).toBe(2);
+				expect(stats.verified_hypothesis_count).toBe(1);
+				expect(stats.unresolved_hypothesis_count).toBe(1);
+				expect(qualityComponents?.verification_coverage).toBe(0.5);
+				const verifies = server
+					.getContainer()
+					.resolve('EdgeStore')
+					.edgesForSession(sessionId)
+					.filter((edge) => edge.kind === 'verifies');
+				expect(verifies).toHaveLength(dagEdges ? 1 : 0);
+			} finally {
+				await server.stop();
+			}
+		}
+	);
+
+	it('keeps a branch-only retained hypothesis verified after main history trimming', async () => {
+		const server = await configuredServer({}, 1);
+		const sessionId = asSessionId('branch-only-retained');
+		const branchId = asBranchId('retained-hypothesis');
+		try {
+			await server.processThought(input('anchor', 1, { session_id: sessionId }));
+			await server.processThought(
+				input('branch hypothesis', 2, {
+					session_id: sessionId,
+					thought_type: 'hypothesis',
+					branch_from_thought: 1,
+					branch_id: branchId,
+				})
+			);
+			const verified = await server.processThought(
+				input('branch target verified', 3, {
+					session_id: sessionId,
+					thought_type: 'verification',
+					verification_target: 2,
+				})
+			);
+
+			const response = payload(verified);
+			const stats = response.reasoning_stats as Record<string, unknown>;
+			const signals = response.confidence_signals as Record<string, unknown>;
+			expect(server.history.getHistory(sessionId)).toHaveLength(1);
+			expect(server.history.getBranches(sessionId)[branchId]).toHaveLength(1);
+			expect(stats.hypothesis_count).toBe(1);
+			expect(stats.verified_hypothesis_count).toBe(1);
+			expect(stats.unresolved_hypothesis_count).toBe(0);
+			expect(
+				(signals.quality_components_raw as Record<string, unknown> | undefined)
+					?.verification_coverage
+			).toBe(1);
+		} finally {
+			await server.stop();
+		}
+	});
+
+	it('excludes an exact retracted verifier from public verification coverage', async () => {
+		const server = await configuredServer();
+		const sessionId = asSessionId('retracted-verifier');
+		try {
+			await server.processThought(
+				input('hypothesis', 1, { session_id: sessionId, thought_type: 'hypothesis' })
+			);
+			await server.processThought(
+				input('verification', 2, {
+					session_id: sessionId,
+					thought_type: 'verification',
+					verification_target: 1,
+				})
+			);
+			await server.processThought(
+				input('retract verifier', 3, {
+					session_id: sessionId,
+					thought_type: 'backtrack',
+					backtrack_target: 2,
+				})
+			);
+			const result = await server.processThought(
+				input('later thought', 4, { session_id: sessionId })
+			);
+
+			const response = payload(result);
+			const stats = response.reasoning_stats as Record<string, unknown>;
+			const signals = response.confidence_signals as Record<string, unknown>;
+			expect(stats.hypothesis_count).toBe(1);
+			expect(stats.verified_hypothesis_count).toBe(0);
+			expect(stats.unresolved_hypothesis_count).toBe(1);
+			expect(
+				(signals.quality_components_raw as Record<string, unknown> | undefined)
+					?.verification_coverage
+			).toBe(0);
+		} finally {
+			await server.stop();
+		}
+	});
+
 	it('accepts exact public 0/1 labels and records the stable target snapshot', async () => {
 		const server = await configuredServer();
 		const sessionId = asSessionId('exact-labels');

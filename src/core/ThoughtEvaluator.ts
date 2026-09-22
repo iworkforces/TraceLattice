@@ -9,15 +9,20 @@
  */
 
 import type { ICalibrator } from '../contracts/calibrator.js';
-import type { SessionId } from '../contracts/ids.js';
+import type { SessionId, ThoughtId } from '../contracts/ids.js';
 import type { ConfidenceSignals, PatternSignal, ReasoningStats } from './reasoning.js';
 import type { ThoughtData } from './thought.js';
 import { Aggregator } from './evaluator/Aggregator.js';
 import { PatternDetector } from './evaluator/PatternDetector.js';
 import { SignalComputer } from './evaluator/SignalComputer.js';
+import { resolveVerificationLinks } from './evaluator/VerificationLinks.js';
+
+export interface VerificationLinkContext {
+	readonly verificationTargets?: ReadonlyMap<ThoughtId, ThoughtId>;
+}
 
 /** Explicit thought and canonical session used for response calibration. */
-export interface ConfidenceSignalContext {
+export interface ConfidenceSignalContext extends VerificationLinkContext {
 	readonly currentThought: ThoughtData;
 	readonly sessionId: SessionId;
 }
@@ -57,8 +62,9 @@ export class ThoughtEvaluator {
 		branches: Record<string, ThoughtData[]>,
 		context: ConfidenceSignalContext
 	): ConfidenceSignals {
-		const { history: h, branches: b } = filterRetracted(history, branches);
-		const signals = this._signalComputer.computeConfidenceSignals(h, b);
+		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
+		const { branches: b } = filterRetracted(history, branches);
+		const signals = this._signalComputer.computeConfidenceSignals([...links.thoughts], b, links);
 		if (!this._calibrator.enabled) return signals;
 
 		const thought = context.currentThought;
@@ -80,19 +86,23 @@ export class ThoughtEvaluator {
 	/** Compute aggregated reasoning analytics. Pure computation. */
 	public computeReasoningStats(
 		history: ThoughtData[],
-		branches: Record<string, ThoughtData[]>
+		branches: Record<string, ThoughtData[]>,
+		context: VerificationLinkContext = {}
 	): ReasoningStats {
-		const { history: h, branches: b } = filterRetracted(history, branches);
-		return this._aggregator.computeReasoningStats(h, b);
+		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
+		const { branches: b } = filterRetracted(history, branches);
+		return this._aggregator.computeReasoningStats([...links.thoughts], b, links);
 	}
 
 	/** Detect reasoning patterns (anti-patterns and positive signals). Pure computation. */
 	public computePatternSignals(
 		history: ThoughtData[],
-		branches: Record<string, ThoughtData[]>
+		branches: Record<string, ThoughtData[]>,
+		context: VerificationLinkContext = {}
 	): PatternSignal[] {
 		const { history: h, branches: b } = filterRetracted(history, branches);
-		return this._patternDetector.computePatternSignals(h, b);
+		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
+		return this._patternDetector.computePatternSignals(h, b, links);
 	}
 }
 

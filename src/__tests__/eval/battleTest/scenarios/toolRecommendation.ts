@@ -9,7 +9,7 @@ export const TOOL_RECOMMENDATION_SCENARIOS = [
 		caseId: 'tool-recommendation-specific-tool',
 		category,
 		description:
-			'Tool recommendation scores specificity, confidence, rationale, and suggested inputs.',
+			'Input-contract fixture checks tool fields, confidence, rationale, and suggested inputs.',
 		run: () => {
 			const recommendation = createToolRecommendation({
 				tool_name: 'codegraph_codegraph_explore',
@@ -34,7 +34,8 @@ export const TOOL_RECOMMENDATION_SCENARIOS = [
 	{
 		caseId: 'tool-recommendation-step-current-tools',
 		category,
-		description: 'Step recommendation preserves current-step tool ordering and expected outcome.',
+		description:
+			'Input-contract fixture preserves current-step tool ordering and expected outcome.',
 		run: () => {
 			const step = createStepRecommendation({
 				step_description: 'Inspect evaluator patterns before adding tests.',
@@ -58,7 +59,7 @@ export const TOOL_RECOMMENDATION_SCENARIOS = [
 	{
 		caseId: 'tool-recommendation-alternative-paths',
 		category,
-		description: 'Tool recommendation rewards alternatives without losing the primary tool.',
+		description: 'Input-contract fixture preserves alternatives and the primary tool.',
 		run: () => {
 			const recommendation = createToolRecommendation({
 				tool_name: 'lsp_find_references',

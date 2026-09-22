@@ -272,6 +272,7 @@ describe('ThoughtProcessor', () => {
 		it('should return error response when processing fails', async () => {
 			// Create a HistoryManager that throws on addThought
 			class ThrowingHistoryManager implements IHistoryManager {
+				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
 					return { kind: 'missing' as const };
 				}
@@ -305,6 +306,7 @@ describe('ThoughtProcessor', () => {
 					return {
 						history: [],
 						branches: {},
+						verificationTargets: new Map(),
 						branchIds: [],
 						availableMcpTools: undefined,
 						availableSkills: undefined,
@@ -1874,6 +1876,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 		it('should handle non-Error thrown in process catch branch', async () => {
 			// Create a HistoryManager that throws a non-Error value
 			class StringThrowingHistoryManager implements IHistoryManager {
+				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
 					return { kind: 'missing' as const };
 				}
@@ -1907,6 +1910,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 					return {
 						history: [],
 						branches: {},
+						verificationTargets: new Map(),
 						branchIds: [],
 						availableMcpTools: undefined,
 						availableSkills: undefined,

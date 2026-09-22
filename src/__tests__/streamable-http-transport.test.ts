@@ -7,6 +7,7 @@ import {
 	StreamableHttpTransport,
 	createStreamableHttpTransport,
 } from '../transport/StreamableHttpTransport.js';
+import { getListeningPort } from './integration/ProtocolHarness.js';
 
 const EXPECTED_METRICS =
 	'# HELP test_metric_total Test metric\n' +
@@ -40,6 +41,11 @@ function httpRequest(options: {
 				let body = '';
 				res.on('data', (chunk) => {
 					body += chunk.toString();
+				});
+				res.on('error', reject);
+				res.on('aborted', () => reject(new Error('HTTP response aborted')));
+				res.on('close', () => {
+					if (!res.complete) reject(new Error('HTTP response closed before completion'));
 				});
 				res.on('end', () => {
 					resolve({
@@ -98,8 +104,8 @@ describe('StreamableHttpTransport', () => {
 	let transport: StreamableHttpTransport;
 	let port: number;
 
-	beforeEach(async () => {
-		port = 7000 + Math.floor(Math.random() * 1000);
+	beforeEach(() => {
+		port = 0;
 	});
 
 	afterEach(async () => {
@@ -113,20 +119,21 @@ describe('StreamableHttpTransport', () => {
 		overrides: ConstructorParameters<typeof StreamableHttpTransport>[0] = {}
 	): Promise<void> {
 		transport = new StreamableHttpTransport({
-			port,
+			port: 0,
 			host: '127.0.0.1',
 			enableRateLimit: false,
 			...overrides,
 		});
 		const mcpServer = createMockMcpServer();
 		await transport.connect(mcpServer);
+		port = getListeningPort(transport);
 	}
 
 	// ═══════════════════════════════════════════════════════════════════
 	// Connection lifecycle
 	// ═══════════════════════════════════════════════════════════════════
 	describe('connection lifecycle', () => {
-		it('connect() starts HTTP server on configured port', async () => {
+		it('connect() starts HTTP server on an ephemeral port', async () => {
 			await startTransport();
 			// Server is listening — a health check should succeed
 			const res = await httpRequest({ port, method: 'GET', path: '/health' });
@@ -134,10 +141,11 @@ describe('StreamableHttpTransport', () => {
 		});
 
 		it('connect() resolves when server is listening', async () => {
-			transport = new StreamableHttpTransport({ port, host: '127.0.0.1' });
+			transport = new StreamableHttpTransport({ port: 0, host: '127.0.0.1' });
 			const mcpServer = createMockMcpServer();
 			// connect() returns a promise that should resolve without error
 			await expect(transport.connect(mcpServer)).resolves.toBeUndefined();
+			port = getListeningPort(transport);
 		});
 
 		it('stop() shuts down the server gracefully', async () => {
@@ -781,23 +789,23 @@ describe('StreamableHttpTransport', () => {
 			expect(transport.requestCount).toBe(0);
 		});
 
-		it('constructor with custom port and host', async () => {
-			const customPort = 7000 + Math.floor(Math.random() * 1000);
+		it('constructor with an ephemeral port discovers the bound port', async () => {
 			transport = new StreamableHttpTransport({
-				port: customPort,
+				port: 0,
 				host: '127.0.0.1',
 			});
 			const mcpServer = createMockMcpServer();
 			await transport.connect(mcpServer);
+			port = getListeningPort(transport);
+			expect(Number.isInteger(port)).toBe(true);
+			expect(port).toBeGreaterThan(0);
 
 			const res = await httpRequest({
-				port: customPort,
+				port,
 				method: 'GET',
 				path: '/health',
 			});
 			expect(res.statusCode).toBe(200);
-
-			port = customPort; // so afterEach cleanup uses the right port
 		});
 
 		it('createStreamableHttpTransport factory creates instance', () => {

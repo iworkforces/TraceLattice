@@ -7,7 +7,7 @@
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { ThoughtData } from '../core/thought.js';
-import type { BranchId, SessionId } from './ids.js';
+import type { BranchId, SessionId, ThoughtId } from './ids.js';
 
 /** Stable queue-assigned identity for one accepted persistence unit. */
 export type PersistenceWorkToken = string;
@@ -24,6 +24,13 @@ export type PersistenceWork =
 			readonly token: PersistenceWorkToken;
 			readonly sessionId: SessionId;
 			readonly thought: ThoughtData;
+	  }
+	| {
+			readonly kind: 'backtrack';
+			readonly token: PersistenceWorkToken;
+			readonly sessionId: SessionId;
+			readonly thought: ThoughtData;
+			readonly targetThoughtId: ThoughtId;
 	  }
 	| {
 			readonly kind: 'branch';
@@ -68,6 +75,13 @@ export type PersistenceWork =
 export type PersistenceWorkFailure =
 	| {
 			readonly kind: 'thought';
+			readonly token: PersistenceWorkToken;
+			readonly sessionId: SessionId;
+			readonly attempts: number;
+			readonly cause: unknown;
+	  }
+	| {
+			readonly kind: 'backtrack';
 			readonly token: PersistenceWorkToken;
 			readonly sessionId: SessionId;
 			readonly attempts: number;

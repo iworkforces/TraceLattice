@@ -2,7 +2,8 @@ import type { ThoughtData } from '../core/thought.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { Summary } from '../core/compression/Summary.js';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
-import { asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
+import { asSessionId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
+import { stageBacktrackPersistence } from './BacktrackPersistence.js';
 import {
 	assertBranchScope,
 	assertEdgeScopes,
@@ -32,7 +33,8 @@ export class MemoryPersistence implements PersistenceBackend {
 
 	constructor(options: MemoryPersistenceOptions = {}) {
 		const configuredSize = options.maxHistorySize ?? options.maxSize;
-		this._maxSize = configuredSize !== undefined && configuredSize > 0 ? configuredSize : undefined;
+		this._maxSize =
+			configuredSize === undefined ? 10_000 : configuredSize > 0 ? configuredSize : undefined;
 		this._persistBranches = options.persistBranches ?? true;
 	}
 
@@ -51,6 +53,30 @@ export class MemoryPersistence implements PersistenceBackend {
 			validatedSessionId,
 			this._maxSize === undefined ? history : history.slice(-this._maxSize)
 		);
+	}
+
+	public async saveBacktrackForSession(
+		sessionId: SessionId,
+		thought: ThoughtData,
+		targetThoughtId: ThoughtId
+	): Promise<void> {
+		const validatedSessionId = asSessionId(sessionId);
+		const branches = this._branches.get(validatedSessionId) ?? new Map();
+		const staged = stageBacktrackPersistence(
+			validatedSessionId,
+			this._histories.get(validatedSessionId) ?? [],
+			[...branches].map(([branchId, thoughts]) => ({ branchId, thoughts })),
+			thought,
+			targetThoughtId,
+			this._maxSize ?? 0
+		);
+		this._histories.set(validatedSessionId, [...staged.history]);
+		if (this._persistBranches) {
+			this._branches.set(
+				validatedSessionId,
+				new Map(staged.branches.map((branch) => [branch.branchId, [...branch.thoughts]]))
+			);
+		}
 	}
 
 	public async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {
@@ -162,5 +188,4 @@ export class MemoryPersistence implements PersistenceBackend {
 	public async loadSummaries(sessionId: SessionId): Promise<Summary[]> {
 		return [...(this._summaries.get(asSessionId(sessionId)) ?? [])].sort(compareCreatedThenId);
 	}
-
 }

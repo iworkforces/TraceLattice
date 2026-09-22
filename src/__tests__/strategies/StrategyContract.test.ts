@@ -21,7 +21,7 @@ import type { IReasoningStrategy, StrategyContext } from '../../contracts/strate
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
 import { TreeOfThoughtStrategy } from '../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
-import { GraphView } from '../../core/graph/GraphView.js';
+import { buildActiveEvidenceProjection } from '../../core/reasoning/ActiveEvidenceProjection.js';
 import { createTestEdgeId, createTestThought } from '../helpers/factories.js';
 import type { ThoughtData } from '../../core/thought.js';
 import type { ReasoningStats } from '../../core/reasoning.js';
@@ -44,7 +44,8 @@ function makeStats(): ReasoningStats {
 			tool_observation: 0,
 			assumption: 0,
 			decomposition: 0,
-			backtrack: 0,		},
+			backtrack: 0,
+		},
 		hypothesis_count: 0,
 		verified_hypothesis_count: 0,
 		unresolved_hypothesis_count: 0,
@@ -54,11 +55,14 @@ function makeStats(): ReasoningStats {
 }
 
 function makeContext(thought: ThoughtData): StrategyContext {
-	const store = new EdgeStore();
 	return {
 		sessionId: asSessionId('contract-session'),
-		history: [thought],
-		graph: new GraphView(store),
+		evidence: buildActiveEvidenceProjection({
+			sessionId: asSessionId('contract-session'),
+			history: [thought],
+			branches: {},
+			edgeStore: undefined,
+		}),
 		stats: makeStats(),
 		currentThought: thought,
 	};
@@ -102,9 +106,7 @@ describe('IReasoningStrategy contract (purity guarantees)', () => {
 
 			it('no instance-owned mutable fields (only readonly `name` permitted)', () => {
 				const strategy = create();
-				const ownProps = Object.getOwnPropertyNames(strategy).filter(
-					(p) => p !== 'name'
-				);
+				const ownProps = Object.getOwnPropertyNames(strategy).filter((p) => p !== 'name');
 				expect(ownProps).toEqual([]);
 			});
 
@@ -143,9 +145,9 @@ describe('IReasoningStrategy contract (purity guarantees)', () => {
 
 				const snapshot = {
 					sessionId: ctx.sessionId,
-					historyLength: ctx.history.length,
-					historyRef: ctx.history,
-					graphRef: ctx.graph,
+					mainHistoryLength: ctx.evidence.mainHistory.length,
+					mainHistoryRef: ctx.evidence.mainHistory,
+					graphRef: ctx.evidence.graph,
 					statsRef: ctx.stats,
 					statsClone: JSON.parse(JSON.stringify(ctx.stats)) as ReasoningStats,
 					currentThoughtRef: ctx.currentThought,
@@ -157,9 +159,9 @@ describe('IReasoningStrategy contract (purity guarantees)', () => {
 				strategy.shouldTerminate(ctx);
 
 				expect(ctx.sessionId).toBe(snapshot.sessionId);
-				expect(ctx.history).toBe(snapshot.historyRef);
-				expect(ctx.history.length).toBe(snapshot.historyLength);
-				expect(ctx.graph).toBe(snapshot.graphRef);
+				expect(ctx.evidence.mainHistory).toBe(snapshot.mainHistoryRef);
+				expect(ctx.evidence.mainHistory.length).toBe(snapshot.mainHistoryLength);
+				expect(ctx.evidence.graph).toBe(snapshot.graphRef);
 				expect(ctx.stats).toBe(snapshot.statsRef);
 				expect(ctx.stats).toEqual(snapshot.statsClone);
 				expect(ctx.currentThought).toBe(snapshot.currentThoughtRef);
@@ -216,12 +218,19 @@ describe('IReasoningStrategy contract (purity guarantees)', () => {
 		});
 		const context: StrategyContext = {
 			sessionId: asSessionId('contract-depth-session'),
-			history: [root, current],
-			graph: new GraphView(store),
+			evidence: buildActiveEvidenceProjection({
+				sessionId: asSessionId('contract-depth-session'),
+				history: [root, current],
+				branches: {},
+				edgeStore: store,
+			}),
 			stats: makeStats(),
 			currentThought: current,
 		};
-		const snapshot = structuredClone({ history: context.history, stats: context.stats });
+		const snapshot = structuredClone({
+			history: context.evidence.mainHistory,
+			stats: context.stats,
+		});
 		const first = new TreeOfThoughtStrategy({ depthCap: 1 });
 		const second = new TreeOfThoughtStrategy({ depthCap: 1 });
 
@@ -234,6 +243,6 @@ describe('IReasoningStrategy contract (purity guarantees)', () => {
 		expect(second.decide(context)).toEqual(decisions[0]);
 		expect(first.shouldTerminate(context)).toBe(true);
 		expect(first.shouldBranch(context)).toBe(false);
-		expect({ history: context.history, stats: context.stats }).toEqual(snapshot);
+		expect({ history: context.evidence.mainHistory, stats: context.stats }).toEqual(snapshot);
 	});
 });

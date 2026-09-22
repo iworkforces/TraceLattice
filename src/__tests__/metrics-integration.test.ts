@@ -12,8 +12,13 @@ import { FilePersistence } from '../persistence/FilePersistence.js';
 import { HttpTransport } from '../transport/HttpTransport.js';
 import type { ThoughtData } from '../core/thought.js';
 import { asSessionId, asThoughtId } from '../contracts/ids.js';
+import { getListeningPort } from './integration/ProtocolHarness.js';
 
 const METRICS_SESSION = asSessionId('metrics-session');
+
+class HttpFixtureError extends Error {
+	override readonly name = 'HttpFixtureError';
+}
 
 function createMetrics(): Metrics {
 	return new Metrics({ prefix: 'sequentialthinking' });
@@ -39,6 +44,7 @@ function httpRequest(options: {
 	body?: string;
 }): Promise<{ statusCode: number; body: string }> {
 	return new Promise((resolve, reject) => {
+		let responseEnded = false;
 		const req = request(
 			{
 				hostname: '127.0.0.1',
@@ -52,7 +58,17 @@ function httpRequest(options: {
 				res.on('data', (chunk) => {
 					body += chunk.toString();
 				});
+				res.once('error', reject);
+				res.once('aborted', () => {
+					reject(new HttpFixtureError('Response aborted'));
+				});
+				res.once('close', () => {
+					if (!responseEnded || !res.complete) {
+						reject(new HttpFixtureError('Response closed before completing'));
+					}
+				});
 				res.on('end', () => {
+					responseEnded = true;
 					resolve({
 						statusCode: res.statusCode ?? 0,
 						body,
@@ -208,29 +224,31 @@ describe('Metrics Integration', () => {
 
 	it('collects HTTP request counters and duration histograms', async () => {
 		const metrics = createMetrics();
-		const port = 8600 + Math.floor(Math.random() * 500);
 		const transport = new HttpTransport({
-			port,
+			port: 0,
 			host: '127.0.0.1',
 			enableRateLimit: false,
 			metrics,
 		});
 
-		await transport.connect(createMockMcpServer());
+		try {
+			await transport.connect(createMockMcpServer());
+			const port = getListeningPort(transport);
 
-		const response = await httpRequest({
-			port,
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
-		});
+			const response = await httpRequest({
+				port,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+			});
 
-		expect(response.statusCode).toBe(200);
+			expect(response.statusCode).toBe(200);
 
-		const snapshot = metrics.export();
-		expect(snapshot).toContain('sequentialthinking_http_requests_total{} 1');
-		expect(snapshot).toContain('sequentialthinking_http_request_duration_seconds_count 1');
-
-		await transport.stop();
+			const snapshot = metrics.export();
+			expect(snapshot).toContain('sequentialthinking_http_requests_total{} 1');
+			expect(snapshot).toContain('sequentialthinking_http_request_duration_seconds_count 1');
+		} finally {
+			await transport.stop();
+		}
 	});
 
 	it('records persistence operation durations', async () => {

@@ -28,6 +28,7 @@ import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { NullLogger } from '../../logger/NullLogger.js';
 import { TreeOfThoughtStrategy } from '../../core/reasoning/strategies/TreeOfThoughtStrategy.js';
 import { SequentialStrategy } from '../../core/reasoning/strategies/SequentialStrategy.js';
+import { buildActiveEvidenceProjection } from '../../core/reasoning/ActiveEvidenceProjection.js';
 import type {
 	IReasoningStrategy,
 	StrategyContext,
@@ -355,6 +356,120 @@ describe('TreeOfThoughtStrategy Integration (ThoughtProcessor + ToT + DAG)', () 
 			expect(hint.reason).toBe('confidence threshold');
 		} else {
 			throw new Error('expected terminate decision');
+		}
+	});
+
+	it('removes a backtracked high-score leaf from the processor ToT decision without changing audit edges', async () => {
+		const processor = new ThoughtProcessor(
+			manager,
+			formatter,
+			evaluator,
+			logger,
+			new TreeOfThoughtStrategy({ ...TOT_CONFIG, plateauWindow: 10 })
+		);
+		await processor.process(
+			createTestThought({
+				id: 'retraction-root',
+				thought_number: 1,
+				total_thoughts: 4,
+				next_thought_needed: true,
+				confidence: 0.1,
+			})
+		);
+		const high = await processor.process(
+			createTestThought({
+				id: 'retraction-high',
+				thought_number: 2,
+				total_thoughts: 4,
+				next_thought_needed: true,
+				confidence: 1,
+				quality_score: 1,
+			})
+		);
+		expect(parseResponse(high.content[0]!.text).strategy_hint).toEqual({
+			action: 'terminate',
+			reason: 'confidence threshold',
+		});
+		const auditBefore = structuredClone(edgeStore.edgesForSession(TOT_SESSION));
+
+		const backtrack = await processor.process(
+			createTestThought({
+				id: 'retraction-backtrack',
+				thought_number: 3,
+				total_thoughts: 4,
+				next_thought_needed: true,
+				thought_type: 'backtrack',
+				backtrack_target: 2,
+				confidence: 0.1,
+			})
+		);
+
+		expect(parseResponse(backtrack.content[0]!.text).strategy_hint).toEqual({
+			action: 'continue',
+			nextHint: 'explore frontier',
+		});
+		expect(
+			manager.getHistory(TOT_SESSION).find((thought) => thought.id === 'retraction-high')?.retracted
+		).toBe(true);
+		expect(edgeStore.edgesForSession(TOT_SESSION).slice(0, auditBefore.length)).toEqual(
+			auditBefore
+		);
+	});
+
+	it('keeps ToT decision continuing with false predicates when DAG writes are disabled', async () => {
+		const offStore = new EdgeStore();
+		const offManager = new HistoryManager({
+			edgeStore: offStore,
+			dagEdges: false,
+			persistence: new MemoryPersistence(),
+			persistenceFlushInterval: 60_000,
+		});
+		const processor = new ThoughtProcessor(
+			offManager,
+			formatter,
+			evaluator,
+			logger,
+			new TreeOfThoughtStrategy({ ...TOT_CONFIG, plateauWindow: 10 })
+		);
+		try {
+			await processor.process(
+				createTestThought({ id: 'dag-off-root', thought_number: 1, next_thought_needed: true })
+			);
+			const result = await processor.process(
+				createTestThought({
+					id: 'dag-off-high',
+					thought_number: 2,
+					next_thought_needed: true,
+					confidence: 1,
+					quality_score: 1,
+				})
+			);
+			const history = offManager.getHistory(TOT_SESSION);
+			const current = history[1];
+			if (current === undefined) throw new TypeError('Expected DAG-off current thought');
+			const evidence = buildActiveEvidenceProjection({
+				sessionId: TOT_SESSION,
+				history,
+				branches: offManager.getBranches(TOT_SESSION),
+				edgeStore: offStore,
+			});
+			const strategy = new TreeOfThoughtStrategy({ ...TOT_CONFIG, plateauWindow: 10 });
+			const context: StrategyContext = {
+				sessionId: TOT_SESSION,
+				evidence,
+				stats: evaluator.computeReasoningStats(history, offManager.getBranches(TOT_SESSION)),
+				currentThought: current,
+			};
+
+			expect(parseResponse(result.content[0]!.text).strategy_hint).toEqual({
+				action: 'continue',
+				nextHint: 'explore frontier',
+			});
+			expect(offStore.edgesForSession(TOT_SESSION)).toEqual([]);
+			expect(strategy.shouldBranch(context)).toBe(false);
+			expect(strategy.shouldTerminate(context)).toBe(false);
+		} finally {
+			await offManager.shutdown();
 		}
 	});
 
