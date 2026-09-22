@@ -17,7 +17,7 @@ Vitest under `src/__tests__/` (path-alias parity). Thresholds: branches 90 / fun
 | Pure `decide()` / scoring | `strategies/` + register in `StrategyContract` |
 | Processor + backends + HTTP | `integration/` |
 | Scored category vs baseline | `eval/battleTest/` (`RUN_EVAL=1`) |
-| CI/CD / pack / transport ban | `release/` |
+| CI/CD / pack / transport ban | `release/` (own AGENTS.md) |
 | Extra branch coverage | `*-cov.test.ts` stay at **suite root** |
 
 Mirror `src/foo/Bar.ts` → `src/__tests__/foo/Bar.test.ts` for **new** files. Older kebab-case files at suite root stay.
