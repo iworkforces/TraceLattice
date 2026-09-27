@@ -34,7 +34,7 @@ import type { FeatureFlags } from './contracts/features.js';
 export interface ServerConfigOptions {
 	/**
 	 * Maximum number of thoughts to keep in history.
-	 * @default 1000
+	 * @default 10000
 	 */
 	maxHistorySize?: number;
 
@@ -52,7 +52,7 @@ export interface ServerConfigOptions {
 
 	/**
 	 * Directory paths to search for skills.
-	 * @default ['.claude/skills', '~/.claude/skills', '.agents/skills', '~/.agents/skills']
+	 * @default Project .claude/skills and .agents/skills, plus both paths under the home directory
 	 */
 	skillDirs?: string[];
 
@@ -85,18 +85,21 @@ export interface ServerConfigOptions {
 
 	/**
 	 * Maximum number of thoughts to buffer before flushing to persistence.
+	 * YAML/JSON only; no environment override.
 	 * @default 100
 	 */
 	persistenceBufferSize?: number;
 
 	/**
 	 * Interval in milliseconds between periodic persistence flushes.
+	 * YAML/JSON only; no environment override.
 	 * @default 1000
 	 */
 	persistenceFlushInterval?: number;
 
 	/**
 	 * Maximum number of retries for failed persistence flushes.
+	 * YAML/JSON only; no environment override.
 	 * @default 3
 	 */
 	persistenceMaxRetries?: number;
@@ -135,7 +138,8 @@ export interface ServerConfigOptions {
  *
  * @remarks
  * - Values outside recommended ranges trigger warnings but are still applied
- * - Environment variables override file-based configuration
+ * - Supported environment variables override file-based configuration through ConfigLoader
+ * - Logging uses file/environment input separately; ServerConfig does not hold log settings
  * - The `toJSON()` method provides a plain object representation
  *
  * @example
@@ -243,7 +247,7 @@ export class ServerConfig {
 	/**
 	 * Validates the max history size value.
 	 * @param value - The value to validate
-	 * @returns The validated value or default (1000)
+	 * @returns The validated value or default (10000)
 	 * @private
 	 */
 	private validateMaxHistorySize(value?: number): number {
@@ -306,7 +310,7 @@ export class ServerConfig {
 	/**
 	 * Validates the skill directories value.
 	 * @param value - The value to validate
-	 * @returns The validated value or default ['.claude/skills', '~/.claude/skills', '.agents/skills', '~/.agents/skills']
+	 * @returns The validated value or project-local and home-directory .claude/.agents skill paths
 	 * @private
 	 */
 	private validateSkillDirs(value?: string[]): string[] {
