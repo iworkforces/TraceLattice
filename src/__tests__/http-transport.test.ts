@@ -84,10 +84,11 @@ function httpRequest(options: {
 describe('HttpTransport', () => {
 	let transport: HttpTransport;
 	let port: number;
+	let metrics: Metrics;
 
 	beforeEach(async () => {
 		port = 0;
-		const metrics = new Metrics();
+		metrics = new Metrics();
 		metrics.counter('test_metric_total', 42, { workflow: 'plan\\review"\nnext' }, 'Test metric');
 		transport = new HttpTransport({
 			port,
@@ -170,6 +171,25 @@ describe('HttpTransport', () => {
 		expect(response.statusCode).toBe(200);
 		expect(response.body).toBe(EXPECTED_METRICS);
 		expect(response.headers['content-type']).toBe('text/plain; version=0.0.4; charset=utf-8');
+	});
+
+	it('serves stable collector buckets and escaped HELP after a rejected layout', async () => {
+		metrics.gauge('queue_depth', 2, {}, 'queue\\depth\nnext');
+		metrics.histogram('latency', 2, { route: 'api' }, [1, 5]);
+		metrics.histogram('latency', 4, { route: 'api' }, [1, 5]);
+		const snapshot = metrics.export();
+		expect(() => metrics.histogram('latency', 3, { route: 'api' }, [1, 10])).toThrow();
+		const response = await httpRequest({
+			port,
+			method: 'GET',
+			path: '/metrics',
+			headers: { origin: 'https://allowed.example.com' },
+		});
+		expect(response.statusCode).toBe(200);
+		expect(response.body).toBe(snapshot);
+		expect(response.body).toContain('# HELP queue_depth queue\\\\depth\\nnext\n');
+		expect(response.body).toContain('latency_bucket{route="api",le="5"} 2');
+		expect(response.body).toContain('latency_bucket{route="api",le="+Inf"} 2');
 	});
 
 	it('returns the existing 404 response when no metrics provider is configured', async () => {

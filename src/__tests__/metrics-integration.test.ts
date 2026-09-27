@@ -161,6 +161,18 @@ describe('Metrics Integration', () => {
 		expect(snapshot).not.toContain('operation="mutated"');
 	});
 
+	it('keeps the complete library snapshot unchanged after a rejected layout', () => {
+		const metrics = server.getContainer().resolve('Metrics');
+		metrics.counter('snapshot_total', 2, { stage: 'a' }, 'path\\segment\nnext');
+		metrics.histogram('snapshot_latency', 2, { stage: 'a' }, [1, 5]);
+		const snapshot = server.getMetricsSnapshot();
+		expect(snapshot).toContain('# HELP sequentialthinking_snapshot_total path\\\\segment\\nnext\n');
+		expect(snapshot).toContain('sequentialthinking_snapshot_latency_bucket{stage="a",le="5"} 1');
+		expect(() => metrics.histogram('snapshot_latency', 4, { stage: 'a' }, [1, 10])).toThrow();
+		expect(server.getMetricsSnapshot()).toBe(snapshot);
+		expect(metrics.getOperationCount()).toBe(2);
+	});
+
 	it('increments thought_requests_total from HistoryManager addThought', async () => {
 		const thought: ThoughtData = {
 			session_id: METRICS_SESSION,
@@ -432,16 +444,12 @@ describe('Metrics Integration', () => {
 			expect(typeLines[0]).toContain('counter');
 		});
 
-		it('should handle histogram with mismatched custom buckets triggering ?? 0 fallback', () => {
-			// First call with buckets [1, 5]
+		it('rejects a new boundary without losing existing histogram samples', () => {
 			metrics.histogram('custom_bkt', 3, {}, [1, 5]);
-			// Second call with different buckets [1, 5, 10] — bucket 10 was not in original map
-			metrics.histogram('custom_bkt', 7, {}, [1, 5, 10]);
-
 			const snapshot = metrics.export();
-			expect(snapshot).toContain('sequentialthinking_custom_bkt_count 2');
-			// Bucket 10: second value 7 <= 10, but bucket didn't exist before → ?? 0 → 0 + 1 = 1
-			expect(snapshot).toContain('le="10"} 1');
+			expect(() => metrics.histogram('custom_bkt', 7, {}, [1, 5, 10])).toThrow();
+			expect(metrics.export()).toBe(snapshot);
+			expect(metrics.getOperationCount()).toBe(1);
 		});
 
 		it('should use metric help text in export when help is provided on counter', () => {
@@ -513,16 +521,11 @@ describe('Metrics Integration', () => {
 			expect(snapshot).toContain('le="+Inf"} 2');
 		});
 
-		it('should trigger ?? 0 in else branch when new boundary exceeds value', () => {
-			// First call: buckets [0.01]
+		it('rejects a newly prepended boundary without changing bucket counts', () => {
 			metrics.histogram('else_fallback', 0.005, {}, [0.01]);
-			// Second call: buckets [0.001, 0.01] — boundary 0.001 not in original map,
-			// and value 0.005 > 0.001 → else branch → get(0.001) is undefined → ?? 0
-			metrics.histogram('else_fallback', 0.005, {}, [0.001, 0.01]);
-
 			const snapshot = metrics.export();
-			expect(snapshot).toContain('sequentialthinking_else_fallback_count 2');
-			expect(snapshot).toContain('le="0.001"} 0');
+			expect(() => metrics.histogram('else_fallback', 0.005, {}, [0.001, 0.01])).toThrow();
+			expect(metrics.export()).toBe(snapshot);
 		});
 
 		it('should trigger ?? 0 on Infinity bucket for second observation', () => {
@@ -614,12 +617,9 @@ describe('Metrics Integration', () => {
 			expect(snapshot).toContain('tier="premium"');
 		});
 
-		it('should handle NaN bucket boundary in histogram export', () => {
-			// NaN is not Infinity and not Number.isFinite → triggers third branch of ternary
-			metrics.histogram('nan_bkt', 1, {}, [NaN]);
-
-			const snapshot = metrics.export();
-			expect(snapshot).toContain('le="NaN"');
+		it('rejects NaN boundaries before creating a histogram', () => {
+			expect(() => metrics.histogram('nan_bkt', 1, {}, [NaN])).toThrow();
+			expect(metrics.export()).toBe('');
 		});
 	});
 });
