@@ -25,7 +25,12 @@ export type RunningProcess = {
 	waitForStderr(marker: string): Promise<void>;
 };
 
-export type FixtureMode = 'deadline' | 'cleanup-rejection' | 'streamable-file' | 'reload-file';
+export type FixtureMode =
+	| 'deadline'
+	| 'cleanup-rejection'
+	| 'streamable-file'
+	| 'reload-file'
+	| 'reset-shutdown-race';
 
 export type FixtureEvent = Readonly<{ event: string } & Record<string, unknown>>;
 

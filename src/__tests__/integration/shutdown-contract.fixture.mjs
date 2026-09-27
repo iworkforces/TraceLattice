@@ -349,6 +349,187 @@ async function runReloadFile() {
 	await finish(0, { event: 'reload-final', thoughts });
 }
 
+async function createRace() {
+	const configured = await nextControl('configure');
+	const dataDir = requireControlString(configured, 'dataDir');
+	const order = requireControlString(configured, 'order');
+	const [lifecycleModule, libModule, configModule, transportModule] = await Promise.all([
+		import('../../../dist/CliLifecycle.js'),
+		import('../../../dist/lib.js'),
+		import('../../../dist/ServerConfig.js'),
+		import('../../../dist/transport/StreamableHttpTransport.js'),
+	]);
+	const server = await libModule.createServer({
+		config: cleanConfig(configModule.ServerConfig, dataDir),
+		autoDiscover: false,
+		loadFromPersistence: false,
+	});
+	const sessionId = 'shutdown-race-session';
+	await server.processThought({
+		thought: 'durable race seed', thought_number: 1, total_thoughts: 2,
+		next_thought_needed: true, session_id: sessionId,
+	});
+	await server.history._flushBuffer();
+	const container = server.getContainer();
+	const lifecycle = container.resolve('sessionLifecycle');
+	const persistence = container.resolve('Persistence');
+	const outcomes = container.resolve('outcomeRecorder');
+	outcomes.recordVerification({
+		thoughtId: 'race-outcome', sessionId, predicted: 0.8, actual: 1, type: 'verification',
+	});
+	const workGate = deferred();
+	const clearGate = deferred();
+	const originalRun = lifecycle.runOperation.bind(lifecycle);
+	let gateWork = true;
+	lifecycle.runOperation = (candidate, operation) => originalRun(candidate, async () => {
+		if (candidate === sessionId && gateWork) {
+			gateWork = false;
+			await send({ event: 'core-admitted', phase: lifecycle.globalPhase, idle: lifecycle.isIdle(candidate) });
+			await workGate.promise;
+		}
+		return operation();
+	});
+	const originalClear = persistence.clearAll.bind(persistence);
+	persistence.clearAll = async () => {
+		await send({ event: 'clear-started' });
+		await clearGate.promise;
+		if (order === 'clear-failure') throw new Error('controlled clear before mutation');
+		await originalClear();
+	};
+	let responseFinishes = 0;
+	const protocolServer = await createProtocolServer(async (input) => {
+		const result = await server.processThought(input);
+		await send({ event: 'work-acknowledged' });
+		return result;
+	});
+	const transport = new transportModule.StreamableHttpTransport({
+		port: 0, host: '127.0.0.1', stateful: false,
+		requestTimeout: 25, enableRateLimit: false,
+	});
+	await transport.connect(protocolServer);
+	transport._server.on('request', (_request, response) => {
+		response.once('finish', () => responseFinishes++);
+	});
+	await send({ event: 'race-ready', port: listeningPort(transport) });
+	return {
+		order, server, sessionId, lifecycle, persistence, outcomes, workGate, clearGate,
+		transport, lifecycleModule, responseFinishes: () => responseFinishes,
+	};
+}
+
+function beginRaceShutdown(race, exits) {
+	const owner = new race.lifecycleModule.CliLifecycle({
+		stop: async () => {
+			await send({ event: 'server-stop-started' });
+			await race.server.stop();
+		},
+	});
+	owner.attachTransport({
+		stop: async () => {
+			await race.transport.stop();
+			await send({ event: 'transport-stopped' });
+		},
+	});
+	const handler = race.lifecycleModule.createCliShutdownHandler(owner, {
+		reportFailure: (error) => { throw error; },
+		exit: (code) => { exits.push(code); process.exitCode = code; },
+	});
+	return handler();
+}
+
+async function runResetFirst(race) {
+	await nextControl('begin-claim');
+	const reset = race.server.resetAll();
+	await send({ event: 'reset-claimed', phase: race.lifecycle.globalPhase });
+	await nextControl('attempt-stop');
+	const firstStop = race.server.stop();
+	const repeatedStop = race.server.stop();
+	const error = await firstStop.then(() => null, (failure) => failure);
+	await send({
+		event: 'stop-rejected', phase: race.lifecycle.globalPhase,
+		samePromise: firstStop === repeatedStop, error: error?.name,
+	});
+	await nextControl('release-work');
+	race.workGate.resolve();
+	await nextControl('release-clear');
+	race.clearGate.resolve();
+	await reset;
+	const cachedStop = race.server.stop();
+	await race.transport.stop();
+	await race.server.history.shutdownWithinLifecycle();
+	await race.persistence.close();
+	await finish(0, {
+		event: 'reset-first-final', phase: race.lifecycle.globalPhase,
+		liveThoughts: race.server.history.getSessionIds().length,
+		outcomes: race.outcomes.getAllOutcomes().length,
+		sameStopPromise: cachedStop === firstStop,
+		responseFinishes: race.responseFinishes(), unhandledRejections, uncaughtExceptions,
+	});
+	process.exit(0);
+}
+
+async function runShutdownFirst(race) {
+	await nextControl('begin-claim');
+	const shutdown = race.server.stop();
+	await send({ event: 'shutdown-claimed', phase: race.lifecycle.globalPhase });
+	await nextControl('attempt-reset');
+	const error = await race.server.resetAll().then(() => null, (failure) => failure);
+	await send({ event: 'reset-rejected', phase: race.lifecycle.globalPhase, error: error?.name });
+	await nextControl('release-work');
+	race.workGate.resolve();
+	await shutdown;
+	await race.transport.stop();
+	await finish(0, {
+		event: 'shutdown-first-final', phase: race.lifecycle.globalPhase,
+		responseFinishes: race.responseFinishes(), unhandledRejections, uncaughtExceptions,
+	});
+}
+
+async function runClearFailure(race) {
+	const exits = [];
+	await nextControl('begin-claim');
+	const reset = race.server.resetAll().then(() => null, (error) => error);
+	await send({ event: 'reset-claimed', phase: race.lifecycle.globalPhase });
+	await nextControl('release-work');
+	race.workGate.resolve();
+	await nextControl('release-clear');
+	race.clearGate.resolve();
+	const failure = await reset;
+	const admission = await race.server.processThought({
+		thought: 'must remain blocked', thought_number: 3, total_thoughts: 3,
+		next_thought_needed: false, session_id: race.sessionId,
+	});
+	await send({
+		event: 'clear-failed', phase: race.lifecycle.globalPhase,
+		error: errorMessage(failure),
+		liveThoughts: race.server.history.getHistory(race.sessionId).length,
+		outcomes: race.outcomes.getAllOutcomes().length, admissionRejected: admission.isError === true,
+	});
+	await nextControl('begin-shutdown');
+	await beginRaceShutdown(race, exits);
+	await finish(0, {
+		event: 'clear-failure-final', phase: race.lifecycle.globalPhase, exits,
+		responseFinishes: race.responseFinishes(), unhandledRejections, uncaughtExceptions,
+	});
+}
+
+async function runResetShutdownRace() {
+	const race = await createRace();
+	switch (race.order) {
+		case 'reset-first':
+			await runResetFirst(race);
+			return;
+		case 'shutdown-first':
+			await runShutdownFirst(race);
+			return;
+		case 'clear-failure':
+			await runClearFailure(race);
+			return;
+		default:
+			throw new TypeError(`unknown race order: ${race.order}`);
+	}
+}
+
 async function main() {
 	switch (mode) {
 		case 'deadline':
@@ -362,6 +543,9 @@ async function main() {
 			return;
 		case 'reload-file':
 			await runReloadFile();
+			return;
+		case 'reset-shutdown-race':
+			await runResetShutdownRace();
 			return;
 		default:
 			throw new TypeError(`unknown shutdown contract fixture mode: ${String(mode)}`);

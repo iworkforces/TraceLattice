@@ -17,7 +17,62 @@ import {
 
 afterEach(async () => {
 	await cleanupShutdownFixtures();
-});
+}, 30_000);
+
+async function startAdmittedRace(order: 'reset-first' | 'shutdown-first' | 'clear-failure') {
+	const dataDir = await createTemporaryDirectory('tracelattice-reset-shutdown-race-');
+	const running = spawnFixture('reset-shutdown-race');
+	await running.send('configure', { dataDir, order });
+	const ready = await running.nextEvent();
+	expect(ready).toMatchObject({ event: 'race-ready' });
+	const response = postJson(`http://127.0.0.1:${requireNumber(ready, 'port')}/mcp`, {
+		jsonrpc: '2.0',
+		id: 'admitted-race-call',
+		method: 'tools/call',
+		params: {
+			name: 'sequentialthinking_tools',
+			arguments: {
+				thought: 'admitted race thought',
+				thought_number: 2,
+				total_thoughts: 2,
+				next_thought_needed: false,
+				session_id: 'shutdown-race-session',
+			},
+		},
+	});
+	expect(await running.nextEvent()).toEqual({ event: 'core-admitted', phase: 'open', idle: false });
+	expect(await response).toEqual({
+		status: 500,
+		body: JSON.stringify({
+			jsonrpc: '2.0',
+			id: null,
+			error: { code: -32603, message: 'Request timeout' },
+		}),
+	});
+	return { running, dataDir };
+}
+
+async function reloadRaceHistory(dataDir: string): Promise<readonly { readonly thought: string }[]> {
+	const reload = spawnFixture('reload-file');
+	try {
+		await reload.send('configure', { dataDir, sessionId: 'shutdown-race-session' });
+		const result = await reload.nextEvent();
+		expect(result.event).toBe('reload-final');
+		expect(await reload.exited).toEqual({ code: 0, signal: null });
+		expect(reload.stdout()).toBe('');
+		const thoughts = result.thoughts;
+		if (!Array.isArray(thoughts)) throw new TypeError('reload thoughts must be an array');
+		return thoughts.map((thought: unknown) => {
+			if (typeof thought !== 'object' || thought === null || !('thought' in thought)) {
+				throw new TypeError('reloaded thought is invalid');
+			}
+			if (typeof thought.thought !== 'string') throw new TypeError('reloaded thought text is invalid');
+			return { thought: thought.thought };
+		});
+	} finally {
+		await stopChild(reload);
+	}
+}
 
 describe('built CLI shutdown contract', () => {
 	it('drains stdio through the shared SIGTERM owner', async () => {
@@ -265,4 +320,88 @@ describe('built shutdown lifecycle evidence fixtures', () => {
 			await stopChild(reload);
 		}
 	});
+});
+
+describe('admitted thought versus global reset and shutdown', () => {
+	it('keeps the public stop rejection cached when reset claims first, then deletes durable state', async () => {
+		const { running, dataDir } = await startAdmittedRace('reset-first');
+		try {
+			await running.send('begin-claim');
+			expect(await running.nextEvent()).toEqual({ event: 'reset-claimed', phase: 'resetting' });
+			await running.send('attempt-stop');
+			expect(await running.nextEvent()).toEqual({
+				event: 'stop-rejected',
+				phase: 'resetting',
+				samePromise: true,
+				error: 'SessionLifecycleClosedError',
+			});
+			await running.send('release-work');
+			expect(await running.nextEvent()).toEqual({ event: 'work-acknowledged' });
+			expect(await running.nextEvent()).toEqual({ event: 'clear-started' });
+			await running.send('release-clear');
+			expect(await running.nextEvent()).toEqual({
+				event: 'reset-first-final', phase: 'open', liveThoughts: 0,
+				outcomes: 0, sameStopPromise: true, responseFinishes: 1,
+				unhandledRejections: [], uncaughtExceptions: [],
+			});
+			expect(await running.exited).toEqual({ code: 0, signal: null });
+			expect(running.stdout()).toBe('');
+			expect(await reloadRaceHistory(dataDir)).toEqual([]);
+		} finally {
+			await stopChild(running);
+		}
+	}, 30_000);
+
+	it('rejects reset when shutdown claims first and drains admitted work', async () => {
+		const { running, dataDir } = await startAdmittedRace('shutdown-first');
+		try {
+			await running.send('begin-claim');
+			expect(await running.nextEvent()).toEqual({ event: 'shutdown-claimed', phase: 'shutting_down' });
+			await running.send('attempt-reset');
+			expect(await running.nextEvent()).toEqual({
+				event: 'reset-rejected', phase: 'shutting_down', error: 'SessionLifecycleClosedError',
+			});
+			await running.send('release-work');
+			expect(await running.nextEvent()).toEqual({ event: 'work-acknowledged' });
+			expect(await running.nextEvent()).toEqual({
+				event: 'shutdown-first-final', phase: 'stopped',
+				responseFinishes: 1, unhandledRejections: [], uncaughtExceptions: [],
+			});
+			expect(await running.exited).toEqual({ code: 0, signal: null });
+			expect(running.stdout()).toBe('');
+			expect((await reloadRaceHistory(dataDir)).map((thought) => thought.thought))
+				.toEqual(['durable race seed', 'admitted race thought']);
+		} finally {
+			await stopChild(running);
+		}
+	}, 30_000);
+
+	it('retains state when clear fails before mutation and permits shutdown from reset_failed', async () => {
+		const { running, dataDir } = await startAdmittedRace('clear-failure');
+		try {
+			await running.send('begin-claim');
+			expect(await running.nextEvent()).toEqual({ event: 'reset-claimed', phase: 'resetting' });
+			await running.send('release-work');
+			expect(await running.nextEvent()).toEqual({ event: 'work-acknowledged' });
+			expect(await running.nextEvent()).toEqual({ event: 'clear-started' });
+			await running.send('release-clear');
+			expect(await running.nextEvent()).toEqual({
+				event: 'clear-failed', phase: 'reset_failed', error: 'controlled clear before mutation',
+				liveThoughts: 2, outcomes: 1, admissionRejected: true,
+			});
+			await running.send('begin-shutdown');
+			expect(await running.nextEvent()).toEqual({ event: 'transport-stopped' });
+			expect(await running.nextEvent()).toEqual({ event: 'server-stop-started' });
+			expect(await running.nextEvent()).toEqual({
+				event: 'clear-failure-final', phase: 'stopped', exits: [0], responseFinishes: 1,
+				unhandledRejections: [], uncaughtExceptions: [],
+			});
+			expect(await running.exited).toEqual({ code: 0, signal: null });
+			expect(running.stdout()).toBe('');
+			expect((await reloadRaceHistory(dataDir)).map((thought) => thought.thought))
+				.toEqual(['durable race seed', 'admitted race thought']);
+		} finally {
+			await stopChild(running);
+		}
+	}, 30_000);
 });
