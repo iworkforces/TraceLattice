@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as v from 'valibot';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,6 +46,7 @@ const ENVIRONMENT_KEYS = [
 	'TRACELATTICE_TOOL_DIRS',
 ] as const;
 const originalEnvironment = new Map<string, string | undefined>();
+const documentationRoot = new URL('../../../', import.meta.url);
 
 async function writeConfig(contents: string): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), 'tracelattice-effective-config-'));
@@ -135,6 +136,162 @@ afterEach(async () => {
 });
 
 describe('effective runtime configuration', () => {
+	it('matches documented defaults and distinguishes explicit example roots', async () => {
+		const readme = await readFile(new URL('README.md', documentationRoot), 'utf8');
+		const exampleEnv = await readFile(new URL('.example.env', documentationRoot), 'utf8');
+		const defaults = new ServerConfig();
+		const documentedDefault = (key: string): string | undefined =>
+			readme.split('\n').find((line) => line.startsWith(`| \`${key}\``))?.split('`')[3];
+
+		expect(defaults.maxHistorySize).toBe(10_000);
+		expect(documentedDefault('TRACELATTICE_MAX_HISTORY_SIZE')).toBe('10000');
+		expect(defaults.discoveryCache.ttl).toBe(300_000);
+		expect(documentedDefault('TRACELATTICE_DISCOVERY_CACHE_TTL')).toBe('300');
+		expect(defaults.skillDirs).toEqual([
+			'.claude/skills',
+			join(homedir(), '.claude/skills'),
+			'.agents/skills',
+			join(homedir(), '.agents/skills'),
+		]);
+		expect(documentedDefault('TRACELATTICE_SKILL_DIRS')).toBe(
+			'.claude/skills:<home>/.claude/skills:.agents/skills:<home>/.agents/skills'
+		);
+		expect(exampleEnv).toMatch(/^# Example override:.*TRACELATTICE_SKILL_DIRS/m);
+		expect(defaults.maxHistorySize).not.toBe(1000);
+	});
+
+	it('loads the README YAML example through the real loader and keeps file-only settings', async () => {
+		const readme = await readFile(new URL('README.md', documentationRoot), 'utf8');
+		const yaml = readme.match(/### Config files[\s\S]*?```yaml\n([\s\S]*?)\n```/)?.[1];
+		expect(yaml).toBeDefined();
+		const directory = await mkdtemp(join(tmpdir(), 'tracelattice-doc-yaml-'));
+		temporaryDirectories.add(directory);
+		const path = join(directory, 'config.yaml');
+		await writeFile(path, yaml ?? '', 'utf8');
+
+		const loaded = loadConfig(path);
+		const effective = new ServerConfig(new ConfigLoader().toServerConfigOptions(loaded));
+		expect(effective.discoveryCache.ttl).toBe(42_000);
+		expect(effective.toolInterleaveTtlMs).toBe(45_000);
+		expect(effective.toolInterleaveSweepMs).toBe(55_000);
+		expect(effective.persistenceBufferSize).toBe(7);
+		expect(effective.persistenceFlushInterval).toBe(750);
+		expect(effective.persistenceMaxRetries).toBe(2);
+		expect(effective.discoveryCache.ttl).not.toBe(42);
+		expect(effective.persistenceBufferSize).not.toBe(100);
+		const server = await createServer({
+			fileConfig: loaded,
+			autoDiscover: false,
+			loadFromPersistence: false,
+		});
+		liveServers.add(server);
+		expect(server.config.persistenceBufferSize).toBe(7);
+		expect(server.getContainer().has('suspensionStore')).toBe(true);
+		expect(server.getContainer().resolve('suspensionStore')).toBeInstanceOf(
+			InMemorySuspensionStore
+		);
+		expect(server.config.toolInterleaveTtlMs).toBe(45_000);
+	});
+
+	it('parses the environment example as overrides without treating its values as defaults', async () => {
+		const example = await readFile(new URL('.example.env', documentationRoot), 'utf8');
+		const values = new Map(
+			example
+				.split('\n')
+				.filter((line) => line.startsWith('TRACELATTICE_'))
+				.map((line) => {
+					const separator = line.indexOf('=');
+					return [line.slice(0, separator), line.slice(separator + 1)] as const;
+				})
+		);
+		for (const key of [
+			'TRACELATTICE_DISCOVERY_CACHE_TTL',
+			'TRACELATTICE_SKILL_DIRS',
+			'TRACELATTICE_TOOL_INTERLEAVE_TTL_MS',
+			'TRACELATTICE_PRETTY_LOG',
+		]) {
+			const value = values.get(key);
+			expect(value).toBeDefined();
+			vi.stubEnv(key, value);
+		}
+		const loaded = new ConfigLoader().applyEnvironmentOverrides({});
+		const effective = new ServerConfig(new ConfigLoader().toServerConfigOptions(loaded));
+
+		expect(effective.discoveryCache.ttl).toBe(300_000);
+		expect(effective.toolInterleaveTtlMs).toBe(60_000);
+		expect(effective.skillDirs).toEqual([
+			'.claude/skills',
+			'~/.claude/skills',
+			'.agents/skills',
+			'~/.agents/skills',
+		]);
+		expect(loaded.prettyLog).toBeUndefined();
+		expect(effective.discoveryCache.ttl).not.toBe(300);
+		expect(example).not.toMatch(/^TRACELATTICE_PERSISTENCE_(BUFFER_SIZE|FLUSH_INTERVAL|MAX_RETRIES)=/m);
+	});
+
+	it('keeps raw logging configuration independent of explicit server configuration', async () => {
+		vi.stubEnv('TRACELATTICE_LOG_LEVEL', 'warn');
+		vi.stubEnv('TRACELATTICE_PRETTY_LOG', 'false');
+		const config = new ServerConfig({
+			maxHistorySize: 111,
+			skillDirs: [],
+			toolDirs: [],
+			features: { toolInterleave: false },
+		});
+		const server = await createServer({
+			config,
+			fileConfig: { logLevel: 'debug', prettyLog: true, maxHistorySize: 222 },
+			maxHistorySize: 333,
+			autoDiscover: false,
+			loadFromPersistence: false,
+		});
+		liveServers.add(server);
+		const logger = server.getContainer().resolve('Logger');
+		const output = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		logger.info('logged from raw file config');
+		logger.warn('from raw file config');
+
+		expect(server.config).toBe(config);
+		expect(server.config.maxHistorySize).toBe(111);
+		expect(logger.getLevel()).toBe('debug');
+		expect(output).toHaveBeenCalledTimes(2);
+		expect(output.mock.calls[0]?.[0]).toContain('[INFO]');
+	});
+
+	it('uses a real config file and environment logging overlay during initialization', async () => {
+		const path = await writeConfig(
+			JSON.stringify({
+				maxHistorySize: 321,
+				logLevel: 'debug',
+				prettyLog: true,
+				skillDirs: [],
+				toolDirs: [],
+				features: { toolInterleave: false },
+			})
+		);
+		vi.stubEnv('TRACELATTICE_CONFIG', path);
+		vi.stubEnv('TRACELATTICE_LOG_LEVEL', 'warn');
+		vi.stubEnv('TRACELATTICE_PRETTY_LOG', 'false');
+		const output = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const server = await initializeServer();
+		liveServers.add(server);
+		const logger = server.getContainer().resolve('Logger');
+		output.mockClear();
+
+		logger.info('filtered');
+		logger.warn('configured warning');
+
+		expect(server.config.maxHistorySize).toBe(321);
+		expect(logger.getLevel()).toBe('warn');
+		expect(output).toHaveBeenCalledOnce();
+		expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+			level: 'warn',
+			message: 'configured warning',
+		});
+	});
+
 	it('applies false feature overrides and the selected strategy to running services', async () => {
 		const rawFileConfig: ConfigFileOptions = {
 			features: {

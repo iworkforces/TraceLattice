@@ -49,6 +49,7 @@ interface HistogramMetric {
 	labels: Record<string, string>;
 	sum: number;
 	count: number;
+	boundaries: readonly number[];
 	buckets: Map<number, number>;
 }
 
@@ -227,30 +228,41 @@ export class Metrics {
 		const allLabels = { ...this._defaultLabels, ...labels };
 		const key = this._metricKey(fullName, allLabels);
 		const histogram = this._histograms.get(key);
+		let previousBoundary = -Infinity;
+		for (const boundary of buckets) {
+			if (!Number.isFinite(boundary) || boundary <= previousBoundary) {
+				throw new RangeError('Histogram boundaries must be finite and strictly increasing');
+			}
+			previousBoundary = boundary;
+		}
+		if (
+			histogram &&
+			(histogram.boundaries.length !== buckets.length ||
+				histogram.boundaries.some((boundary, index) => boundary !== buckets[index]))
+		) {
+			throw new RangeError('Histogram bucket layout differs from the existing series');
+		}
 
 		if (histogram) {
 			histogram.sum += value;
 			histogram.count += 1;
-			for (const boundary of buckets) {
+			for (const boundary of histogram.boundaries) {
 				if (value <= boundary) {
 					histogram.buckets.set(boundary, (histogram.buckets.get(boundary) ?? 0) + 1);
-				} else {
-					histogram.buckets.set(boundary, histogram.buckets.get(boundary) ?? 0);
 				}
 			}
-			histogram.buckets.set(Infinity, (histogram.buckets.get(Infinity) ?? 0) + 1);
 		} else {
 			const histogramData = {
 				name: fullName,
 				labels: { ...allLabels },
 				sum: value,
 				count: 1,
+				boundaries: [...buckets],
 				buckets: new Map<number, number>(),
 			};
 			for (const boundary of buckets) {
 				histogramData.buckets.set(boundary, value <= boundary ? 1 : 0);
 			}
-			histogramData.buckets.set(Infinity, 1);
 			this._histograms.set(key, histogramData);
 		}
 		this._operationsCounter++;
@@ -363,7 +375,9 @@ export class Metrics {
 		for (const metric of metrics) {
 			if (!helpEntries.has(metric.name)) {
 				const helpText = metric.help ?? `${metric.name} metric`;
-				lines.push(`# HELP ${metric.name} ${helpText}`);
+				lines.push(
+					`# HELP ${metric.name} ${helpText.replaceAll('\\', '\\\\').replaceAll('\n', '\\n')}`
+				);
 				helpEntries.set(metric.name, helpText);
 			}
 			if (!typeEntries.has(metric.name)) {
@@ -395,18 +409,17 @@ export class Metrics {
 				lines.push(formatMetricLine('_sum', histogram.sum));
 				lines.push(formatMetricLine('_count', histogram.count));
 
-				for (const [boundary, count] of histogram.buckets.entries()) {
-					const boundaryLabel =
-						boundary === Infinity
-							? '+Inf'
-							: Number.isFinite(boundary)
-								? String(boundary)
-								: String(boundary);
+				for (const boundary of histogram.boundaries) {
+					const count = histogram.buckets.get(boundary);
+					const boundaryLabel = String(boundary);
 					const boundaryLabelStr = this._formatLabels({ le: boundaryLabel });
 					const bucketLabels =
 						labelStr.length === 0 ? boundaryLabelStr : `${labelStr},${boundaryLabelStr}`;
 					lines.push(`${fullName}_bucket{${bucketLabels}} ${count}`);
 				}
+				const infLabelStr = this._formatLabels({ le: '+Inf' });
+				const infLabels = labelStr.length === 0 ? infLabelStr : `${labelStr},${infLabelStr}`;
+				lines.push(`${fullName}_bucket{${infLabels}} ${histogram.count}`);
 			}
 		}
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConfigLoader } from '../../config/ConfigLoader.js';
+import { ServerConfig } from '../../ServerConfig.js';
 
 const LEGACY_ENVIRONMENT_KEYS = [
 	'MAX_HISTORY_SIZE',
@@ -69,5 +70,49 @@ describe('ConfigLoader environment contract', () => {
 
 		// Then
 		expect(config).toEqual(fileConfig);
+	});
+
+	it('keeps file-only persistence settings when unsupported namespaced aliases are set', () => {
+		const fileConfig = {
+			persistenceBufferSize: 7,
+			persistenceFlushInterval: 750,
+			persistenceMaxRetries: 2,
+		};
+		vi.stubEnv('TRACELATTICE_PERSISTENCE_BUFFER_SIZE', '9');
+		vi.stubEnv('TRACELATTICE_PERSISTENCE_FLUSH_INTERVAL', '900');
+		vi.stubEnv('TRACELATTICE_PERSISTENCE_MAX_RETRIES', '4');
+
+		const loaded = new ConfigLoader().applyEnvironmentOverrides(fileConfig);
+		const effective = new ServerConfig(new ConfigLoader().toServerConfigOptions(loaded));
+
+		expect(loaded).toEqual(fileConfig);
+		expect(effective.persistenceBufferSize).toBe(7);
+		expect(effective.persistenceFlushInterval).toBe(750);
+		expect(effective.persistenceMaxRetries).toBe(2);
+	});
+
+	it('converts only discovery TTL seconds while interleave TTL stays in milliseconds', () => {
+		vi.stubEnv('TRACELATTICE_DISCOVERY_CACHE_TTL', '19');
+		vi.stubEnv('TRACELATTICE_TOOL_INTERLEAVE_TTL_MS', '23000');
+		vi.stubEnv('TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS', '47000');
+
+		const loaded = new ConfigLoader().applyEnvironmentOverrides({});
+		const effective = new ServerConfig(new ConfigLoader().toServerConfigOptions(loaded));
+
+		expect(effective.discoveryCache.ttl).toBe(19_000);
+		expect(effective.toolInterleaveTtlMs).toBe(23_000);
+		expect(effective.toolInterleaveSweepMs).toBe(47_000);
+	});
+
+	it('ignores pretty logging values other than literal false even for a file setting', () => {
+		vi.stubEnv('TRACELATTICE_PRETTY_LOG', 'true');
+
+		expect(new ConfigLoader().applyEnvironmentOverrides({ prettyLog: false }).prettyLog).toBe(
+			false
+		);
+		vi.stubEnv('TRACELATTICE_PRETTY_LOG', 'false');
+		expect(new ConfigLoader().applyEnvironmentOverrides({ prettyLog: true }).prettyLog).toBe(
+			false
+		);
 	});
 });

@@ -110,7 +110,9 @@ Set `TRACELATTICE_LOG_LEVEL` in the process environment to `debug`, `info`, `war
 TRACELATTICE_LOG_LEVEL=debug tracelattice
 ```
 
-Environment variables override values from configuration files.
+Supported environment variables override values from configuration files. The defaults below describe
+`ServerConfig` when no file or environment override is present; `.example.env` contains explicit example
+overrides, not another set of defaults.
 
 | Variable                                | Default      | Description                                 |
 | --------------------------------------- | ------------ | ------------------------------------------- |
@@ -119,14 +121,14 @@ Environment variables override values from configuration files.
 | `TRACELATTICE_MAX_BRANCHES`             | `50`         | Maximum number of branches                  |
 | `TRACELATTICE_MAX_BRANCH_SIZE`          | `100`        | Maximum size of each branch                 |
 | `TRACELATTICE_LOG_LEVEL`                | `info`       | Log level: `debug`, `info`, `warn`, `error` |
-| `TRACELATTICE_PRETTY_LOG`               | `true`       | Enable pretty log output                    |
+| `TRACELATTICE_PRETTY_LOG`               | `true`       | Only the literal `false` disables pretty logging; other values do not override a file setting |
 | `TRACELATTICE_SESSION_MAX_PER_OWNER`    | `50`         | Maximum isolated sessions per owner         |
 | `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS`   | `60000`      | Suspended tool-call token TTL in ms         |
 | `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | `60000`      | Expired suspension cleanup interval in ms   |
 
 ### Config files
 
-Configuration files are loaded from the first matching path in this order: a custom path passed to `ConfigLoader`, `.claude/config.json`, `.claude/config.yaml`, `.claude/config.yml`, then the same filenames under `~/.claude/`. Environment variables override file values.
+Configuration files are loaded from the first valid path in this order: an explicit `ConfigLoader` path or `TRACELATTICE_CONFIG` replaces the search list; otherwise `.claude/config.json`, `.claude/config.yaml`, `.claude/config.yml`, then the same filenames under `~/.claude/`. An invalid file is logged and the next candidate is tried. With no valid file, the loader applies environment overrides to an empty object; `ServerConfig` supplies defaults. Only supported environment variables override file values. Logging (`logLevel` and `prettyLog`) is read from the loaded file/environment configuration separately from `ServerConfig`.
 
 ```yaml
 maxHistorySize: 10000
@@ -135,8 +137,10 @@ maxBranchSize: 100
 skillDirs:
   - .claude/skills
   - ~/.claude/skills
+  - .agents/skills
+  - ~/.agents/skills
 discoveryCache:
-  ttl: 300000
+  ttl: 42000 # example override in milliseconds; default 300000, env TTL is seconds
   maxSize: 100
 persistence:
   enabled: false
@@ -144,6 +148,9 @@ persistence:
   options:
     dataDir: ./.tracelattice
     dbPath: ./.tracelattice/history.db
+persistenceBufferSize: 7 # example file-only override; default 100
+persistenceFlushInterval: 750 # milliseconds, file-only; default 1000
+persistenceMaxRetries: 2 # example file-only override; default 3
 features:
   dagEdges: true
   reasoningStrategy: sequential # sequential or tot
@@ -152,8 +159,8 @@ features:
   toolInterleave: true
   newThoughtTypes: true
   outcomeRecording: true
-toolInterleaveTtlMs: 60000
-toolInterleaveSweepMs: 60000
+toolInterleaveTtlMs: 45000 # example override in milliseconds; default 60000
+toolInterleaveSweepMs: 55000 # example override in milliseconds; default 60000
 maxSessionsPerOwner: 50
 ```
 
@@ -187,11 +194,23 @@ All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `f
 
 | Variable                                | Default                                | Description                                             |
 | --------------------------------------- | -------------------------------------- | ------------------------------------------------------- |
-| `TRACELATTICE_SKILL_DIRS`               | `.claude/skills:<home>/.claude/skills` | Colon-separated skill directories                       |
+| `TRACELATTICE_SKILL_DIRS`               | `.claude/skills:<home>/.claude/skills:.agents/skills:<home>/.agents/skills` | Colon-separated skill directories |
 | `TRACELATTICE_TOOL_DIRS`                | `.claude/tools:<home>/.claude/tools`   | Colon-separated tool directories                        |
 | `TRACELATTICE_DISCOVERY_CACHE_TTL`      | `300`                                  | Discovery cache TTL in seconds; stored internally as ms |
 | `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | `100`                                  | Discovery cache max entries                             |
 | `TRACELATTICE_WATCHER_VERBOSE`          | unset                                  | Log skill watcher events when set to `true`             |
+
+The default skill paths include project-local `.claude/skills` and `.agents/skills` plus both paths
+under the user's home directory. The default tool paths include only `.claude/tools` and its home
+directory counterpart. Setting either root variable replaces its entire default list; `~` in an
+environment value is not expanded by `ConfigLoader`. `TRACELATTICE_DISCOVERY_CACHE_TTL=300` means
+300 seconds and becomes `discoveryCache.ttl: 300000` milliseconds. The interleave environment
+variables ending in `_MS` and the corresponding YAML fields use milliseconds.
+
+`persistenceBufferSize` (default 100 thoughts), `persistenceFlushInterval` (default 1000 ms), and
+`persistenceMaxRetries` (default 3) are YAML/JSON settings, not environment variables. There are no
+`TRACELATTICE_PERSISTENCE_BUFFER_SIZE`, `TRACELATTICE_PERSISTENCE_FLUSH_INTERVAL`, or
+`TRACELATTICE_PERSISTENCE_MAX_RETRIES` overrides.
 
 ## Transports
 

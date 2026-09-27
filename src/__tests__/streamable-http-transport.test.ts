@@ -296,6 +296,22 @@ describe('StreamableHttpTransport', () => {
 			expect(res.headers['content-type']).toBe('text/plain; version=0.0.4; charset=utf-8');
 		});
 
+		it('GET /metrics serves stable collector output after a rejected layout', async () => {
+			const metrics = new Metrics();
+			metrics.counter('requests_total', 1, {}, 'request\\path\nnext');
+			metrics.histogram('latency', 2, { route: 'api' }, [1, 5]);
+			metrics.histogram('latency', 7, { route: 'api' }, [1, 5]);
+			const snapshot = metrics.export();
+			expect(() => metrics.histogram('latency', 4, { route: 'api' }, [1, 10])).toThrow();
+			await startTransport({ metricsProvider: () => metrics.export() });
+			const res = await httpRequest({ port, method: 'GET', path: '/metrics' });
+			expect(res.statusCode).toBe(200);
+			expect(res.body).toBe(snapshot);
+			expect(res.body).toContain('# HELP requests_total request\\\\path\\nnext\n');
+			expect(res.body).toContain('latency_bucket{route="api",le="5"} 1');
+			expect(res.body).toContain('latency_bucket{route="api",le="+Inf"} 2');
+		});
+
 		it('unknown path returns 404', async () => {
 			await startTransport();
 			const res = await httpRequest({

@@ -3,7 +3,7 @@
  *
  * This module provides the `ConfigLoader` class which handles loading configuration
  * from YAML and JSON files in standard locations, with automatic environment variable
- * overrides for all settings.
+ * overrides for supported settings. Persistence buffer, flush, and retry settings are file-only.
  *
  * @module config
  */
@@ -53,8 +53,8 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
  * Configuration options loaded from config files.
  *
  * These options represent the structure of configuration files (JSON or YAML)
- * that can be loaded from standard locations. All values can be overridden
- * by environment variables.
+ * that can be loaded from standard locations. Only supported fields have
+ * environment overrides; persistence buffer, flush, and retry settings are file-only.
  *
  * @example
  * ```yaml
@@ -142,10 +142,13 @@ export interface ConfigFileOptions {
 	 */
 	readonly persistence?: PersistenceConfig;
 
+	/** Maximum buffered thoughts before flushing; file-only (default 100 in ServerConfig). */
 	readonly persistenceBufferSize?: number;
 
+	/** Periodic flush interval in milliseconds; file-only (default 1000 in ServerConfig). */
 	readonly persistenceFlushInterval?: number;
 
+	/** Maximum flush retries; file-only (default 3 in ServerConfig). */
 	readonly persistenceMaxRetries?: number;
 
 	/**
@@ -179,11 +182,11 @@ export interface ConfigFileOptions {
  *
  * This class searches for configuration files in standard locations and applies
  * environment variable overrides. Files are searched in priority order, with the
- * first match being used. Environment variables always take precedence over file values.
+ * first valid match being used. Supported environment variables take precedence over file values.
  *
  * @remarks
  * **Config File Search Order (priority):**
- * 1. Custom path (if provided to constructor)
+ * 1. Custom path or `TRACELATTICE_CONFIG` (if present, replaces the default search list)
  * 2. `.claude/config.json` (project-local)
  * 3. `.claude/config.yaml` (project-local)
  * 4. `.claude/config.yml` (project-local)
@@ -203,6 +206,11 @@ export interface ConfigFileOptions {
  * | `TRACELATTICE_TOOL_DIRS` | string | Colon-separated directory paths |
  * | `TRACELATTICE_DISCOVERY_CACHE_TTL` | number | TTL in seconds (converted to ms) |
  * | `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | number | Max cache entries |
+ * | `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS` / `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | number | Milliseconds |
+ * | `TRACELATTICE_SESSION_MAX_PER_OWNER` | number | Max sessions per owner |
+ * | `TRACELATTICE_FEATURES_*` | boolean or strategy | Feature toggles or `sequential`/`tot` |
+ *
+ * Persistence buffer size, flush interval (milliseconds), and retries are file-only.
  *
  * @example
  * ```typescript
@@ -255,9 +263,10 @@ export class ConfigLoader {
 	 *
 	 * Searches for config files in the configured paths (in priority order),
 	 * parses the first match, and applies environment variable overrides.
-	 * Returns null if no config file is found and no environment overrides are set.
+	 * A malformed file is logged and skipped. With no valid file, applies environment
+	 * overrides to an empty object (the declared nullable return type does not return null).
 	 *
-	 * @returns The loaded configuration with environment overrides applied, or null if no config found
+	 * @returns The loaded configuration with environment overrides applied, or an empty/overlaid object
 	 *
 	 * @example
 	 * ```typescript
@@ -300,6 +309,10 @@ export class ConfigLoader {
 	 * - `TRACELATTICE_TOOL_DIRS` (colon-separated paths)
 	 * - `TRACELATTICE_DISCOVERY_CACHE_TTL` (in seconds, converted to ms)
 	 * - `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` (number)
+	 * - `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS`, `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` (milliseconds)
+	 * - `TRACELATTICE_SESSION_MAX_PER_OWNER` (number)
+	 * - `TRACELATTICE_FEATURES_*` (booleans true/false/1/0 or sequential/tot strategy)
+	 * Persistence buffer, flush interval, and retry settings have no environment aliases.
 	 *
 	 * @param config - The configuration to apply overrides to
 	 * @returns A new configuration object with environment overrides applied

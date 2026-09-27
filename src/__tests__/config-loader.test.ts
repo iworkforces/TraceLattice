@@ -66,15 +66,20 @@ describe('ConfigLoader', () => {
 	});
 
 	describe('load - file loading', () => {
-		it('should return null when no config file found and no env vars', () => {
+		it('returns an empty overlaid object when no config file or override exists', () => {
 			loader = new ConfigLoader();
 			mockExistsSync.mockReturnValue(false);
 
 			const config = loader.load();
-			// load() applies env overrides to {} or config, returns the result
-			// With no env vars set, the result is an empty object (falsy values not present)
-			expect(config).toBeDefined();
-			expect(config!.maxHistorySize).toBeUndefined();
+			expect(config).toEqual({});
+		});
+
+		it('applies environment overrides to an empty object when no file exists', () => {
+			loader = new ConfigLoader();
+			mockExistsSync.mockReturnValue(false);
+			process.env.TRACELATTICE_MAX_HISTORY_SIZE = '789';
+
+			expect(loader.load()).toEqual({ maxHistorySize: 789 });
 		});
 
 		it('should load JSON config file', () => {
@@ -178,14 +183,14 @@ describe('ConfigLoader', () => {
 			loader = new ConfigLoader();
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockExistsSync.mockReturnValue(true);
+			process.env.TRACELATTICE_MAX_HISTORY_SIZE = '654';
 			mockReadFileSync.mockImplementation(() => {
 				throw new Error('Invalid YAML');
 			});
 
-			// Should not throw, should log error
 			const config = loader.load();
 			expect(consoleSpy).toHaveBeenCalled();
-			expect(config).toBeDefined();
+			expect(config).toEqual({ maxHistorySize: 654 });
 			consoleSpy.mockRestore();
 		});
 

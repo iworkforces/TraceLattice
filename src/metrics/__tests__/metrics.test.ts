@@ -66,6 +66,67 @@ describe('Metrics', () => {
 			expect(exported).toContain('test_ms_bucket{le="0.1"} 2');
 			expect(exported).toContain('test_ms_bucket{le="+Inf"} 4');
 		});
+
+		it('rejects invalid boundaries before creating or changing a series', () => {
+			const invalidLayouts = [[NaN], [Infinity], [-Infinity], [2, 1], [1, 1]];
+			for (const layout of invalidLayouts) {
+				expect(() => metrics.histogram('latency', 3, {}, layout)).toThrow();
+				expect(metrics.export()).toBe('');
+				expect(metrics.getOperationCount()).toBe(0);
+			}
+
+			metrics.histogram('latency', 2, {}, [1, 5]);
+			const snapshot = metrics.export();
+			for (const layout of invalidLayouts) {
+				expect(() => metrics.histogram('latency', 3, {}, layout)).toThrow();
+				expect(metrics.export()).toBe(snapshot);
+				expect(metrics.getOperationCount()).toBe(1);
+			}
+		});
+
+		it('keeps copied layouts stable for merged-label series and resets the contract', () => {
+			metrics = new Metrics({ prefix: 'test', defaultLabels: { env: 'prod' } });
+			const boundaries = [1, 5];
+			metrics.histogram('latency', 2, { route: 'a' }, boundaries);
+			boundaries[0] = 0;
+			metrics.histogram('latency', 4, { route: 'a', env: 'prod' }, [1, 5]);
+			metrics.histogram('latency', 7, { route: 'b' }, [2, 10]);
+			const snapshot = metrics.export();
+			expect(snapshot).toContain('test_latency_bucket{env="prod",route="a",le="5"} 2');
+			expect(snapshot).toContain('test_latency_bucket{env="prod",route="a",le="+Inf"} 2');
+			expect(snapshot).toContain('test_latency_bucket{env="prod",route="b",le="10"} 1');
+			expect(() => metrics.histogram('latency', 3, { route: 'a' }, boundaries)).toThrow();
+			expect(() => metrics.histogram('latency', 3, { route: 'a' }, [1, 5, 10])).toThrow();
+			expect(metrics.export()).toBe(snapshot);
+			expect(metrics.getOperationCount()).toBe(3);
+
+			metrics.reset();
+			metrics.histogram('latency', 3, { route: 'a' }, [2]);
+			expect(metrics.export()).toContain('test_latency_bucket{env="prod",route="a",le="2"} 0');
+			expect(metrics.getOperationCount()).toBe(1);
+		});
+
+		it('treats an omitted layout as default on every observation', () => {
+			metrics.histogram('default', 0.01);
+			const snapshot = metrics.export();
+			expect(() => metrics.histogram('default', 0.02, {}, [0.01, 0.1])).toThrow();
+			expect(metrics.export()).toBe(snapshot);
+			expect(metrics.getOperationCount()).toBe(1);
+			metrics.histogram('default', 0.02);
+			expect(metrics.export()).toContain('test_default_bucket{le="0.025"} 2');
+			metrics.histogram('custom', 1, {}, [2]);
+			const customSnapshot = metrics.export();
+			expect(() => metrics.histogram('custom', 1)).toThrow();
+			expect(metrics.export()).toBe(customSnapshot);
+			expect(metrics.getOperationCount()).toBe(3);
+		});
+
+		it('exports an empty layout with only the implicit infinite bucket', () => {
+			metrics.histogram('empty', 4, {}, []);
+			metrics.histogram('empty', 5, {}, []);
+			expect(metrics.export()).toContain('test_empty_bucket{le="+Inf"} 2');
+			expect(metrics.export().match(/test_empty_bucket/g)).toHaveLength(1);
+		});
 	});
 
 	describe('Labels', () => {
@@ -232,13 +293,13 @@ describe('Metrics', () => {
 			expect(exported).not.toContain('\nnext');
 		});
 
-		it('preserves arithmetic and custom finite, NaN, and positive-infinity buckets', () => {
+		it('preserves arithmetic with valid custom finite buckets', () => {
 			metrics.counter('numeric_counter', 2.5);
 			metrics.counter('numeric_counter', -0.5);
 			metrics.gauge('numeric_gauge', -3);
 			metrics.dec('numeric_gauge');
-			metrics.histogram('numeric_histogram', 0.5, {}, [1, NaN]);
-			metrics.histogram('numeric_histogram', 2, {}, [1, NaN]);
+			metrics.histogram('numeric_histogram', 0.5, {}, [1, 3]);
+			metrics.histogram('numeric_histogram', 2, {}, [1, 3]);
 
 			expect(metrics.get('numeric_counter')).toBe(2);
 			expect(metrics.get('numeric_gauge')).toBe(-4);
@@ -248,8 +309,16 @@ describe('Metrics', () => {
 			expect(exported).toContain('test_numeric_histogram_sum 2.5');
 			expect(exported).toContain('test_numeric_histogram_count 2');
 			expect(exported).toContain('test_numeric_histogram_bucket{le="1"} 1');
-			expect(exported).toContain('test_numeric_histogram_bucket{le="NaN"} 0');
+			expect(exported).toContain('test_numeric_histogram_bucket{le="3"} 2');
 			expect(exported).toContain('test_numeric_histogram_bucket{le="+Inf"} 2');
+		});
+
+		it('escapes backslashes and newlines in counter and gauge HELP', () => {
+			metrics.counter('counter_help', 1, {}, 'line\\path\nnext');
+			metrics.gauge('gauge_help', 2, {}, 'gauge\\path\nnext');
+			const exported = metrics.export();
+			expect(exported).toContain('# HELP test_counter_help line\\\\path\\nnext\n');
+			expect(exported).toContain('# HELP test_gauge_help gauge\\\\path\\nnext\n');
 		});
 	});
 
