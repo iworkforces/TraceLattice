@@ -23,7 +23,7 @@ persistence/
 
 | Backend   | Storage                           | Notes                                                       |
 | --------- | --------------------------------- | ----------------------------------------------------------- |
-| Memory    | 4 `Map`s by `SessionId`           | Enabled fallback and tests. Omitted config is `enabled: false` → factory `null` |
+| Memory    | 4 `Map`s by `SessionId`           | In-memory sink. `enabled: false` → factory `null`. Omitted `backend` throws (no memory fallback) |
 | File v2   | **one** `<dataDir>/snapshot.json` | Exclusive lock; full rewrite; not `edges/{session}.json`    |
 | SQLite v2 | tables + `schema_version=(1,2)`   | WAL unless `enableWAL === false`; `better-sqlite3` optional |
 

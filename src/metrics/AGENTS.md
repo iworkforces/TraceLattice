@@ -23,7 +23,7 @@ metrics/
 
 - `counter(name, value=1, labels, help)` — only increases
 - `gauge(name, value, labels, help)` — set current value
-- `histogram(name, value, labels, buckets?)` — observe
+- `histogram(name, value, labels, buckets?)` — observe. Boundaries must be finite and strictly increasing. A later observe with a different layout throws.
 - `export()` — Prometheus text (`# HELP` / `# TYPE` / samples)
 
 Default histogram buckets (seconds):

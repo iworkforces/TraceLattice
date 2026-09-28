@@ -38,7 +38,7 @@ Direction: `branch`, `merge`, `derives_from`, `tool_invocation`, and `sequence` 
 
 `addEdge` · `getEdge` · `outgoing` · `incoming` · `edgesForSession` · `pruneSession` · `clearSession` · `clearAll` · `size`
 
-- Append-only: **no `removeEdge`**. `pruneSession` drops edges whose endpoints left the retained set.
+- Append-only: **no `removeEdge`**. `pruneSession` drops edges whose endpoints left the retained set. When `retainedBranchThoughtIds` is passed, a `branch` edge is also dropped if `to` is outside that set.
 - Self-edge (`from === to`) → `InvalidEdgeError`.
 - Same `(from, to, kind)` in a session is silently deduped.
 - Session-scoped Maps. No cross-session edges. Query via `edgesForSession`.
@@ -48,7 +48,7 @@ Direction: `branch`, `merge`, `derives_from`, `tool_invocation`, and `sequence` 
 
 Read-only. Returns **ids only**. Live / uncached (no snapshot).
 
-- Isolated thoughts are **invisible** when nodes come only from edges (`depthFromRoots` → `undefined`). A store `nodesForSession` (the strategy projection) makes those ids visible.
+- Isolated thoughts are **invisible** (`depthFromRoots` → `undefined`). Strategy `nodesForSession` lists active edge endpoints only, so a thought that was never an endpoint stays invisible.
 - `chronological` is BFS from roots. Neighbors follow `outgoing` order (`createdAt`), not a pure timestamp sort.
 - `branchThoughts` follows `kind === 'branch'` only (includes root).
 - `descendants` / `ancestors` / `depthFromRoots` follow **all** kinds.

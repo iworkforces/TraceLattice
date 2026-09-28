@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 
-Deterministic branch rollup. No LLM. `compression` flag gates **writes**; `ISummaryStore` always in DI.
+Deterministic branch rollup. No LLM. `compression` gates whether the processor receives `CompressionService` (the service does not read the flag). `ISummaryStore` stays in DI.
 
 ## STRUCTURE
 

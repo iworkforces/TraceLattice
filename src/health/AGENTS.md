@@ -24,8 +24,8 @@ health/
 
 ## CONSUMERS
 
-- `GET /health` → `checkLiveness()` (`BaseTransport`, `StreamableHttpTransport`, `HttpTransport`)
-- `GET /ready` → `checkReadiness()`
+- `GET /health` → `checkLiveness()` and `GET /ready` → `checkReadiness()` only when a `HealthChecker` was injected.
+- CLI never constructs one, so those routes do not consult persistence.
 
 ## NOTES
 

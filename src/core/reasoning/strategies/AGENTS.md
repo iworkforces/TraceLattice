@@ -40,7 +40,7 @@ Terminates when `next_thought_needed === false`. Otherwise **continue**. Not “
 - Frontier = **`graph.leaves()`**, **not** `breadthFirstFrontier` (`totScoring` helper is unused on this path).
 - Score ≥ `terminationConfidence` (default 0.85) → terminate.
 - `detectPlateau` on **recent active main-history scores** (not frontier) → terminate.
-- Current thought outside top-`beamWidth` leaves → `branch`.
+- `branch` only when the scored frontier is wider than `beamWidth` and the current leaf is outside `selectBeam`. A non-leaf, or a frontier no wider than the beam, continues.
 - Else continue.
 
 Config lives in a **module `WeakMap`**, not on `this`. Defaults: `beamWidth=3`, `depthCap=8`, `terminationConfidence=0.85`, plateau 3/0.02. `terminationConfidence` is finite and nonnegative; values above 1 are valid.
