@@ -29,7 +29,7 @@ Other components: `verification_coverage`, `depth_efficiency`, `confidence_stabi
 Detector is a **firehose**. Hint selection lives on **`ThoughtProcessor`**, not here.
 
 - Warning-only, **max 3**, **3-thought cooldown**.
-- Cooldown is **not** on the detector. Map **survives `reset_state`** (cleared only via processor auxiliary-state wipe).
+- Cooldown is **not** on the detector. Production `reset_state` deletes that session’s map via `clearSessionAuxiliaryState`. It survives only when that callback is skipped.
 
 Processor priority (lower first):
 

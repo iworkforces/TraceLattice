@@ -57,5 +57,5 @@ Reasoning engine: ingest → graph mutation → quality signals → strategy. `H
 - Processor ctor default is imported `DEFAULT_FLAGS` — **all on**. JSDoc saying “off” is stale. Tests that need off must pass explicit flags.
 - Hint cooldown `Map<SessionId, Map<PatternName, number>>` is wiped by production exclusive reset via `clearSessionAuxiliaryState`. Survives only mocks that skip that callback.
 - `decide()` reads `buildActiveEvidenceProjection` (`reasoning/ActiveEvidenceProjection.ts`), not the live `EdgeStore`.
-- `ISessionLock` (`contracts/interfaces.ts`) is `withLock` / `isActive` / `size` — not acquire/release. Call sites: HistoryManager, ThoughtProcessor, ServiceRegistry.
+- `ISessionLock` (`contracts/interfaces.ts`) is `withLock` / `isActive` / `size` — not acquire/release. `withLock` is called from HistoryManager and ThoughtProcessor. `lib.ts` constructs `SessionLock`. ServiceRegistry only types the key.
 - ToT `depthCap` (default 8) uses `GraphView.depthFromRoots`. Isolated thoughts are invisible to the graph.
