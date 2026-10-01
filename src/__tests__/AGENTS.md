@@ -16,7 +16,7 @@ Vitest under `src/__tests__/` (path-alias parity). Thresholds: branches 90 / fun
 | Compression unit | `compression/` |
 | Pure `decide()` / scoring | `strategies/` + register in `StrategyContract` |
 | Processor + backends + HTTP | `integration/` |
-| Scored category vs baseline | `eval/battleTest/` (`RUN_EVAL=1`) |
+| Scored category vs baseline | `eval/battleTest/` |
 | CI/CD / pack / transport ban | `release/` (own AGENTS.md) |
 | Extra branch coverage | `*-cov.test.ts` stay at **suite root** |
 
@@ -29,5 +29,5 @@ Mirror `src/foo/Bar.ts` → `src/__tests__/foo/Bar.test.ts` for **new** files. O
 - Branded IDs: `createTestSessionId()` etc. — not `generateUlid`.
 - One concern per `it`. `it.skip` / `skipIf` needs a local comment.
 - `await` shutdowns / `store.stop()` in `afterEach`.
-- `*.eval.ts` gated by `RUN_EVAL`. `*.test-d.ts` are type-only (tsc, not vitest include).
+- All three local `*.eval.ts` suites run by default in `npm test`, `npm run test:coverage`, and `npm run verify:release`. `*.test-d.ts` are type-only (tsc, not vitest include).
 - Only colocated suite: `src/metrics/__tests__/metrics.test.ts`.

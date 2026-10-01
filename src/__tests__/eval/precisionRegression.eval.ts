@@ -311,7 +311,7 @@ async function runPrecisionEval() {
 	};
 }
 
-describe.skipIf(!process.env.RUN_EVAL)('Precision Regression Eval', () => {
+describe('Precision Regression Eval', () => {
 	it('repeats substantive production-path and controlled-holdout results exactly', async () => {
 		const clock = vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
 		try {
