@@ -31,7 +31,7 @@ import {
 	type HydratedEntry,
 } from './compression/DehydrationPolicy.js';
 import type { Summary } from './compression/Summary.js';
-import { SessionAccessDeniedError } from './SessionErrors.js';
+import { SessionAccessDeniedError, SessionExpiredError } from './SessionErrors.js';
 import { EdgeEmitter } from './graph/EdgeEmitter.js';
 import type {
 	HistorySessionSnapshot,
@@ -115,6 +115,7 @@ export class HistoryManager implements IHistoryManager {
 	private static readonly SESSION_TTL_MS = 30 * 60 * 1000;
 	private static readonly MAX_SESSIONS = 100;
 	private _sessions: Map<SessionId, SessionState> = new Map();
+	private readonly _expiredSessions = new Map<SessionId, { readonly owner: string | undefined }>();
 	private _maxHistorySize: number;
 	private _maxBranches: number;
 	private _maxBranchSize: number;
@@ -203,6 +204,12 @@ export class HistoryManager implements IHistoryManager {
 			summaryStore: this._summaryStore,
 			sessions: this._sessions,
 			createSessionState: (owner) => this._createSessionState(owner),
+			assertReplacementCapacity: (sessionId, owner) => {
+				if (!this._sessions.has(sessionId)) this._planCapacityForSession(owner);
+			},
+			admitReplacement: (sessionId, owner) => {
+				if (!this._sessions.has(sessionId)) this._makeCapacityForSession(owner);
+			},
 			logger: this._logger,
 		});
 
@@ -253,6 +260,7 @@ export class HistoryManager implements IHistoryManager {
 	 * @param summaries - Complete current summary snapshot for the session.
 	 */
 	public bufferSummaries(sessionId: SessionId, summaries: readonly Summary[]): void {
+		this._authorizeExistingSession(sessionId, this._getCurrentOwner());
 		this._lifecycle.runMutation(sessionId, () => {
 			this._persistenceBuffer?.bufferSummaries(sessionId, summaries);
 			const session = this._sessions.get(sessionId);
@@ -278,13 +286,15 @@ export class HistoryManager implements IHistoryManager {
 	 * Gets or creates session state; updates lastAccessedAt.
 	 *
 	 * Ownership semantics:
-	 * - `owner === undefined` (stdio path): never rejects, never sets owner.
+	 * - `owner === undefined` (stdio path): bypasses ownership checks without setting
+	 *   owner; expired sessions still reject access.
 	 * - `owner !== undefined`: if session has a different owner, throws
 	 *   `SessionAccessDeniedError`. If session was created without an owner
 	 *   (e.g. by stdio), the owner is set on first owner-aware access.
 	 */
 	private _getSession(sessionId: string, owner?: string): SessionState {
 		const key = asSessionId(sessionId);
+		this._authorizeExistingSession(key, owner);
 		const existing = this._sessions.get(key);
 		if (existing !== undefined) {
 			this._assertSessionOwner(key, existing, owner);
@@ -295,6 +305,7 @@ export class HistoryManager implements IHistoryManager {
 	}
 
 	private _getSessionWithinOperation(key: SessionId, owner?: string): SessionState {
+		this._authorizeExistingSession(key, owner);
 		let session = this._sessions.get(key);
 		if (!session) {
 			this._makeCapacityForSession(owner);
@@ -322,13 +333,18 @@ export class HistoryManager implements IHistoryManager {
 		if (session.owner === undefined) session.owner = owner;
 	}
 
-	private _makeCapacityForSession(owner: string | undefined): void {
+	private _planCapacityForSession(owner: string | undefined): readonly SessionId[] {
 		const victims = this._sessionManager.planProspectiveAdmission(
 			this._sessions,
 			owner,
 			(sessionId) => this._isCapacityEvictionEligible(sessionId)
 		);
 		if (victims === undefined) throw new MaxSessionsReachedError(HistoryManager.MAX_SESSIONS);
+		return victims;
+	}
+
+	private _makeCapacityForSession(owner: string | undefined): void {
+		const victims = this._planCapacityForSession(owner);
 		if (victims.length === 0) return;
 		const evicted = this._lifecycle.tryEvictIdleSessions(victims, (sessionIds) => {
 			if (sessionIds.some((sessionId) => !this._isPersistenceQuiescent(sessionId))) {
@@ -384,12 +400,14 @@ export class HistoryManager implements IHistoryManager {
 	}
 
 	private _removeLiveSession(sessionId: SessionId): void {
+		const session = this._sessions.get(sessionId);
 		this._clearSessionAuxiliaryState?.(sessionId);
 		this._edgeStore?.clearSession(sessionId);
 		this._summaryStore?.clearSession(sessionId);
 		this._referenceIndex.clearSession(sessionId);
 		this._sessions.delete(sessionId);
 		this._persistenceBuffer?.forgetQuiescentSession(sessionId);
+		if (session !== undefined) this._expiredSessions.set(sessionId, { owner: session.owner });
 	}
 
 	private _createSessionState(owner?: string, provenance?: 'restored'): SessionState {
@@ -411,7 +429,17 @@ export class HistoryManager implements IHistoryManager {
 		sessionId: SessionId,
 		owner: string | undefined
 	): string | undefined {
-		const sessionOwner = this._sessions.get(sessionId)?.owner;
+		const preservedOwner = this._authorizeSessionReset(sessionId, owner);
+		if (this._expiredSessions.has(sessionId)) throw new SessionExpiredError(sessionId);
+		return preservedOwner;
+	}
+
+	private _authorizeSessionReset(
+		sessionId: SessionId,
+		owner: string | undefined
+	): string | undefined {
+		const marker = this._expiredSessions.get(sessionId);
+		const sessionOwner = marker === undefined ? this._sessions.get(sessionId)?.owner : marker.owner;
 		if (owner !== undefined && this._sessions.get(sessionId)?.provenance === 'restored') {
 			throw new SessionAccessDeniedError(sessionId, 'unavailable', owner);
 		}
@@ -419,6 +447,10 @@ export class HistoryManager implements IHistoryManager {
 			throw new SessionAccessDeniedError(sessionId, sessionOwner, owner);
 		}
 		return sessionOwner ?? owner;
+	}
+
+	public assertSessionResetAuthorized(sessionId: string): void {
+		this._authorizeSessionReset(asSessionId(sessionId), this._getCurrentOwner());
 	}
 
 	private _assertOwnerlessResetAll(): void {
@@ -440,15 +472,16 @@ export class HistoryManager implements IHistoryManager {
 	 */
 	public addThought(thought: ThoughtData, context?: ThoughtAdmissionContext): void {
 		const sessionId = asSessionId(thought.session_id);
+		this._authorizeExistingSession(sessionId, this._getCurrentOwner());
 		this._lifecycle.runMutation(sessionId, () =>
 			this._addThoughtWithinOperation(sessionId, thought, context)
 		);
 	}
 
 	public assertThoughtIdentityAvailable(thought: ThoughtData): void {
-		if (thought.id === undefined) return;
 		const sessionId = asSessionId(thought.session_id);
 		this._authorizeExistingSession(sessionId, this._getCurrentOwner());
+		if (thought.id === undefined) return;
 		if (
 			this._referenceIndex.has(sessionId, thought.id) ||
 			this._persistenceBuffer?.hasThoughtIdentity(sessionId, thought.id) === true
@@ -778,6 +811,7 @@ export class HistoryManager implements IHistoryManager {
 
 	/** @throws {ValidationError} If branchId is empty or already exists. */
 	public registerBranch(sessionId: string, branchId: BranchId): void {
+		this._authorizeExistingSession(asSessionId(sessionId), this._getCurrentOwner());
 		if (typeof branchId !== 'string' || branchId.length === 0) {
 			throw new ValidationError('branch_id', 'branch_id must be a non-empty string');
 		}
@@ -825,7 +859,7 @@ export class HistoryManager implements IHistoryManager {
 	/** Awaitably deletes one authorized durable namespace before replacing its live state. */
 	public async resetSession(sessionId: string, clearAuxiliaryState?: () => void): Promise<void> {
 		const canonicalSessionId = asSessionId(sessionId);
-		this._authorizeExistingSession(canonicalSessionId, this._getCurrentOwner());
+		this.assertSessionResetAuthorized(canonicalSessionId);
 		await this._lifecycle.withSessionReset(canonicalSessionId, async () => {
 			const reset = async (): Promise<void> =>
 				await this.resetSessionWithinExclusive(canonicalSessionId, clearAuxiliaryState);
@@ -839,7 +873,7 @@ export class HistoryManager implements IHistoryManager {
 		sessionId: SessionId,
 		clearAuxiliaryState?: () => void
 	): Promise<void> {
-		const preservedOwner = this._authorizeExistingSession(sessionId, this._getCurrentOwner());
+		const preservedOwner = this._authorizeSessionReset(sessionId, this._getCurrentOwner());
 		await this._resetCoordinator.resetSession(
 			sessionId,
 			preservedOwner,
@@ -849,6 +883,7 @@ export class HistoryManager implements IHistoryManager {
 					: () => this._clearSessionAuxiliaryState?.(sessionId))
 		);
 		this._referenceIndex.clearSession(sessionId);
+		this._expiredSessions.delete(sessionId);
 	}
 
 	/** Awaitably deletes all durable namespaces from a trusted ownerless context. */
@@ -864,6 +899,7 @@ export class HistoryManager implements IHistoryManager {
 		this._assertOwnerlessResetAll();
 		await this._resetCoordinator.resetAll(clearAuxiliaryState ?? this._clearAllAuxiliaryState);
 		this._referenceIndex.clearAll();
+		this._expiredSessions.clear();
 	}
 
 	public getSessionIds(): string[] {
@@ -1010,6 +1046,7 @@ export class HistoryManager implements IHistoryManager {
 		this._edgeStore?.clearAll();
 		this._summaryStore?.clearAll();
 		this._clearAllAuxiliaryState?.();
+		this._expiredSessions.clear();
 	}
 
 	/** Number of coordinator-owned thought writes not yet acknowledged successful. */

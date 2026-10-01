@@ -13,6 +13,8 @@ interface SessionResetCoordinatorBaseConfig<SessionState> {
 	readonly summaryStore?: ISummaryStore;
 	readonly sessions: Map<SessionId, SessionState>;
 	readonly createSessionState: (owner: string | undefined) => SessionState;
+	readonly assertReplacementCapacity: (sessionId: SessionId, owner: string | undefined) => void;
+	readonly admitReplacement: (sessionId: SessionId, owner: string | undefined) => void;
 	readonly logger: Logger;
 }
 
@@ -30,6 +32,8 @@ export class SessionResetCoordinator<SessionState> {
 	private readonly _sessions: Map<SessionId, SessionState>;
 	private readonly _createSessionState: (owner: string | undefined) => SessionState;
 	private readonly _logger: Logger;
+	private readonly _assertReplacementCapacity: SessionResetCoordinatorBaseConfig<SessionState>['assertReplacementCapacity'];
+	private readonly _admitReplacement: SessionResetCoordinatorBaseConfig<SessionState>['admitReplacement'];
 
 	constructor(config: SessionResetCoordinatorConfig<SessionState>) {
 		this._durability = config;
@@ -38,6 +42,8 @@ export class SessionResetCoordinator<SessionState> {
 		this._sessions = config.sessions;
 		this._createSessionState = config.createSessionState;
 		this._logger = config.logger;
+		this._assertReplacementCapacity = config.assertReplacementCapacity;
+		this._admitReplacement = config.admitReplacement;
 	}
 
 	async resetSession(
@@ -45,6 +51,7 @@ export class SessionResetCoordinator<SessionState> {
 		preservedOwner: string | undefined,
 		clearAuxiliaryState?: () => void
 	): Promise<void> {
+		this._assertReplacementCapacity(sessionId, preservedOwner);
 		const durability = this._durability;
 		if (durability.persistence === null) {
 			this._replaceLiveSession(sessionId, preservedOwner);
@@ -73,6 +80,7 @@ export class SessionResetCoordinator<SessionState> {
 	}
 
 	private _replaceLiveSession(sessionId: SessionId, owner: string | undefined): void {
+		this._admitReplacement(sessionId, owner);
 		this._clearSessionStores(sessionId);
 		this._sessions.set(sessionId, this._createSessionState(owner));
 		this._logger.info('Session reset', { sessionId });

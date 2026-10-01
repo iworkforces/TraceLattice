@@ -131,6 +131,9 @@ export interface IHistoryManager {
 	/** Returns a non-mutating session snapshot without creating or binding state. */
 	inspectSession(sessionId: string): HistorySessionSnapshot;
 
+	/** Checks reset authorization without creating or claiming state; permits expired scopes. */
+	assertSessionResetAuthorized(sessionId: string): void;
+
 	/** Returns the currently materialized session identifiers without binding ownership. */
 	getSessionIds(): string[];
 

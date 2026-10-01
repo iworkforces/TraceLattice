@@ -106,7 +106,7 @@ Reasoning Enhancement Parameters:
 - quality_score: Self-assessed quality of this thought (0-1)
 - confidence: Confidence in this thought's correctness (0-1)
 - hypothesis_id: Links hypothesis to verification (alphanumeric, hyphens, underscores)
-- verification_target: For 'verification'/'critique' types, the thought_number being evaluated
+- verification_target: For 'verification'/'critique', the thought_number of a uniquely retained identity. Branch/revision number reuse is legal, but ambiguous numeric targets fail. Result-bearing verification requires a non-retracted target with confidence.
 - verification_result: Optional exact outcome label (0 = incorrect, 1 = correct) for a verification_target; only has outcome semantics on thought_type='verification'
 - synthesis_sources: For 'synthesis' type, the thought_numbers being combined
 - merge_from_thoughts: Thought numbers from other branches merged (graph reasoning)
@@ -114,7 +114,7 @@ Reasoning Enhancement Parameters:
 - meta_observation: Observation about reasoning process (with thought_type 'meta')
 - reasoning_depth: How deep to reason: 'shallow' (quick), 'moderate' (default), 'deep' (thorough)
 - session_id: Required unique identifier that scopes thought history, branches, and statistics to an explicit session. Format: alphanumeric, hyphens, underscores, 1-100 chars; the retired value __global__ is rejected.
-- reset_state: (Optional) When true, clears all state for the required session_id before processing the current thought. Use this to start a fresh reasoning chain without accumulated state from previous chains.
+- reset_state: (Optional) Authorized fresh-chain replacement for session_id, deleting its durable data and preserving its former owner. SESSION_EXPIRED requires this explicit recovery or a new session_id; invalid or failed reset does not reopen the expired scope.
 
 Response Enrichment:
 - When reasoning fields are set, response includes confidence_signals (depth, revision/branch count, type distribution, avg confidence, structural_quality, quality_components) and reasoning_stats (hypothesis tracking)
@@ -577,7 +577,13 @@ export const SequentialThinkingSchema = v.object({
 		)
 	),
 	verification_target: v.optional(
-		v.pipe(v.number(), v.minValue(1), v.description('Thought number being verified or critiqued'))
+		v.pipe(
+			v.number(),
+			v.minValue(1),
+			v.description(
+				'Uniquely retained thought number being verified or critiqued; ambiguous numeric targets fail even though branch/revision number reuse is legal'
+			)
+		)
 	),
 	verification_result: v.optional(
 		v.pipe(
@@ -622,14 +628,14 @@ export const SequentialThinkingSchema = v.object({
 		v.maxLength(100),
 		v.notValue('__global__', "Session ID '__global__' is retired; use an explicit named session"),
 		v.description(
-			'Required session identifier for state isolation. Thought history, branches, and statistics are scoped to this explicit named session.'
+			'Required named session for state isolation. SESSION_EXPIRED after runtime eviction requires an authorized reset_state fresh chain or a new session_id; ordinary continuation cannot recreate it.'
 		)
 	),
 	reset_state: v.optional(
 		v.pipe(
 			v.boolean(),
 			v.description(
-				'When true, clears all state for the target session before processing this thought. The thought is then processed as the first in a fresh session.'
+				'Authorized fresh-chain replacement, deleting target-session durable data and preserving its former owner. Recovers SESSION_EXPIRED only on successful reset; invalid or failed reset does not reopen it.'
 			)
 		)
 	),

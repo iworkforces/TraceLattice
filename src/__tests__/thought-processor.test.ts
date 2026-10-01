@@ -272,6 +272,7 @@ describe('ThoughtProcessor', () => {
 		it('should return error response when processing fails', async () => {
 			// Create a HistoryManager that throws on addThought
 			class ThrowingHistoryManager implements IHistoryManager {
+				assertSessionResetAuthorized(_sessionId: string): void {}
 				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
 					return { kind: 'missing' as const };
@@ -1876,6 +1877,7 @@ describe('ThoughtProcessor — uncovered branches', () => {
 		it('should handle non-Error thrown in process catch branch', async () => {
 			// Create a HistoryManager that throws a non-Error value
 			class StringThrowingHistoryManager implements IHistoryManager {
+				assertSessionResetAuthorized(_sessionId: string): void {}
 				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
 					return { kind: 'missing' as const };

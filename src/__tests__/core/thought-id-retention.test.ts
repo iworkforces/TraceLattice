@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { PersistenceConfig } from '../../contracts/PersistenceBackend.js';
+import { HistoryManager } from '../../core/HistoryManager.js';
+import { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
+import { ThoughtProcessor } from '../../core/ThoughtProcessor.js';
 import { createServer } from '../../lib.js';
 import { ServerConfig } from '../../ServerConfig.js';
+import { createTestSessionId, createTestThoughtId } from '../helpers/factories.js';
 
 type Server = Awaited<ReturnType<typeof createServer>>;
 
@@ -63,7 +67,8 @@ async function evictOldestSession(subject: Server): Promise<void> {
 	});
 }
 
-async function exerciseDisabledBranchPersistence(subject: Server) {
+async function exerciseRestoredBranchPersistence(subject: Server, persistBranches: boolean) {
+	// Given an evicted session whose durable history no longer contains the branch thought.
 	const sessionId = 'disabled-branch-ownership';
 	await process({
 		subject,
@@ -87,7 +92,47 @@ async function exerciseDisabledBranchPersistence(subject: Server) {
 	await process({ subject, sessionId, id: 'newer-history-id', thoughtNumber: 3 });
 	await subject.history._flushBuffer();
 	await evictOldestSession(subject);
-	return process({ subject, sessionId, id: 'reusable-branch-id', thoughtNumber: 4 });
+	await subject.history._flushBuffer();
+	const expired = await process({ subject, sessionId, id: 'reusable-branch-id', thoughtNumber: 4 });
+	expect(expired.isError).toBe(true);
+	expect(JSON.parse(expired.content[0]?.text ?? '{}')).toMatchObject({ code: 'SESSION_EXPIRED' });
+
+	// Given startup restore against the still-owned backend, without resetting durable evidence.
+	const restored = new HistoryManager({
+		maxHistorySize: 1,
+		persistence: subject.history.getPersistenceBackend(),
+		persistenceHistorySize: 1,
+		persistBranches,
+		persistenceFlushInterval: 60_000,
+	});
+	try {
+		await restored.loadFromPersistence();
+		expect(restored.getHistory(sessionId).map((thought) => thought.id)).toEqual([
+			'newer-history-id',
+		]);
+		expect(
+			Object.values(restored.getBranches(sessionId)).flatMap((branch) =>
+				branch.map((thought) => thought.id)
+			)
+		).toEqual(persistBranches ? ['reusable-branch-id'] : []);
+		const processor = new ThoughtProcessor(
+			restored,
+			new ThoughtFormatter(),
+			subject.getContainer().resolve('ThoughtEvaluator')
+		);
+
+		// When the same thought ID is submitted through ordinary identity admission after restore.
+		return await processor.process({
+			id: createTestThoughtId('reusable-branch-id'),
+			thought: `${sessionId}-4`,
+			thought_number: 4,
+			total_thoughts: 4,
+			next_thought_needed: false,
+			session_id: createTestSessionId(sessionId),
+		});
+	} finally {
+		await restored.shutdown();
+	}
 }
 
 afterEach(async () => {
@@ -159,8 +204,9 @@ describe('public durable thought identity retention', () => {
 			options: { maxHistorySize: 1, persistBranches: false },
 		});
 
-		const replacement = await exerciseDisabledBranchPersistence(subject);
+		const replacement = await exerciseRestoredBranchPersistence(subject, false);
 
+		// Then no retained copy prevents admission.
 		expect(replacement.isError).toBeUndefined();
 	});
 
@@ -173,8 +219,9 @@ describe('public durable thought identity retention', () => {
 				options: { dataDir, maxHistorySize: 1, persistBranches: false },
 			});
 
-			const replacement = await exerciseDisabledBranchPersistence(subject);
+			const replacement = await exerciseRestoredBranchPersistence(subject, false);
 
+			// Then no retained copy prevents admission.
 			expect(replacement.isError).toBeUndefined();
 		} finally {
 			for (const subject of servers) await subject.stop();
@@ -190,8 +237,9 @@ describe('public durable thought identity retention', () => {
 			options: { maxHistorySize: 1, persistBranches: true },
 		});
 
-		const duplicate = await exerciseDisabledBranchPersistence(subject);
+		const duplicate = await exerciseRestoredBranchPersistence(subject, true);
 
+		// Then the retained branch identity rejects admission, rather than session expiry.
 		expect(duplicate.isError).toBe(true);
 		expect(JSON.parse(duplicate.content[0]?.text ?? '{}')).toMatchObject({
 			code: 'VALIDATION_ERROR',

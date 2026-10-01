@@ -310,9 +310,10 @@ export class ThoughtProcessor {
 				return await this._processInner(prepared);
 			};
 			if (prepared.resetState) {
-				this.historyManager.inspectSession(sessionId);
+				this.historyManager.assertSessionResetAuthorized(sessionId);
 				return await this._lifecycle.withSessionReset(sessionId, operation);
 			}
+			this.historyManager.inspectSession(sessionId);
 			return await this._lifecycle.runOperation(sessionId, operation);
 		} catch (error) {
 			return this._buildErrorResponse(error);
@@ -322,7 +323,7 @@ export class ThoughtProcessor {
 	/** Resets one canonical session and its processor-owned auxiliary state. */
 	public async resetSession(sessionId: string): Promise<void> {
 		const canonicalSessionId = asSessionId(sessionId);
-		this.historyManager.inspectSession(canonicalSessionId);
+		this.historyManager.assertSessionResetAuthorized(canonicalSessionId);
 		const operation = async (): Promise<void> => {
 			await this.historyManager.resetSessionWithinExclusive(canonicalSessionId, () =>
 				this.clearSessionAuxiliaryState(canonicalSessionId)
@@ -438,10 +439,10 @@ export class ThoughtProcessor {
 	private async _processInner(prepared: PreparedThought): Promise<CallToolResult> {
 		const { thought, resetState, registerBranchId } = prepared;
 		const sessionId = thought.session_id;
-		const existingSnapshot = this.historyManager.inspectSession(sessionId);
+		if (resetState) this.historyManager.assertSessionResetAuthorized(sessionId);
 		const validationSnapshot = resetState
 			? ThoughtProcessor._emptySessionSnapshot()
-			: existingSnapshot;
+			: this.historyManager.inspectSession(sessionId);
 		if (!resetState) {
 			if (!thought.available_mcp_tools && validationSnapshot.availableMcpTools) {
 				thought.available_mcp_tools = [...validationSnapshot.availableMcpTools];

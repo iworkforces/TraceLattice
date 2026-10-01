@@ -122,6 +122,8 @@ class FakeHistoryManager implements IHistoryManager {
 			availableSkills: undefined,
 		};
 	}
+	assertSessionResetAuthorized(_sessionId: string): void {}
+
 	getSessionIds(): string[] {
 		return [SESSION];
 	}
