@@ -112,6 +112,10 @@ describe('HistoryManager reference-index lifecycle', () => {
 
 		await internals._evictSessions([sessionId]);
 
+		expect(() => history.resolveThoughtReference(sessionId, 2)).toThrowError(
+			expect.objectContaining({ code: 'SESSION_EXPIRED' })
+		);
+		await history.resetSession(sessionId);
 		expect(history.resolveThoughtReference(sessionId, 2)).toEqual({ kind: 'missing' });
 	});
 
@@ -252,8 +256,10 @@ describe('HistoryManager reference-index lifecycle', () => {
 
 		expect(() =>
 			history.assertThoughtIdentityAvailable({ ...persisted, thought: 'duplicate after eviction' })
-		).toThrowError("Validation failed for 'id': Thought id already exists in session: durable-id");
+		).toThrowError(expect.objectContaining({ code: 'SESSION_EXPIRED' }));
 		expect(await persistence.loadHistoryForSession(sessionId)).toEqual([persisted]);
+		await history.resetSession(sessionId);
+		expect(() => history.assertThoughtIdentityAvailable(persisted)).not.toThrow();
 	});
 
 	it('releases durable identity only after reset deletes persisted state', async () => {
@@ -300,7 +306,7 @@ describe('HistoryManager reference-index lifecycle', () => {
 		expect(() => history.assertThoughtIdentityAvailable(released)).not.toThrow();
 	});
 
-	it('permits reuse after current TTL eviction removes identity membership', async () => {
+	it('permits reuse only after explicit reset of a TTL-evicted session', async () => {
 		const history = manager();
 		const sessionId = asSessionId('evicted-reuse');
 		const thought = createTestThought({
@@ -318,6 +324,10 @@ describe('HistoryManager reference-index lifecycle', () => {
 		state.lastAccessedAt = Date.now() - 31 * 60 * 1000;
 		await internals._evictSessions([sessionId]);
 
+		expect(() => history.addThought({ ...thought, thought: 'after eviction' })).toThrowError(
+			expect.objectContaining({ code: 'SESSION_EXPIRED' })
+		);
+		await history.resetSession(sessionId);
 		expect(() => history.addThought({ ...thought, thought: 'after eviction' })).not.toThrow();
 		expect(history.getHistory(sessionId).map((item) => item.thought)).toEqual(['after eviction']);
 	});

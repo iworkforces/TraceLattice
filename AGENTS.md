@@ -107,7 +107,7 @@ Refs = production `.ts` files containing the identifier (tests excluded). LSP is
 - `ConnectionPool` is off CLI/DI. `HttpTransport` is a **library export**; CLI never selects it. `cluster/` does not exist (still a sentrux boundary).
 - `maxHistorySize` default and cap are **10000**. Persistence buffer size, flush interval, and retries are file-only (no `TRACELATTICE_*` override).
 - Large files: `HistoryManager` 1019, `ThoughtProcessor` 893, `StreamableHttpTransport` 847, `lib` 866, `schema` 794, `errors` 831, `PersistenceBuffer` 652, `ConnectionPool` 633, `PersistenceWorkQueue` 617.
-- Tests: `src/__tests__/` mirrors source; flags via constructor; `RUN_EVAL=1` for `*.eval.ts`.
+- Tests: `src/__tests__/` mirrors source; flags via constructor; all three local `*.eval.ts` suites run by default in `npm test`, `npm run test:coverage`, and `npm run verify:release`.
 
 ## COMMANDS
 

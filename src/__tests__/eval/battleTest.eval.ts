@@ -11,7 +11,7 @@ class BattleTestBlockedError extends Error {
 	}
 }
 
-describe.skipIf(!process.env.RUN_EVAL)('Battle Test', () => {
+describe('Battle Test', () => {
 	it('runs category regression gates', async () => {
 		const report = await runBattleTest();
 

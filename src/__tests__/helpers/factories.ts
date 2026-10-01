@@ -286,6 +286,8 @@ export class MockHistoryManager implements IHistoryManager {
 		};
 	}
 
+	assertSessionResetAuthorized(_sessionId: string): void {}
+
 	getSessionIds(): string[] {
 		return Array.from(this._sessions.keys());
 	}

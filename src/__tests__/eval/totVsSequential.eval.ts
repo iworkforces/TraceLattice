@@ -7,13 +7,13 @@
  * checks ToT against the scenario's expected behavior, and prints a JSON
  * report line per scenario. A final aggregate report is printed at the end.
  *
- * The suite is gated by the `RUN_EVAL` environment variable so it never runs
- * in CI by default. Invoke locally with `RUN_EVAL=1 npm test`.
+ * The suite runs by default. Invoke locally with
+ * `npm test -- src/__tests__/eval/totVsSequential.eval.ts`.
  *
  * @module __tests__/eval/totVsSequential.eval
  */
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { StrategyContext, StrategyDecision } from '../../contracts/strategy.js';
 import { buildActiveEvidenceProjection } from '../../core/reasoning/ActiveEvidenceProjection.js';
@@ -144,32 +144,36 @@ function evaluateResult(expected: ExpectedBehavior, decision: StrategyDecision):
 	return true;
 }
 
-describe.skipIf(!process.env.RUN_EVAL)('ToT vs Sequential Eval', () => {
+describe('ToT vs Sequential Eval', () => {
 	const totStrategy = new TreeOfThoughtStrategy();
 	const seqStrategy = new SequentialStrategy();
-	const reports: ScenarioReport[] = [];
+
+	function scenarioReport(scenario: EvalScenario): ScenarioReport {
+		const ctx = buildContext(scenario);
+		const totDecision = totStrategy.decide(ctx);
+		const seqDecision = seqStrategy.decide(ctx);
+
+		return {
+			scenario: scenario.name,
+			tot: { action: totDecision.action, reason: reasonOf(totDecision) },
+			seq: { action: seqDecision.action, reason: reasonOf(seqDecision) },
+			expected: scenario.expectedBehavior,
+			pass: evaluateResult(scenario.expectedBehavior, totDecision),
+		};
+	}
 
 	for (const scenario of scenarios) {
 		it(scenario.name, () => {
-			const ctx = buildContext(scenario);
-			const totDecision = totStrategy.decide(ctx);
-			const seqDecision = seqStrategy.decide(ctx);
-
-			const report: ScenarioReport = {
-				scenario: scenario.name,
-				tot: { action: totDecision.action, reason: reasonOf(totDecision) },
-				seq: { action: seqDecision.action, reason: reasonOf(seqDecision) },
-				expected: scenario.expectedBehavior,
-				pass: evaluateResult(scenario.expectedBehavior, totDecision),
-			};
-			reports.push(report);
+			const report = scenarioReport(scenario);
 			// One JSON line per scenario for downstream tooling.
 
 			console.log(JSON.stringify(report));
+			expect(report.pass, JSON.stringify(report)).toBe(true);
 		});
 	}
 
 	it('summary', () => {
+		const reports = scenarios.map(scenarioReport);
 		const total = reports.length;
 		const passed = reports.filter((r) => r.pass).length;
 		const summary = {
@@ -181,5 +185,6 @@ describe.skipIf(!process.env.RUN_EVAL)('ToT vs Sequential Eval', () => {
 		};
 
 		console.log(JSON.stringify(summary));
+		expect(summary.failed, JSON.stringify(reports.filter((report) => !report.pass))).toBe(0);
 	});
 });

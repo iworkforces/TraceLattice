@@ -43,6 +43,19 @@ export class LockTimeoutError extends SequentialThinkingError {
 	}
 }
 
+export class SessionExpiredError extends SequentialThinkingError {
+	public readonly sessionId: SessionId;
+
+	constructor(sessionId: SessionId) {
+		super(
+			`Session '${sessionId}' has expired. Use an authorized explicit reset or reset_state: true for a fresh chain, or choose a new session_id.`,
+			ERROR_CODES.SESSION_EXPIRED
+		);
+		this.name = 'SessionExpiredError';
+		this.sessionId = sessionId;
+	}
+}
+
 /** Error thrown when a session is accessed by a non-owner. */
 export class SessionAccessDeniedError extends SequentialThinkingError {
 	public readonly sessionId: SessionId;

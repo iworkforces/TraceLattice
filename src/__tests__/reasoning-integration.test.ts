@@ -128,6 +128,8 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 		};
 	}
 
+	assertSessionResetAuthorized(_sessionId: string): void {}
+
 	getSessionIds(): string[] {
 		return [REASONING_SESSION];
 	}

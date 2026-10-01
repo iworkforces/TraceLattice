@@ -24,6 +24,8 @@ function createCoordinator(): {
 		},
 		sessions,
 		createSessionState: (owner) => ({ owner }),
+		assertReplacementCapacity: () => undefined,
+		admitReplacement: () => undefined,
 		logger: new NullLogger(),
 	});
 	return { coordinator, persistence, sessions };

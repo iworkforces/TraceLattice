@@ -233,6 +233,8 @@ TraceLattice uses separate session concepts with separate identifiers:
 
 `ConnectionPool` slots are an optional HTTP isolation layer and are separate from both thought sessions and MCP transport sessions.
 
+Thought sessions have a 30-minute idle TTL, checked every five minutes, and can also be evicted for live-session capacity. Once eviction succeeds, ordinary access to that named session returns `SESSION_EXPIRED` instead of creating empty history. To start a fresh chain, use a new `session_id`, await an authorized `resetSession(sessionId)`, or submit a validated replacement thought with `reset_state: true`. Explicit reset deletes that session's durable data; it doesn't resume or rehydrate the old chain. Authorization runs before reset, and a failed or invalid reset doesn't reopen the session. See the [reliability contract](docs/reliability-contract.md#lifecycle-and-failure-semantics) for marker lifetime and ownership guarantees.
+
 ### Stateless HTTP library API
 
 Import the stateless transport from the package root. The package does not expose transport internals or deep import paths.
@@ -289,7 +291,9 @@ The checked evaluation report separates deterministic structural validation and 
 
 `PersistenceBackend` requires `saveBacktrackForSession(sessionId, thought, targetThoughtId)`. Every custom backend must implement it. The operation atomically corrects every retained stable-ID copy of the target, appends the backtrack thought, and applies retention. There is no capability fallback; the ordinary persistence methods retain their existing contracts.
 
-Restore reads retained records only. It repairs retained backtrack copies without writing the snapshot, ignores an absent retained target, and rejects an ambiguous retained numeric target. Evidence already pruned by retention or eviction cannot be recovered.
+Startup File/SQLite restore reads supported retained durable records with provenance restrictions; it doesn't restore all transient auxiliary state. It repairs retained backtrack copies without writing the snapshot, ignores an absent retained target, and rejects an ambiguous retained numeric target. TTL and capacity eviction remove live state without deleting durable records, but ordinary access doesn't reload them. Evidence pruned from durable storage by retention or deleted by explicit reset cannot be recovered. With persistence disabled, state cannot resume across restart; process-local expiration markers are also lost on restart.
+
+Branches and revisions may legally reuse thought numbers. A numeric `verification_target` must uniquely identify a retained thought identity in the same session, so avoid reusing numbers when you intend unique numeric verification references. Targets may have any thought type. Recording a verification outcome requires an explicit result of `0` or `1` and a non-retracted target with confidence.
 
 ## Development
 
