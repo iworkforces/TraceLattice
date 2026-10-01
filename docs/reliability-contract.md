@@ -62,6 +62,14 @@ Session barriers close admission for the affected session, wait for attributable
 
 `resetSession(sessionId)` and `resetAll()` are asynchronous because they coordinate admitted operations, queued persistence work, persistent state, and auxiliary in-memory state. Callers must await them.
 
+Thought sessions have a 30-minute idle TTL with cleanup every five minutes, and live-session capacity can also trigger eviction. Successfully evicted names cannot continue the old chain: ordinary access returns `SESSION_EXPIRED` without creating empty history. TTL and capacity eviction remove live state without deleting durable records. Recovery requires an authorized, awaited `resetSession(sessionId)`, a validated `reset_state: true` replacement, or a new `session_id`. Explicit reset deletes the affected session's durable data and starts a fresh chain; it doesn't resume or rehydrate history. A failed or invalid reset must not reopen the session.
+
+Expiration markers contain only the session identity and former owner, never histories. They remain for this server/process instance until a committed scoped or global reset, or terminal cleanup. They have no TTL or LRU forgetting. Marker memory is `O(distinct evicted names not reset)` and isn't bounded by the live-session quotas (100 total, 50 per owner by default).
+
+Restart loses expiration markers. With persistence disabled, state cannot resume across restart. Startup File/SQLite restore restores supported retained durable records subject to provenance restrictions, not all transient auxiliary state; ordinary access to an expired session doesn't trigger runtime restore.
+
+Branches and revisions may legally reuse thought numbers, but numeric `verification_target` must uniquely identify a retained thought identity in the same session. Clients should avoid reusing numbers when they intend unique numeric verification references. Targets may have any thought type. Recording a verification outcome requires an explicit result of `0` or `1` and a non-retracted target with confidence.
+
 `dispose()` is the complete library cleanup operation. It stops admission, drains or reports persistence failure, stops watchers and suspension timers, closes persistence, and disposes container-owned resources.
 
 Lifecycle failures are sticky and fail closed:
@@ -76,6 +84,8 @@ New work is rejected while the relevant scope is resetting, evicting, shutting d
 ## Ownership
 
 Request ownership is independent from thought `session_id` and transport connection slots. Owner-aware access cannot read or mutate a session owned by another request owner. Restored sessions deny owner-aware access until an allowed ownerless context manages them. Stdio operation, which has no request owner, remains unrestricted.
+
+Authorization applies before reset, including for expired names. A same-owner reset or trusted ownerless administrative reset preserves an existing former owner; a foreign-owner reset is denied. Expiration and reset do not bypass the owner-aware denial for restored sessions. Request ownership is carried by the AsyncLocalStorage (ALS) context, separately from thought-session identity.
 
 The MCP-standard `Mcp-Session-Id` header is the Streamable HTTP session mechanism. It carries transport state; request-owner identity is a separate authorization context. Neither supplies a thought `session_id`. Query-string session aliases are not part of the transport contract. Optional `ConnectionPool` slots are a third isolation mechanism and likewise do not substitute for thought sessions.
 
