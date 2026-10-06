@@ -12,6 +12,7 @@ Three seams, no shared mutable store: `OutcomeRecorder` (calibration samples), `
 reasoning/
 ├── OutcomeRecorder.ts
 ├── ActiveEvidenceProjection.ts   # retained copy + induced GraphView
+├── GraphContext.ts               # graph_context builder over the projection
 └── strategies/                   # own AGENTS.md — decide(), not decideNext
 ```
 
