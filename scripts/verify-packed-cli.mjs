@@ -69,6 +69,7 @@ function createReceipt(context) {
 		versionCheck: runtime.version,
 		protocolCheck: runtime.protocol,
 		shutdownCheck: runtime.shutdown,
+		sqliteCheck: runtime.sqliteCheck,
 		cleanup: { tempRootsRemoved: true, outputPreserved: preserved },
 	};
 }
@@ -130,7 +131,10 @@ async function run() {
 		if (outputDirectory) {
 			const receipt = await preserveArtifact(outputDirectory, { artifact, runtime, sourceSha });
 			try {
-				await validateReleaseReceipt({ artifactDirectory: outputDirectory, expectedSourceSha: sourceSha });
+				await validateReleaseReceipt({
+					artifactDirectory: outputDirectory,
+					expectedSourceSha: sourceSha,
+				});
 			} catch (error) {
 				throw new PackedCliError('RELEASE_RECEIPT_INVALID', String(error), {
 					packSucceeded: true,

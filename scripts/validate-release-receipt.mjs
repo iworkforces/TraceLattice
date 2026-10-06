@@ -7,12 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const MAX_RECEIPT_BYTES = 1_048_576;
 const EXPECTED_NAME = '@iworkforces/tracelattice';
-const EXPECTED_PACKED_FILES = [
-	'package.json',
-	'dist/cli.js',
-	'dist/lib.js',
-	'dist/lib.d.ts',
-];
+const EXPECTED_PACKED_FILES = ['package.json', 'dist/cli.js', 'dist/lib.js', 'dist/lib.d.ts'];
 const VERSION_PATTERN =
 	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -149,17 +144,45 @@ function validateRuntimeChecks(receipt, version) {
 	}
 }
 
+function validateSqliteCheck(sqliteCheck) {
+	if (
+		sqliteCheck.write !== true ||
+		sqliteCheck.restoredVerification !== true ||
+		sqliteCheck.missingTargetRejected !== true
+	) {
+		fail('sqliteCheck failed');
+	}
+}
+
 function validateReceiptContract(receipt, expectedSourceSha) {
 	if (!isRecord(receipt)) fail('receipt must be an object');
-	const { tarball, checks, versionCheck, protocolCheck, shutdownCheck, cleanup, manifest } =
-		receipt;
-	const sections = [tarball, checks, versionCheck, protocolCheck, shutdownCheck, cleanup, manifest];
+	const {
+		tarball,
+		checks,
+		versionCheck,
+		protocolCheck,
+		shutdownCheck,
+		sqliteCheck,
+		cleanup,
+		manifest,
+	} = receipt;
+	const sections = [
+		tarball,
+		checks,
+		versionCheck,
+		protocolCheck,
+		shutdownCheck,
+		sqliteCheck,
+		cleanup,
+		manifest,
+	];
 	if (!sections.every(isRecord)) fail('receipt sections are invalid');
 	const version = validateReceiptIdentity(receipt, expectedSourceSha);
 	validateManifestEntrypoints(manifest, receipt.name, version);
 	validateFileLists(manifest.files, receipt.packedFiles);
 	validateTarballMetadata(tarball, version);
 	validateRuntimeChecks(receipt, version);
+	validateSqliteCheck(sqliteCheck);
 	return { version, tarball };
 }
 

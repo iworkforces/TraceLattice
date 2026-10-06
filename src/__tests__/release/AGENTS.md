@@ -8,15 +8,15 @@ Policy locks for CI, CD, the packed CLI, and the SSE resurrection ban. These fil
 
 ## FILES
 
-| File | Locks |
-|------|-------|
-| `CiWorkflow.test.ts` | Jobs `library`, `native-sqlite`, `packed-cli`, `required-gates`, advisory `advisory-audit`. Library Node 24.x and 26.x. Native and packed Node 26.x. Bun **1.4.2**. Actions are SHA-pinned. Required jobs are not `continue-on-error`. |
-| `CdWorkflow.test.ts` | Publish does not rebuild. Shebang `#!/usr/bin/env bun`. Package `@iworkforces/tracelattice`, bin `./dist/cli.js`. |
-| `LegacySseRemoval.test.ts` | No `SseTransport.ts` and no SSE identifiers on the frozen file list. Streamable HTTP default port stays `9007`. |
-| `PackedCliArtifact.test.ts` | Shebang, pack contents, runtime contract. |
-| `ReleaseGateScripts.test.ts` | `verify:packed` / `verify:release` / `prepublishOnly`. |
-| `ReleaseReceiptValidator.test.ts` | Receipt schema CD consumes. |
-| `VitestAuthority.test.ts` | Sole config is `vitest.config.ts`: floors, 30s timeouts, include list. |
+| File                              | Locks                                                                                                                                                                                                                                  |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CiWorkflow.test.ts`              | Jobs `library`, `native-sqlite`, `packed-cli`, `required-gates`, advisory `advisory-audit`. Library Node 24.x and 26.x. Native and packed Node 26.x. Bun **1.4.2**. Actions are SHA-pinned. Required jobs are not `continue-on-error`. |
+| `CdWorkflow.test.ts`              | Publish does not rebuild. Shebang `#!/usr/bin/env bun`. Package `@iworkforces/tracelattice`, bin `./dist/cli.js`.                                                                                                                      |
+| `LegacySseRemoval.test.ts`        | No `SseTransport.ts` and no SSE identifiers on the frozen file list. Streamable HTTP default port stays `9007`.                                                                                                                        |
+| `PackedCliArtifact.test.ts`       | Shebang, pack contents, borrowed persistence runtime contract, SQLite restart restore and rejection gate.                                                                                                                              |
+| `ReleaseGateScripts.test.ts`      | `verify:packed` / `verify:release` / `prepublishOnly`.                                                                                                                                                                                 |
+| `ReleaseReceiptValidator.test.ts` | Receipt schema CD consumes, including required sqliteCheck write/restore/negative-control evidence.                                                                                                                                    |
+| `VitestAuthority.test.ts`         | Sole config is `vitest.config.ts`: floors, 30s timeouts, include list.                                                                                                                                                                 |
 
 ## ANTI-PATTERNS
 

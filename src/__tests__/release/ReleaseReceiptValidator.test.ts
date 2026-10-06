@@ -62,6 +62,7 @@ function createReceipt(tarball: Buffer, receiptSourceSha: string | null = source
 			invalidCall: true,
 		},
 		shutdownCheck: { exitCode: 0, signal: null, outstandingRequests: 0 },
+		sqliteCheck: { write: true, restoredVerification: true, missingTargetRejected: true },
 		cleanup: { tempRootsRemoved: true, outputPreserved: true },
 	};
 }
@@ -180,7 +181,11 @@ describe('release receipt validator', () => {
 		// Given
 		const { root } = await createArtifact();
 		// When
-		const result = await runValidator({ ...process.env, ARTIFACT_DIR: root, EXPECTED_SHA: sourceSha });
+		const result = await runValidator({
+			...process.env,
+			ARTIFACT_DIR: root,
+			EXPECTED_SHA: sourceSha,
+		});
 		// Then
 		expect(result).toEqual({
 			code: 0,
@@ -224,7 +229,12 @@ describe('release receipt validator', () => {
 		['uppercase EXPECTED_SHA', { ARTIFACT_DIR: '/tmp', EXPECTED_SHA: sourceSha.toUpperCase() }],
 	])('rejects %s without partial stdout', async (_label, environment) => {
 		// Given
-		const env = { ...process.env, ARTIFACT_DIR: undefined, EXPECTED_SHA: undefined, ...environment };
+		const env = {
+			...process.env,
+			ARTIFACT_DIR: undefined,
+			EXPECTED_SHA: undefined,
+			...environment,
+		};
 		// When
 		const result = await runValidator(env);
 		// Then
@@ -282,6 +292,19 @@ describe('release receipt validator', () => {
 
 	it.each([
 		['invalid sections', (receipt: Receipt) => Object.assign(receipt, { checks: null })],
+		[
+			'missing SQLite section',
+			(receipt: Receipt) => Reflect.deleteProperty(receipt, 'sqliteCheck'),
+		],
+		['failed SQLite write', (receipt: Receipt) => (receipt.sqliteCheck.write = false)],
+		[
+			'failed SQLite restore',
+			(receipt: Receipt) => (receipt.sqliteCheck.restoredVerification = false),
+		],
+		[
+			'failed SQLite negative control',
+			(receipt: Receipt) => (receipt.sqliteCheck.missingTargetRejected = false),
+		],
 		['wrong schema version', (receipt: Receipt) => (receipt.schemaVersion = 2)],
 		['wrong source SHA', (receipt: Receipt) => (receipt.sourceSha = '1'.repeat(40))],
 		['wrong package name', (receipt: Receipt) => (receipt.name = 'other-package')],
@@ -297,7 +320,10 @@ describe('release receipt validator', () => {
 			'wrong package export',
 			(receipt: Receipt) => (receipt.manifest.exports['./package.json'] = './other.json'),
 		],
-		['wrong manifest bin', (receipt: Receipt) => (receipt.manifest.bin.tracelattice = './other.js')],
+		[
+			'wrong manifest bin',
+			(receipt: Receipt) => (receipt.manifest.bin.tracelattice = './other.js'),
+		],
 		['unsafe manifest path', (receipt: Receipt) => receipt.manifest.files.push('../outside')],
 		['missing dist publish path', (receipt: Receipt) => receipt.manifest.files.splice(0, 1)],
 		['unsafe packed path', (receipt: Receipt) => receipt.packedFiles.push('/absolute')],
@@ -312,9 +338,15 @@ describe('release receipt validator', () => {
 		['failed initialize check', (receipt: Receipt) => (receipt.protocolCheck.initialize = false)],
 		['failed tools list check', (receipt: Receipt) => (receipt.protocolCheck.toolsList = false)],
 		['failed protocol check', (receipt: Receipt) => (receipt.protocolCheck.validCall = false)],
-		['failed invalid call check', (receipt: Receipt) => (receipt.protocolCheck.invalidCall = false)],
+		[
+			'failed invalid call check',
+			(receipt: Receipt) => (receipt.protocolCheck.invalidCall = false),
+		],
 		['failed shutdown exit', (receipt: Receipt) => (receipt.shutdownCheck.exitCode = 1)],
-		['failed shutdown check', (receipt: Receipt) => (receipt.shutdownCheck.outstandingRequests = 1)],
+		[
+			'failed shutdown check',
+			(receipt: Receipt) => (receipt.shutdownCheck.outstandingRequests = 1),
+		],
 		['failed temp cleanup check', (receipt: Receipt) => (receipt.cleanup.tempRootsRemoved = false)],
 		['failed cleanup check', (receipt: Receipt) => (receipt.cleanup.outputPreserved = false)],
 	])('rejects receipt metadata with %s', async (_label, mutate) => {
@@ -336,7 +368,8 @@ describe('release receipt validator', () => {
 		],
 		[
 			'inconsistent checksum metadata',
-			async (root: string) => writeFile(join(root, 'SHA256SUMS'), `${'0'.repeat(64)}  ${tarballName}\n`),
+			async (root: string) =>
+				writeFile(join(root, 'SHA256SUMS'), `${'0'.repeat(64)}  ${tarballName}\n`),
 		],
 		[
 			'inexact checksum syntax',

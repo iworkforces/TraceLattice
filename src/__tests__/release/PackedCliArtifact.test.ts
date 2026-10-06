@@ -28,6 +28,10 @@ const cleanupModuleUrl = new URL('../../../scripts/packed-cli-cleanup.mjs', impo
 const temporaryRoots: string[] = [];
 const cliBody = `#!/usr/bin/env bun
 import { createInterface } from 'node:readline';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+const config = process.env.TRACELATTICE_CONFIG ? JSON.parse(readFileSync(process.env.TRACELATTICE_CONFIG, 'utf8')) : {};
+const dbPath = config.persistence?.options?.dbPath;
+const stored = dbPath && existsSync(dbPath) ? JSON.parse(readFileSync(dbPath, 'utf8')) : [];
 if (process.argv.includes('--version')) {
   console.log('tracelattice v1.2.3');
 } else {
@@ -41,9 +45,15 @@ if (process.argv.includes('--version')) {
     else {
       const input = request.params?.arguments;
       const validSession = typeof input?.session_id === 'string' && input.session_id !== '__global__';
-      result = validSession
+      const targetExists = input?.thought_type !== 'verification' || stored.some((entry) => entry.session_id === input.session_id && entry.thought_number === input.verification_target);
+      if (validSession && targetExists && dbPath) {
+        stored.push(input);
+        writeFileSync(dbPath, JSON.stringify(stored));
+      }
+      const errorText = validSession ? 'verification_target ' + input.verification_target + ' is missing in session history' : 'invalid session';
+      result = validSession && targetExists
         ? { content: [{ type: 'text', text: JSON.stringify({ session_id: input.session_id }) }] }
-        : { isError: true, content: [{ type: 'text', text: 'invalid session' }] };
+        : { isError: true, content: [{ type: 'text', text: errorText }] };
     }
     console.log(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }));
   });
@@ -179,6 +189,18 @@ export declare function initializeServer(): Promise<ToolAwareSequentialThinkingS
 `;
 
 const cases: readonly FixtureCase[] = [
+	{
+		label: 'SQLite backend failing to restore its written thought',
+		code: 'PACKED_SQLITE_RESTORE_FAILED',
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/cli.js'),
+				cliBody.replace(
+					"const stored = dbPath && existsSync(dbPath) ? JSON.parse(readFileSync(dbPath, 'utf8')) : [];",
+					'const stored = [];'
+				)
+			),
+	},
 	{
 		label: 'missing CLI',
 		code: 'PACKED_CLI_MISSING',
@@ -557,6 +579,11 @@ describe('packed CLI artifact contract', () => {
 			toolsList: true,
 			validCall: true,
 			invalidCall: true,
+		});
+		expect(receipt).toHaveProperty('sqliteCheck', {
+			write: true,
+			restoredVerification: true,
+			missingTargetRejected: true,
 		});
 	}, 120_000);
 
