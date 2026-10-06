@@ -46,21 +46,23 @@ async function requireRegularFile(path, label) {
 	return metadata;
 }
 
-function validateReceiptContract(receipt, expectedSourceSha) {
-	if (!isRecord(receipt)) fail('receipt must be an object');
-	const { tarball, checks, versionCheck, protocolCheck, shutdownCheck, cleanup, manifest } =
-		receipt;
-	if (![tarball, checks, versionCheck, protocolCheck, shutdownCheck, cleanup, manifest].every(isRecord)) {
-		fail('receipt sections are invalid');
-	}
+function validateReceiptIdentity(receipt, expectedSourceSha) {
 	const version = receipt.version;
 	if (receipt.schemaVersion !== 1 || receipt.sourceSha !== expectedSourceSha) {
 		fail('receipt sourceSha is invalid');
 	}
-	if (receipt.name !== EXPECTED_NAME || typeof version !== 'string' || !VERSION_PATTERN.test(version)) {
+	if (
+		receipt.name !== EXPECTED_NAME ||
+		typeof version !== 'string' ||
+		!VERSION_PATTERN.test(version)
+	) {
 		fail('receipt package identity is invalid');
 	}
-	if (manifest.name !== receipt.name || manifest.version !== version) {
+	return version;
+}
+
+function validateManifestEntrypoints(manifest, name, version) {
+	if (manifest.name !== name || manifest.version !== version) {
 		fail('receipt manifest is inconsistent');
 	}
 	if (manifest.main !== 'dist/lib.js' || manifest.types !== 'dist/lib.d.ts') {
@@ -80,7 +82,9 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 	if (!isRecord(bin) || bin.tracelattice !== './dist/cli.js') {
 		fail('receipt manifest bin is invalid');
 	}
-	const files = manifest.files;
+}
+
+function validateFileLists(files, packedFiles) {
 	if (
 		!Array.isArray(files) ||
 		files.length === 0 ||
@@ -90,7 +94,6 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 	) {
 		fail('receipt manifest files are invalid');
 	}
-	const packedFiles = receipt.packedFiles;
 	if (
 		!Array.isArray(packedFiles) ||
 		!packedFiles.every(isSafeRelativePath) ||
@@ -99,6 +102,9 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 	) {
 		fail('receipt packedFiles are invalid');
 	}
+}
+
+function validateTarballMetadata(tarball, version) {
 	const expectedBasename = `iworkforces-tracelattice-${version}.tgz`;
 	if (
 		tarball.basename !== expectedBasename ||
@@ -113,6 +119,10 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 	if (typeof tarball.sha256 !== 'string' || !TARBALL_SHA_PATTERN.test(tarball.sha256)) {
 		fail('tarball.sha256 metadata is invalid');
 	}
+}
+
+function validateRuntimeChecks(receipt, version) {
+	const { checks, versionCheck, protocolCheck, shutdownCheck, cleanup } = receipt;
 	if (checks.shebang !== '#!/usr/bin/env bun' || checks.executable !== true) {
 		fail('CLI file checks failed');
 	}
@@ -137,6 +147,19 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 	if (cleanup.tempRootsRemoved !== true || cleanup.outputPreserved !== true) {
 		fail('cleanup checks failed');
 	}
+}
+
+function validateReceiptContract(receipt, expectedSourceSha) {
+	if (!isRecord(receipt)) fail('receipt must be an object');
+	const { tarball, checks, versionCheck, protocolCheck, shutdownCheck, cleanup, manifest } =
+		receipt;
+	const sections = [tarball, checks, versionCheck, protocolCheck, shutdownCheck, cleanup, manifest];
+	if (!sections.every(isRecord)) fail('receipt sections are invalid');
+	const version = validateReceiptIdentity(receipt, expectedSourceSha);
+	validateManifestEntrypoints(manifest, receipt.name, version);
+	validateFileLists(manifest.files, receipt.packedFiles);
+	validateTarballMetadata(tarball, version);
+	validateRuntimeChecks(receipt, version);
 	return { version, tarball };
 }
 
