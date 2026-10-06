@@ -8,15 +8,17 @@ Specialists only. Facade is parent `ThoughtEvaluator`. Patterns drop `retracted`
 
 ## COMPONENTS
 
-| File | Role |
-|------|------|
-| `SignalComputer.ts` | `ConfidenceSignals` + structural quality |
-| `Aggregator.ts` | `ReasoningStats` |
-| `PatternDetector.ts` | Firehose of pattern signals |
-| `Calibrator.ts` | Shrinkage + optional temperature |
-| `calibration-math.ts` | `TEMPERATURE_GRID`, `MIN_OUTCOMES_FOR_TEMPERATURE=10` |
-| `internals.ts` | `ALL_THOUGHT_TYPES` — **must stay 11-wide** |
-| `VerificationLinks.ts` | Active set + canonical verification targets |
+| File                     | Role                                                  |
+| ------------------------ | ----------------------------------------------------- |
+| `SignalComputer.ts`      | `ConfidenceSignals` + structural quality              |
+| `GraphSignalComputer.ts` | Optional active DAG metrics + derived graph signals   |
+| `GraphPatterns.ts`       | Pure graph-only dependency and critique warnings      |
+| `Aggregator.ts`          | `ReasoningStats`                                      |
+| `PatternDetector.ts`     | Firehose of pattern signals                           |
+| `Calibrator.ts`          | Shrinkage + optional temperature                      |
+| `calibration-math.ts`    | `TEMPERATURE_GRID`, `MIN_OUTCOMES_FOR_TEMPERATURE=10` |
+| `internals.ts`           | `ALL_THOUGHT_TYPES` — **must stay 11-wide**           |
+| `VerificationLinks.ts`   | Active set + canonical verification targets           |
 
 ## SIGNALCOMPUTER
 
@@ -40,7 +42,9 @@ Processor priority (lower first):
 
 `monotonic_type` is **warning** but **unranked (99)** — after the four. `healthy_verification` is **info**, never a hint.
 
-Detector still emits all six (`PatternName` in `contracts/reasoning-types.ts`).
+Detector emits all eight (`PatternName` in `contracts/reasoning-types.ts`). The two graph-only
+patterns, `refuted_hypothesis_dependency` and `unaddressed_critique`, require an `ActiveGraphContext`.
+Hint priority order is owned by `ThoughtProcessor`.
 
 ## CALIBRATOR
 

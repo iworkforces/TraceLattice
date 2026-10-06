@@ -9,6 +9,15 @@
 
 import type { CalibrationMetrics } from '../contracts/calibrator.js';
 import type { PatternName, ThoughtType } from '../contracts/reasoning-types.js';
+import type { GraphMetrics } from './graph/GraphView.js';
+
+/** DAG topology plus derived measures of branching and explicit relations. */
+export interface GraphSignals extends GraphMetrics {
+	/** Mean out-degree over nodes with at least one outgoing edge. */
+	readonly branching_factor: number;
+	/** Share of edges with a kind other than sequence, in [0, 1]. */
+	readonly relational_density: number;
+}
 
 /**
  * A detected reasoning pattern — surfaced as metadata or a warning.
@@ -72,6 +81,9 @@ export interface PatternSignal {
  * ```
  */
 export interface ConfidenceSignals {
+	/** Present only when an active graph with at least one edge is supplied. */
+	readonly graph_signals?: GraphSignals;
+
 	/** Length of thought chain to this point. */
 	readonly reasoning_depth: number;
 

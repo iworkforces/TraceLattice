@@ -16,13 +16,21 @@ import { Aggregator } from './evaluator/Aggregator.js';
 import { PatternDetector } from './evaluator/PatternDetector.js';
 import { SignalComputer } from './evaluator/SignalComputer.js';
 import { resolveVerificationLinks } from './evaluator/VerificationLinks.js';
+import { GraphSignalComputer } from './evaluator/GraphSignalComputer.js';
+import type { ActiveGraphContext } from './evaluator/GraphSignalComputer.js';
 
 export interface VerificationLinkContext {
 	readonly verificationTargets?: ReadonlyMap<ThoughtId, ThoughtId>;
 }
 
 /** Explicit thought and canonical session used for response calibration. */
-export interface ConfidenceSignalContext extends VerificationLinkContext {
+export interface GraphAwareContext {
+	readonly activeGraph?: ActiveGraphContext;
+}
+
+export interface PatternSignalContext extends VerificationLinkContext, GraphAwareContext {}
+
+export interface ConfidenceSignalContext extends VerificationLinkContext, GraphAwareContext {
 	readonly currentThought: ThoughtData;
 	readonly sessionId: SessionId;
 }
@@ -48,6 +56,7 @@ export class ThoughtEvaluator {
 	private readonly _aggregator: Aggregator;
 	private readonly _patternDetector: PatternDetector;
 	private readonly _calibrator: ICalibrator;
+	private readonly _graphSignalComputer = new GraphSignalComputer();
 
 	constructor(calibrator: ICalibrator) {
 		this._signalComputer = new SignalComputer();
@@ -64,7 +73,17 @@ export class ThoughtEvaluator {
 	): ConfidenceSignals {
 		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
 		const { branches: b } = filterRetracted(history, branches);
-		const signals = this._signalComputer.computeConfidenceSignals([...links.thoughts], b, links);
+		const baseSignals = this._signalComputer.computeConfidenceSignals(
+			[...links.thoughts],
+			b,
+			links
+		);
+		const graphSignals =
+			context.activeGraph === undefined
+				? undefined
+				: this._graphSignalComputer.compute(context.activeGraph);
+		const signals =
+			graphSignals === undefined ? baseSignals : { ...baseSignals, graph_signals: graphSignals };
 		if (!this._calibrator.enabled) return signals;
 
 		const thought = context.currentThought;
@@ -98,11 +117,11 @@ export class ThoughtEvaluator {
 	public computePatternSignals(
 		history: ThoughtData[],
 		branches: Record<string, ThoughtData[]>,
-		context: VerificationLinkContext = {}
+		context: PatternSignalContext = {}
 	): PatternSignal[] {
 		const { history: h, branches: b } = filterRetracted(history, branches);
 		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
-		return this._patternDetector.computePatternSignals(h, b, links);
+		return this._patternDetector.computePatternSignals(h, b, links, context.activeGraph);
 	}
 }
 

@@ -25,9 +25,9 @@ export type ThoughtType =
 	| 'backtrack'; // Backtracking from a prior thought
 
 /**
- * Machine-readable names for the 6 detected reasoning patterns.
+ * Machine-readable names for the 8 detected reasoning patterns.
  *
- * Each name corresponds to a private detector method in PatternDetector.
+ * Each name corresponds to a detector in PatternDetector or GraphPatterns.
  */
 export type PatternName =
 	| 'consecutive_without_verification'
@@ -35,4 +35,6 @@ export type PatternName =
 	| 'monotonic_type'
 	| 'no_alternatives_explored'
 	| 'confidence_drift'
-	| 'healthy_verification';
+	| 'healthy_verification'
+	| 'refuted_hypothesis_dependency'
+	| 'unaddressed_critique';
