@@ -6,8 +6,9 @@ import { asSessionId, type BranchId, type SessionId, type ThoughtId } from '../c
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { ThoughtData } from '../core/thought.js';
-import { PersistenceCompatibilityError, PersistenceCorruptionError } from '../errors.js';
-import type { SqliteDatabase, SqliteDatabaseConstructor } from './SqliteDriver.js';
+import { PersistenceCorruptionError } from '../errors.js';
+import type { SqliteDatabase } from './SqliteDriver.js';
+import { loadSqliteDatabaseConstructor, type SqliteDriverRuntime } from './SqliteDriverLoader.js';
 import { runSqliteReadTransaction, runSqliteTransaction } from './SqliteDriver.js';
 import {
 	decodeEdgeRow,
@@ -59,22 +60,15 @@ export class SqlitePersistence implements PersistenceBackend {
 		);
 	}
 
-	public static async create(options?: SqliteOptions): Promise<SqlitePersistence> {
+	public static async create(
+		options?: SqliteOptions,
+		runtime?: SqliteDriverRuntime
+	): Promise<SqlitePersistence> {
 		const defaultDataDir = existsSync('.claude/data')
 			? '.claude/data'
 			: join(homedir(), '.claude/data');
 		const dbPath = options?.dbPath ?? join(defaultDataDir, 'history.db');
-		let Database: SqliteDatabaseConstructor;
-		try {
-			const module = await import('better-sqlite3');
-			Database = module.default;
-		} catch (error) {
-			throw new PersistenceCompatibilityError(
-				dbPath,
-				"SQLite persistence requires the optional 'better-sqlite3' package",
-				error
-			);
-		}
+		const Database = await loadSqliteDatabaseConstructor(dbPath, runtime);
 		const database = new Database(dbPath);
 		try {
 			const persistence = SqlitePersistence.createWithDatabase(database, options, dbPath);
