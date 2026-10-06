@@ -8,15 +8,17 @@ Specialists only. Facade is parent `ThoughtEvaluator`. Patterns drop `retracted`
 
 ## COMPONENTS
 
-| File | Role |
-|------|------|
-| `SignalComputer.ts` | `ConfidenceSignals` + structural quality |
-| `Aggregator.ts` | `ReasoningStats` |
-| `PatternDetector.ts` | Firehose of pattern signals |
-| `Calibrator.ts` | Shrinkage + optional temperature |
-| `calibration-math.ts` | `TEMPERATURE_GRID`, `MIN_OUTCOMES_FOR_TEMPERATURE=10` |
-| `internals.ts` | `ALL_THOUGHT_TYPES` — **must stay 11-wide** |
-| `VerificationLinks.ts` | Active set + canonical verification targets |
+| File                     | Role                                                  |
+| ------------------------ | ----------------------------------------------------- |
+| `SignalComputer.ts`      | `ConfidenceSignals` + structural quality              |
+| `GraphSignalComputer.ts` | Optional active DAG metrics + derived graph signals   |
+| `GraphPatterns.ts`       | Pure graph-only dependency and critique warnings      |
+| `Aggregator.ts`          | `ReasoningStats`                                      |
+| `PatternDetector.ts`     | Firehose of pattern signals                           |
+| `Calibrator.ts`          | Shrinkage + optional temperature                      |
+| `calibration-math.ts`    | `TEMPERATURE_GRID`, `MIN_OUTCOMES_FOR_TEMPERATURE=10` |
+| `internals.ts`           | `ALL_THOUGHT_TYPES` — **must stay 11-wide**           |
+| `VerificationLinks.ts`   | Active set + canonical verification targets           |
 
 ## SIGNALCOMPUTER
 
@@ -33,14 +35,18 @@ Detector is a **firehose**. Hint selection lives on **`ThoughtProcessor`**, not 
 
 Processor priority (lower first):
 
-1. `confidence_drift`
-2. `unverified_hypothesis`
-3. `no_alternatives_explored`
-4. `consecutive_without_verification`
+1. `refuted_hypothesis_dependency`
+2. `confidence_drift`
+3. `unverified_hypothesis`
+4. `unaddressed_critique`
+5. `no_alternatives_explored`
+6. `consecutive_without_verification`
 
-`monotonic_type` is **warning** but **unranked (99)** — after the four. `healthy_verification` is **info**, never a hint.
+`monotonic_type` is **warning** but **unranked (99)** — after the six. `healthy_verification` is **info**, never a hint.
 
-Detector still emits all six (`PatternName` in `contracts/reasoning-types.ts`).
+Detector emits all eight (`PatternName` in `contracts/reasoning-types.ts`). The two graph-only
+patterns, `refuted_hypothesis_dependency` and `unaddressed_critique`, require an `ActiveGraphContext`.
+Hint priority order is owned by `ThoughtProcessor`.
 
 ## CALIBRATOR
 

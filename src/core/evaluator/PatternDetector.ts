@@ -17,6 +17,8 @@
  * - `confidence_drift` (warning) — 3+ consecutive thoughts with strictly decreasing
  *   confidence
  * - `healthy_verification` (info) — hypothesis verified within 3 subsequent thoughts
+ * - `refuted_hypothesis_dependency` (warning) — unaddressed graph dependents of a refuted hypothesis
+ * - `unaddressed_critique` (warning) — graph critique not addressed after 3 active thoughts
  *
  * @module core/evaluator/PatternDetector
  */
@@ -24,6 +26,8 @@
 import type { PatternSignal } from '../reasoning.js';
 import type { ThoughtData } from '../thought.js';
 import type { VerificationLinks } from './VerificationLinks.js';
+import type { ActiveGraphContext } from './GraphSignalComputer.js';
+import { detectRefutedHypothesisDependency, detectUnaddressedCritique } from './GraphPatterns.js';
 
 /**
  * Stateless service that detects reasoning patterns from thought history.
@@ -51,9 +55,15 @@ export class PatternDetector {
 	public computePatternSignals(
 		history: ThoughtData[],
 		branches: Record<string, ThoughtData[]>,
-		links: VerificationLinks
+		links: VerificationLinks,
+		activeGraph?: ActiveGraphContext
 	): PatternSignal[] {
-		if (history.length === 0) return [];
+		if (history.length === 0) {
+			return [
+				...detectRefutedHypothesisDependency(links, activeGraph),
+				...detectUnaddressedCritique(links, activeGraph),
+			];
+		}
 
 		const signals: PatternSignal[] = [];
 		signals.push(...this._detectConsecutiveWithoutVerification(history));
@@ -62,6 +72,8 @@ export class PatternDetector {
 		signals.push(...this._detectMonotonicType(history));
 		signals.push(...this._detectConfidenceDrift(history));
 		signals.push(...this._detectHealthyVerification(history, links));
+		signals.push(...detectRefutedHypothesisDependency(links, activeGraph));
+		signals.push(...detectUnaddressedCritique(links, activeGraph));
 		return signals;
 	}
 

@@ -17,7 +17,7 @@ Cross-module type hub. No barrel. Import the specific file.
 | `calibrator.ts`         | `ICalibrator`, metrics/result types                                                                                                                           |
 | `suspension.ts`         | `ISuspensionStore` (`suspend`/`resume`→null/`compareAndAdmit`/`peek`/`expireOlderThan`)                                                                       |
 | `ids.ts`                | branded IDs. Only `asSessionId()` validates, including rejection of retired `__global__`. `asBranchId()` does **not**.                                        |
-| `reasoning-types.ts`    | `ThoughtType` (11), `PatternName` (6)                                                                                                                         |
+| `reasoning-types.ts`    | `ThoughtType` (11), `PatternName` (8)                                                                                                                         |
 | `features.ts`           | `FeatureFlags`, `DEFAULT_FLAGS`. **No `hasFeature()`**.                                                                                                       |
 | `transport.ts`          | `ITransport`                                                                                                                                                  |
 | `PersistenceBackend.ts` | Session-scoped persistence contract + config                                                                                                                  |

@@ -5,10 +5,11 @@
 import { describe, it, expect } from 'vitest';
 import { EdgeStore } from '../../../core/graph/EdgeStore.js';
 import { GraphView } from '../../../core/graph/GraphView.js';
-import { generateUlid } from '../../../core/ids.js';
 import { CycleDetectedError } from '../../../errors.js';
 import type { Edge, EdgeKind } from '../../../core/graph/Edge.js';
-import { asSessionId, asThoughtId, type EdgeId, type SessionId } from '../../../contracts/ids.js';
+import { asSessionId, asThoughtId, type SessionId } from '../../../contracts/ids.js';
+import type { IGraphViewStore } from '../../../contracts/interfaces.js';
+import { createTestEdgeId } from '../../helpers/factories.js';
 
 const SESSION: SessionId = asSessionId('s1');
 
@@ -20,7 +21,7 @@ function makeEdge(
 	sessionId: SessionId = SESSION
 ): Edge {
 	return {
-		id: generateUlid() as EdgeId,
+		id: createTestEdgeId(`${sessionId}:${from}:${to}:${kind}:${createdAt}`),
 		from: asThoughtId(from),
 		to: asThoughtId(to),
 		kind,
@@ -49,6 +50,224 @@ const ALL_EDGE_KINDS: readonly EdgeKind[] = [
 ];
 
 describe('GraphView', () => {
+	describe('metrics', () => {
+		const zeroKinds = {
+			sequence: 0,
+			branch: 0,
+			merge: 0,
+			verifies: 0,
+			critiques: 0,
+			derives_from: 0,
+			tool_invocation: 0,
+			revises: 0,
+		};
+		it('returns all zero metrics for an empty session', () => {
+			const view = setup([makeEdge('a', 'b', 1)]);
+			expect(view.metrics(asSessionId('empty'))).toEqual({
+				node_count: 0,
+				edge_count: 0,
+				root_count: 0,
+				leaf_count: 0,
+				longest_path: 0,
+				max_out_degree: 0,
+				max_in_degree: 0,
+				edge_kind_counts: zeroKinds,
+				component_count: 0,
+			});
+		});
+		it('computes single-edge metrics', () => {
+			const view = setup([makeEdge('a', 'b', 1, 'branch')]);
+			expect(view.metrics(SESSION)).toEqual({
+				node_count: 2,
+				edge_count: 1,
+				root_count: 1,
+				leaf_count: 1,
+				longest_path: 1,
+				max_out_degree: 1,
+				max_in_degree: 1,
+				edge_kind_counts: { ...zeroKinds, branch: 1 },
+				component_count: 1,
+			});
+		});
+		it('computes longest path and fan-in/out for a diamond', () => {
+			const view = setup([
+				makeEdge('a', 'b', 1),
+				makeEdge('a', 'c', 2),
+				makeEdge('b', 'd', 3, 'merge'),
+				makeEdge('c', 'd', 4, 'merge'),
+			]);
+			expect(view.metrics(SESSION)).toEqual({
+				node_count: 4,
+				edge_count: 4,
+				root_count: 1,
+				leaf_count: 1,
+				longest_path: 2,
+				max_out_degree: 2,
+				max_in_degree: 2,
+				edge_kind_counts: { ...zeroKinds, sequence: 2, merge: 2 },
+				component_count: 1,
+			});
+		});
+		it('counts disconnected components and their longest path', () => {
+			const view = setup([makeEdge('a', 'b', 1), makeEdge('x', 'y', 2), makeEdge('y', 'z', 3)]);
+			expect(view.metrics(SESSION)).toMatchObject({
+				node_count: 5,
+				root_count: 2,
+				leaf_count: 2,
+				longest_path: 2,
+				component_count: 2,
+			});
+		});
+		it('returns null for a cycle while computing other metrics', () => {
+			const view = setup([makeEdge('a', 'b', 1), makeEdge('b', 'a', 2), makeEdge('x', 'y', 3)]);
+			expect(view.metrics(SESSION)).toEqual({
+				node_count: 4,
+				edge_count: 3,
+				root_count: 1,
+				leaf_count: 1,
+				longest_path: null,
+				max_out_degree: 1,
+				max_in_degree: 1,
+				edge_kind_counts: { ...zeroKinds, sequence: 3 },
+				component_count: 2,
+			});
+		});
+		it('includes distinct explicit isolated nodes as roots, leaves, and components', () => {
+			const store = new EdgeStore();
+			store.addEdge(makeEdge('a', 'b', 1));
+			const projected: IGraphViewStore = {
+				outgoing: (session, id) => store.outgoing(session, id),
+				incoming: (session, id) => store.incoming(session, id),
+				edgesForSession: (session) => store.edgesForSession(session),
+				nodesForSession: (session) =>
+					session === SESSION
+						? [asThoughtId('isolated'), asThoughtId('isolated'), asThoughtId('a')]
+						: [],
+			};
+			const view = new GraphView(projected);
+			expect(view.metrics(SESSION)).toMatchObject({
+				node_count: 3,
+				root_count: 2,
+				leaf_count: 2,
+				component_count: 2,
+				longest_path: 1,
+			});
+		});
+		it('returns zero path length for explicit nodes without edges', () => {
+			const store: IGraphViewStore = {
+				outgoing: () => [],
+				incoming: () => [],
+				edgesForSession: () => [],
+				nodesForSession: () => [asThoughtId('isolated')],
+			};
+			expect(new GraphView(store).metrics(SESSION)).toMatchObject({
+				node_count: 1,
+				root_count: 1,
+				leaf_count: 1,
+				component_count: 1,
+				longest_path: 0,
+			});
+		});
+		it('counts all kinds and parallel endpoint edges', () => {
+			const view = setup(ALL_EDGE_KINDS.map((kind, i) => makeEdge('a', 'b', i, kind)));
+			expect(view.metrics(SESSION)).toMatchObject({
+				longest_path: 1,
+				max_in_degree: 8,
+				max_out_degree: 8,
+				edge_kind_counts: {
+					sequence: 1,
+					branch: 1,
+					merge: 1,
+					verifies: 1,
+					critiques: 1,
+					derives_from: 1,
+					tool_invocation: 1,
+					revises: 1,
+				},
+			});
+		});
+		it('reads the live store on each query', () => {
+			const store = new EdgeStore();
+			const view = new GraphView(store);
+			expect(view.metrics(SESSION).node_count).toBe(0);
+			store.addEdge(makeEdge('a', 'b', 1));
+			expect(view.metrics(SESSION).node_count).toBe(2);
+		});
+	});
+
+	describe('kind-filtered ancestors/descendants', () => {
+		it.each(['ancestors', 'descendants'] as const)('filters %s and respects depth', (method) => {
+			const view = setup([
+				makeEdge('a', 'b', 1, 'branch'),
+				makeEdge('b', 'c', 2, 'branch'),
+				makeEdge('a', 'x', 3),
+				makeEdge('x', 'c', 4),
+			]);
+			const start = asThoughtId(method === 'ancestors' ? 'c' : 'a');
+			expect(view[method](SESSION, start, undefined, ['branch'])).toEqual(
+				method === 'ancestors' ? ['b', 'a'] : ['b', 'c']
+			);
+			expect(view[method](SESSION, start, 1, ['branch'])).toEqual(['b']);
+			expect(view[method](SESSION, start, undefined, ['merge'])).toEqual([]);
+			expect(view[method](SESSION, start, undefined, [])).toEqual(view[method](SESSION, start));
+			expect(view[method](SESSION, start, 0, ['branch'])).toEqual([]);
+		});
+	});
+
+	describe('inbound/outbound', () => {
+		it('lists incoming source ids and kinds in store order', () => {
+			const view = setup([makeEdge('a', 'd', 3), makeEdge('b', 'd', 1, 'merge')]);
+			expect(view.inbound(SESSION, asThoughtId('d'))).toEqual([
+				{ id: 'b', kind: 'merge' },
+				{ id: 'a', kind: 'sequence' },
+			]);
+		});
+		it('lists outgoing target ids and kinds in store order', () => {
+			const view = setup([makeEdge('a', 'b', 3), makeEdge('a', 'c', 1, 'branch')]);
+			expect(view.outbound(SESSION, asThoughtId('a'))).toEqual([
+				{ id: 'c', kind: 'branch' },
+				{ id: 'b', kind: 'sequence' },
+			]);
+		});
+		it.each(['inbound', 'outbound'] as const)(
+			'returns empty %s for unknown node/session',
+			(method) => {
+				const view = setup([makeEdge('a', 'b', 1)]);
+				expect(view[method](SESSION, asThoughtId('missing'))).toEqual([]);
+				expect(view[method](asSessionId('empty'), asThoughtId('a'))).toEqual([]);
+			}
+		);
+	});
+
+	describe('hasPath', () => {
+		it.each([
+			['a', 'c', true],
+			['c', 'a', false],
+			['a', 'a', false],
+			['missing', 'c', false],
+			['a', 'missing', false],
+			['missing', 'missing', false],
+		] as const)('checks directed reachability from %s to %s', (from, to, expected) => {
+			const view = setup([makeEdge('a', 'b', 1), makeEdge('b', 'c', 2)]);
+			expect(view.hasPath(SESSION, asThoughtId(from), asThoughtId(to))).toBe(expected);
+		});
+		it('requires every path edge to match the filter', () => {
+			const view = setup([makeEdge('a', 'b', 1, 'branch'), makeEdge('b', 'c', 2)]);
+			expect(view.hasPath(SESSION, asThoughtId('a'), asThoughtId('c'), ['branch'])).toBe(false);
+			expect(
+				view.hasPath(SESSION, asThoughtId('a'), asThoughtId('c'), ['branch', 'sequence'])
+			).toBe(true);
+			expect(view.hasPath(SESSION, asThoughtId('a'), asThoughtId('c'), [])).toBe(true);
+		});
+		it('returns true for self only when a permitted cycle returns to it', () => {
+			const view = setup([makeEdge('a', 'b', 1, 'branch'), makeEdge('b', 'a', 2)]);
+			expect(view.hasPath(SESSION, asThoughtId('a'), asThoughtId('a'))).toBe(true);
+			expect(view.hasPath(SESSION, asThoughtId('a'), asThoughtId('a'), ['branch'])).toBe(false);
+			expect(view.hasPath(SESSION, asThoughtId('a'), asThoughtId('missing'))).toBe(false);
+			expect(view.hasPath(asSessionId('empty'), asThoughtId('a'), asThoughtId('b'))).toBe(false);
+		});
+	});
+
 	describe('chronological', () => {
 		it('returns empty array when session has no edges', () => {
 			const view = setup([]);
@@ -57,11 +276,7 @@ describe('GraphView', () => {
 
 		it('returns thoughts ordered by BFS from roots following createdAt', () => {
 			// a -> b -> c, a -> d
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('a', 'd', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('a', 'd', 300)];
 			const view = setup(edges);
 			const result = view.chronological(SESSION);
 			// roots first (a), then BFS by createdAt
@@ -105,11 +320,7 @@ describe('GraphView', () => {
 
 	describe('topological', () => {
 		it('returns valid topological order for a DAG', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('a', 'c', 150),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('a', 'c', 150)];
 			const view = setup(edges);
 			const result = view.topological(SESSION);
 			expect(result).toHaveLength(3);
@@ -134,11 +345,7 @@ describe('GraphView', () => {
 	describe('ancestors', () => {
 		it('returns all ancestors via incoming closure (BFS)', () => {
 			// a -> b -> c -> d
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('c', 'd', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('c', 'd', 300)];
 			const view = setup(edges);
 			const result = view.ancestors(SESSION, asThoughtId('d'));
 			expect(result).toEqual(expect.arrayContaining(['a', 'b', 'c']));
@@ -146,11 +353,7 @@ describe('GraphView', () => {
 		});
 
 		it('respects maxDepth parameter', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('c', 'd', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('c', 'd', 300)];
 			const view = setup(edges);
 			const result = view.ancestors(SESSION, asThoughtId('d'), 1);
 			expect(result).toEqual(['c']);
@@ -165,11 +368,7 @@ describe('GraphView', () => {
 
 	describe('descendants', () => {
 		it('returns all descendants via outgoing closure (BFS)', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('c', 'd', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('c', 'd', 300)];
 			const view = setup(edges);
 			const result = view.descendants(SESSION, asThoughtId('a'));
 			expect(result).toEqual(expect.arrayContaining(['b', 'c', 'd']));
@@ -177,11 +376,7 @@ describe('GraphView', () => {
 		});
 
 		it('respects maxDepth parameter', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('c', 'd', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('c', 'd', 300)];
 			const view = setup(edges);
 			const result = view.descendants(SESSION, asThoughtId('a'), 2);
 			expect(result).toEqual(expect.arrayContaining(['b', 'c']));
@@ -198,11 +393,7 @@ describe('GraphView', () => {
 
 	describe('leaves', () => {
 		it('returns thoughts with no outgoing edges', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('a', 'c', 200),
-				makeEdge('b', 'd', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('a', 'c', 200), makeEdge('b', 'd', 300)];
 			const view = setup(edges);
 			const result = view.leaves(SESSION);
 			// c and d have no outgoing
@@ -264,10 +455,7 @@ describe('GraphView', () => {
 			const store = new EdgeStore();
 			store.addEdge(makeEdge('evicted', 'retained-root', 1));
 			store.addEdge(makeEdge('retained-root', 'current', 2));
-			store.pruneSession(
-				SESSION,
-				new Set([asThoughtId('retained-root'), asThoughtId('current')])
-			);
+			store.pruneSession(SESSION, new Set([asThoughtId('retained-root'), asThoughtId('current')]));
 			const view = new GraphView(store);
 
 			// When
@@ -340,11 +528,7 @@ describe('GraphView', () => {
 
 	describe('multi-node cycle detection', () => {
 		it('throws CycleDetectedError on 3-node cycle a->b->c->b', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('c', 'b', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('c', 'b', 300)];
 			const view = setup(edges);
 			expect(() => view.topological(SESSION)).toThrow(CycleDetectedError);
 		});
@@ -371,11 +555,7 @@ describe('GraphView', () => {
 		});
 
 		it('descendants() terminates on 3-node cycle and visits each node at most once', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('c', 'b', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('c', 'b', 300)];
 			const view = setup(edges);
 			const result = view.descendants(SESSION, asThoughtId('a'));
 			expect(result).toEqual(expect.arrayContaining(['b', 'c']));
@@ -385,11 +565,7 @@ describe('GraphView', () => {
 		});
 
 		it('ancestors() terminates on 3-node cycle without infinite loop', () => {
-			const edges = [
-				makeEdge('a', 'b', 100),
-				makeEdge('b', 'c', 200),
-				makeEdge('c', 'b', 300),
-			];
+			const edges = [makeEdge('a', 'b', 100), makeEdge('b', 'c', 200), makeEdge('c', 'b', 300)];
 			const view = setup(edges);
 			const result = view.ancestors(SESSION, asThoughtId('c'));
 			expect(result).toEqual(expect.arrayContaining(['a', 'b']));

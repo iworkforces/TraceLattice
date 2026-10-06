@@ -12,6 +12,9 @@ import type { ThoughtData } from '../core/thought.js';
 import type { CalibrationMetrics, ICalibrator } from '../contracts/calibrator.js';
 import { asBranchId, asSessionId, asThoughtId, type SessionId } from '../contracts/ids.js';
 import type { ThoughtType } from '../contracts/reasoning-types.js';
+import { EdgeStore } from '../core/graph/EdgeStore.js';
+import { buildActiveEvidenceProjection } from '../core/reasoning/ActiveEvidenceProjection.js';
+import { createTestEdgeId, createTestSessionId, createTestThoughtId } from './helpers/factories.js';
 
 const EMPTY_CALIBRATION_METRICS: CalibrationMetrics = {
 	brierScore: null,
@@ -59,6 +62,91 @@ function confidenceContext(history: ThoughtData[]) {
 
 describe('ThoughtEvaluator', () => {
 	const evaluator = new ThoughtEvaluator(createRecordingCalibrator(false));
+
+	function graphFixture() {
+		const sessionId = createTestSessionId();
+		const target = createTestThoughtId('target');
+		const dependent = createTestThoughtId('dependent');
+		const verification = createTestThoughtId('verification');
+		const history = [
+			createTestThought({ id: target, thought_type: 'hypothesis', thought_number: 1 }),
+			createTestThought({ id: dependent, thought_number: 2 }),
+			createTestThought({
+				id: verification,
+				thought_type: 'verification',
+				thought_number: 3,
+				verification_target: 1,
+				verification_result: 0,
+				confidence: 0.8,
+			}),
+		];
+		const edgeStore = new EdgeStore();
+		edgeStore.addEdge({
+			id: createTestEdgeId(),
+			from: target,
+			to: dependent,
+			kind: 'derives_from',
+			sessionId,
+			createdAt: 0,
+		});
+		const evidence = buildActiveEvidenceProjection({ sessionId, history, branches: {}, edgeStore });
+		if (evidence.graph === undefined) throw new Error('Expected active graph');
+		return {
+			history,
+			context: {
+				...confidenceContext(history),
+				verificationTargets: new Map([[verification, target]]),
+				activeGraph: { sessionId, view: evidence.graph },
+			},
+		};
+	}
+
+	it('adds graph signals without altering any existing confidence signals', () => {
+		const { history, context } = graphFixture();
+		const withGraph = evaluator.computeConfidenceSignals(history, {}, context);
+		const withoutGraphContext = {
+			...confidenceContext(history),
+			verificationTargets: context.verificationTargets,
+		};
+		const withoutGraph = evaluator.computeConfidenceSignals(history, {}, withoutGraphContext);
+		const { graph_signals, ...existingSignals } = withGraph;
+		expect(graph_signals).toMatchObject({
+			edge_count: 1,
+			branching_factor: 1,
+			relational_density: 1,
+		});
+		expect(withoutGraph).not.toHaveProperty('graph_signals');
+		expect(existingSignals).toEqual(withoutGraph);
+	});
+
+	it('preserves graph signals through calibration', () => {
+		const { history, context } = graphFixture();
+		const signals = new ThoughtEvaluator(createRecordingCalibrator()).computeConfidenceSignals(
+			history,
+			{},
+			context
+		);
+		expect(signals.graph_signals).toMatchObject({ edge_count: 1, branching_factor: 1 });
+		expect(signals.calibrated_confidence).toBe(0.4);
+	});
+
+	it('appends graph patterns only when supplied an active graph', () => {
+		const { history, context } = graphFixture();
+		const withoutGraphContext = { verificationTargets: context.verificationTargets };
+		const existing = evaluator.computePatternSignals(history, {}, withoutGraphContext);
+		const withGraph = evaluator.computePatternSignals(history, {}, context);
+		expect(withGraph.slice(0, existing.length)).toEqual(existing);
+		expect(withGraph.slice(existing.length)).toMatchObject([
+			{ pattern: 'refuted_hypothesis_dependency', thought_range: [1, 2] },
+		]);
+	});
+
+	it('detects graph patterns for branch-only active evidence', () => {
+		const { history, context } = graphFixture();
+		expect(evaluator.computePatternSignals([], { branch: history }, context)).toMatchObject([
+			{ pattern: 'refuted_hypothesis_dependency', thought_range: [1, 2] },
+		]);
+	});
 
 	// Helper to build history quickly
 	function makeThought(overrides?: Partial<ThoughtData>): ThoughtData {

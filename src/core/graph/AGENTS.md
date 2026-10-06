@@ -46,12 +46,17 @@ Direction: `branch`, `merge`, `derives_from`, `tool_invocation`, and `sequence` 
 
 ## GRAPHVIEW
 
-Read-only. Returns **ids only**. Live / uncached (no snapshot).
+Read-only. Returns **ids, kinds, and numbers only**. Live / uncached (no snapshot).
 
 - Isolated thoughts are **invisible** (`depthFromRoots` → `undefined`). Strategy `nodesForSession` lists active edge endpoints only, so a thought that was never an endpoint stays invisible.
 - `chronological` is BFS from roots. Neighbors follow `outgoing` order (`createdAt`), not a pure timestamp sort.
 - `branchThoughts` follows `kind === 'branch'` only (includes root).
-- `descendants` / `ancestors` / `depthFromRoots` follow **all** kinds.
+- `descendants`: outgoing BFS; optional non-empty `kinds` restricts edges, otherwise all kinds.
+- `ancestors`: incoming BFS; optional non-empty `kinds` restricts edges, otherwise all kinds.
+- `metrics`: visible endpoints + explicit `nodesForSession`; degrees, kind counts, weak components; Kahn/DP `longest_path` is **null on any cycle**.
+- `inbound`: source ids + kinds for incoming edges, in store order.
+- `outbound`: target ids + kinds for outgoing edges, in store order.
+- `hasPath`: non-empty directed reachability; self requires a cycle; optional kind filter.
 - `depthFromRoots`: 0 at a root; `undefined` if unreachable or isolated. Used by ToT `depthCap` (default 8).
 - `leaves` = nodes with no outgoing. Empty store → `[]`.
 - `topological` = Kahn; leftover nodes → `CycleDetectedError`.
