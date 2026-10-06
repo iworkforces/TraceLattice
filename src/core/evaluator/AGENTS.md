@@ -35,12 +35,14 @@ Detector is a **firehose**. Hint selection lives on **`ThoughtProcessor`**, not 
 
 Processor priority (lower first):
 
-1. `confidence_drift`
-2. `unverified_hypothesis`
-3. `no_alternatives_explored`
-4. `consecutive_without_verification`
+1. `refuted_hypothesis_dependency`
+2. `confidence_drift`
+3. `unverified_hypothesis`
+4. `unaddressed_critique`
+5. `no_alternatives_explored`
+6. `consecutive_without_verification`
 
-`monotonic_type` is **warning** but **unranked (99)** — after the four. `healthy_verification` is **info**, never a hint.
+`monotonic_type` is **warning** but **unranked (99)** — after the six. `healthy_verification` is **info**, never a hint.
 
 Detector emits all eight (`PatternName` in `contracts/reasoning-types.ts`). The two graph-only
 patterns, `refuted_hypothesis_dependency` and `unaddressed_critique`, require an `ActiveGraphContext`.

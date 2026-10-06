@@ -7,7 +7,7 @@ An MCP server that gives AI agents structured sequential thinking with tool and 
 ## Features
 
 - 11 thought types: regular, hypothesis, verification, critique, synthesis, meta, tool_call, tool_observation, assumption, decomposition, backtrack
-- DAG-based thought graph with 8 edge kinds (sequence, branch, merge, verifies, critiques, derives_from, tool_invocation, revises) and topological traversal
+- DAG-based thought graph with 8 edge kinds (sequence, branch, merge, verifies, critiques, derives_from, tool_invocation, revises), topological traversal, and graph analytics (`graph_signals`, per-thought `graph_context`, graph-aware warnings)
 - Pluggable reasoning strategies. Sequential by default, or Tree-of-Thought with BFS/beam search and plateau detection
 - Tool interleave: suspend a thinking chain, run a tool call, then resume where you left off
 - Confidence calibration with raw-prior shrinkage, plus Brier score and Expected Calibration Error (ECE) for recorded raw predictions

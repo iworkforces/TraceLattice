@@ -22,7 +22,11 @@ import {
 import type { IEdgeStore, IOutcomeRecorder } from '../contracts/interfaces.js';
 import type { ICalibrator } from '../contracts/calibrator.js';
 import type { ISuspensionStore, SuspensionRecord } from '../contracts/suspension.js';
-import type { IReasoningStrategy, StrategyDecision } from '../contracts/strategy.js';
+import type {
+	ActiveEvidenceProjection,
+	IReasoningStrategy,
+	StrategyDecision,
+} from '../contracts/strategy.js';
 import { DEFAULT_FLAGS, type FeatureFlags } from '../contracts/features.js';
 import type { ISessionLock, IToolRegistry } from '../contracts/interfaces.js';
 import {
@@ -37,6 +41,7 @@ import { enforceJsonShape, JsonShapeError } from '../sanitize.js';
 import { SequentialThinkingSchema } from '../schema.js';
 import { GraphView } from './graph/GraphView.js';
 import { buildActiveEvidenceProjection } from './reasoning/ActiveEvidenceProjection.js';
+import { buildGraphContext, type GraphContext } from './reasoning/GraphContext.js';
 import { assertNever } from '../utils.js';
 import type {
 	HistorySessionSnapshot,
@@ -64,7 +69,7 @@ type ConfidenceSignalsResult = ReturnType<ThoughtEvaluator['computeConfidenceSig
 type ReasoningStatsResult = ReturnType<ThoughtEvaluator['computeReasoningStats']>;
 
 type ReasoningSignalBundle = {
-	readonly history: ThoughtData[];
+	readonly evidence: ActiveEvidenceProjection | undefined;
 	readonly confidenceSignals: ConfidenceSignalsResult;
 	readonly reasoningStats: ReasoningStatsResult;
 	readonly reasoningHints: readonly string[];
@@ -75,6 +80,7 @@ type ProcessedThoughtResponseState = {
 	readonly reasoning: {
 		readonly confidenceSignals: ConfidenceSignalsResult;
 		readonly reasoningStats: ReasoningStatsResult;
+		readonly graphContext: GraphContext | undefined;
 		readonly reasoningHints: readonly string[];
 	};
 	readonly decision: StrategyDecision | undefined;
@@ -202,10 +208,12 @@ export class ThoughtProcessor {
 	 * Ensures the most actionable patterns fill the hint cap first.
 	 */
 	private static readonly _HINT_PRIORITY: Readonly<Partial<Record<PatternName, number>>> = {
-		confidence_drift: 1, // Most actionable — degrading confidence
-		unverified_hypothesis: 2, // Important for quality
-		no_alternatives_explored: 3, // Breadth gap
-		consecutive_without_verification: 4, // Routine pattern
+		refuted_hypothesis_dependency: 1, // Invalid foundation — revise dependents first
+		confidence_drift: 2, // Degrading confidence
+		unverified_hypothesis: 3, // Missing hypothesis evidence
+		unaddressed_critique: 4, // Unresolved challenge
+		no_alternatives_explored: 5, // Breadth gap
+		consecutive_without_verification: 6, // Routine pattern; monotonic_type stays unranked
 	};
 
 	/**
@@ -515,13 +523,17 @@ export class ThoughtProcessor {
 
 		// Strategy decision — pluggable reasoning policy hook.
 		// Built after history/stats so strategies see the latest state.
-		const decision = this._runStrategy(checkedInput, signals.history, signals.reasoningStats);
+		const decision = this._runStrategy(checkedInput, signals.evidence, signals.reasoningStats);
 
 		return this._buildSuccessResponse({
 			thought: checkedInput,
 			reasoning: {
 				confidenceSignals: signals.confidenceSignals,
 				reasoningStats: signals.reasoningStats,
+				graphContext:
+					signals.evidence === undefined
+						? undefined
+						: buildGraphContext(sessionId, checkedInput, signals.evidence),
 				reasoningHints: signals.reasoningHints,
 			},
 			decision,
@@ -544,26 +556,52 @@ export class ThoughtProcessor {
 		const sessionId = input.session_id;
 		const history = this.historyManager.getHistory(sessionId);
 		const branches = this.historyManager.getBranches(sessionId);
+		const evidence = this._buildActiveEvidence(sessionId, history, branches);
+		const graphScope =
+			evidence?.graph === undefined ? {} : { activeGraph: { sessionId, view: evidence.graph } };
 		const verificationTargets = this.historyManager.inspectSession(sessionId).verificationTargets;
 		const confidenceSignals = this._thoughtEvaluator.computeConfidenceSignals(history, branches, {
 			currentThought: input,
 			sessionId,
 			verificationTargets,
+			...graphScope,
 		});
 		const reasoningStats = this._thoughtEvaluator.computeReasoningStats(history, branches, {
 			verificationTargets,
 		});
 		const patternSignals = this._thoughtEvaluator.computePatternSignals(history, branches, {
 			verificationTargets,
+			...graphScope,
 		});
 		const reasoningHints = this._generateHints(patternSignals, input.thought_number, sessionId);
 
 		return {
-			history,
+			evidence,
 			confidenceSignals,
 			reasoningStats,
 			reasoningHints,
 		};
+	}
+
+	private _buildActiveEvidence(
+		sessionId: SessionId,
+		history: readonly ThoughtData[],
+		branches: Record<BranchId, ThoughtData[]>
+	): ActiveEvidenceProjection | undefined {
+		try {
+			return buildActiveEvidenceProjection({
+				sessionId,
+				history,
+				branches,
+				edgeStore: this._getEdgeStore(),
+			});
+		} catch (error) {
+			this._logger.warn('Active evidence projection failed — omitting graph and strategy hints', {
+				sessionId,
+				error: getErrorMessage(error),
+			});
+			return undefined;
+		}
 	}
 
 	private _buildSuccessResponse(state: ProcessedThoughtResponseState): CallToolResult {
@@ -590,6 +628,9 @@ export class ThoughtProcessor {
 							hypothesis_id: state.thought.hypothesis_id,
 							confidence_signals: state.reasoning.confidenceSignals,
 							reasoning_stats: state.reasoning.reasoningStats,
+							...(state.reasoning.graphContext !== undefined && {
+								graph_context: state.reasoning.graphContext,
+							}),
 							...(state.reasoning.reasoningHints.length > 0 && {
 								reasoning_hints: state.reasoning.reasoningHints,
 							}),
@@ -612,24 +653,15 @@ export class ThoughtProcessor {
 	 */
 	private _runStrategy(
 		currentThought: ThoughtData,
-		history: ThoughtData[],
+		evidence: ActiveEvidenceProjection | undefined,
 		stats: ReturnType<ThoughtEvaluator['computeReasoningStats']>
 	): StrategyDecision | undefined {
 		const sessionId = currentThought.session_id;
 		let decision: StrategyDecision | undefined;
 		try {
-			const evidence = buildActiveEvidenceProjection({
-				sessionId,
-				history,
-				branches: this.historyManager.getBranches(sessionId),
-				edgeStore: this._getEdgeStore(),
-			});
-			decision = this.strategy.decide({
-				sessionId,
-				evidence,
-				stats,
-				currentThought,
-			});
+			if (evidence !== undefined) {
+				decision = this.strategy.decide({ sessionId, evidence, stats, currentThought });
+			}
 		} catch (error) {
 			this._logger.warn('Reasoning strategy threw — omitting strategy hint', {
 				strategy: this.strategy.name,
