@@ -17,6 +17,7 @@ import type { PersistenceConfig } from '../contracts/PersistenceBackend.js';
 import { ConfigurationError, getErrorMessage } from '../errors.js';
 import type { FeatureFlags } from '../contracts/features.js';
 import type { ServerConfigOptions } from '../ServerConfig.js';
+import { parseEnvironmentInteger } from './EnvironmentInteger.js';
 
 /**
  * Lenient runtime schema for config files. Only validates top-level shape;
@@ -321,19 +322,19 @@ export class ConfigLoader {
 		const result = this.cloneConfig(config);
 
 		if (process.env.TRACELATTICE_MAX_HISTORY_SIZE !== undefined) {
-			result.maxHistorySize = this.parseEnvironmentInteger(
+			result.maxHistorySize = parseEnvironmentInteger(
 				'TRACELATTICE_MAX_HISTORY_SIZE',
 				process.env.TRACELATTICE_MAX_HISTORY_SIZE
 			);
 		}
 		if (process.env.TRACELATTICE_MAX_BRANCHES !== undefined) {
-			result.maxBranches = this.parseEnvironmentInteger(
+			result.maxBranches = parseEnvironmentInteger(
 				'TRACELATTICE_MAX_BRANCHES',
 				process.env.TRACELATTICE_MAX_BRANCHES
 			);
 		}
 		if (process.env.TRACELATTICE_MAX_BRANCH_SIZE !== undefined) {
-			result.maxBranchSize = this.parseEnvironmentInteger(
+			result.maxBranchSize = parseEnvironmentInteger(
 				'TRACELATTICE_MAX_BRANCH_SIZE',
 				process.env.TRACELATTICE_MAX_BRANCH_SIZE
 			);
@@ -360,7 +361,7 @@ export class ConfigLoader {
 					: process.env.TRACELATTICE_TOOL_DIRS.split(':');
 		}
 		if (process.env.TRACELATTICE_DISCOVERY_CACHE_TTL !== undefined) {
-			const seconds = this.parseEnvironmentInteger(
+			const seconds = parseEnvironmentInteger(
 				'TRACELATTICE_DISCOVERY_CACHE_TTL',
 				process.env.TRACELATTICE_DISCOVERY_CACHE_TTL
 			);
@@ -373,26 +374,26 @@ export class ConfigLoader {
 			result.discoveryCache = { ...result.discoveryCache, ttl };
 		}
 		if (process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE !== undefined) {
-			const maxSize = this.parseEnvironmentInteger(
+			const maxSize = parseEnvironmentInteger(
 				'TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE',
 				process.env.TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE
 			);
 			result.discoveryCache = { ...result.discoveryCache, maxSize };
 		}
 		if (process.env.TRACELATTICE_TOOL_INTERLEAVE_TTL_MS !== undefined) {
-			result.toolInterleaveTtlMs = this.parseEnvironmentInteger(
+			result.toolInterleaveTtlMs = parseEnvironmentInteger(
 				'TRACELATTICE_TOOL_INTERLEAVE_TTL_MS',
 				process.env.TRACELATTICE_TOOL_INTERLEAVE_TTL_MS
 			);
 		}
 		if (process.env.TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS !== undefined) {
-			result.toolInterleaveSweepMs = this.parseEnvironmentInteger(
+			result.toolInterleaveSweepMs = parseEnvironmentInteger(
 				'TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS',
 				process.env.TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS
 			);
 		}
 		if (process.env.TRACELATTICE_SESSION_MAX_PER_OWNER !== undefined) {
-			result.maxSessionsPerOwner = this.parseEnvironmentInteger(
+			result.maxSessionsPerOwner = parseEnvironmentInteger(
 				'TRACELATTICE_SESSION_MAX_PER_OWNER',
 				process.env.TRACELATTICE_SESSION_MAX_PER_OWNER
 			);
@@ -470,17 +471,6 @@ export class ConfigLoader {
 			features.reasoningStrategy = strategyRaw;
 			result.features = features;
 		}
-	}
-
-	private parseEnvironmentInteger(environmentName: string, raw: string): number {
-		if (!/^(0|[1-9]\d*)$/.test(raw)) {
-			throw new ConfigurationError(`${environmentName} must be an integer, got ${raw}`);
-		}
-		const parsed = Number(raw);
-		if (!Number.isSafeInteger(parsed)) {
-			throw new ConfigurationError(`${environmentName} must be a safe integer, got ${raw}`);
-		}
-		return parsed;
 	}
 
 	/**

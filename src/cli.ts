@@ -11,6 +11,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from 'tmcp';
 import { CliLifecycle, createCliShutdownHandler } from './CliLifecycle.js';
+import { parseCliTransportConfig } from './config/CliTransportConfig.js';
+import type { CliHttpTransportConfig } from './config/CliTransportConfig.js';
 import type { ToolAwareSequentialThinkingServer } from './lib.js';
 import { initializeServer } from './lib.js';
 import { StructuredLogger } from './logger/StructuredLogger.js';
@@ -32,7 +34,6 @@ if (shouldShowVersion) {
 	process.exit(0);
 }
 async function main() {
-	const transportType = process.env.TRACELATTICE_TRANSPORT_TYPE || 'stdio';
 	const adapter = new ValibotJsonSchemaAdapter();
 	const server = new McpServer(
 		{
@@ -51,6 +52,7 @@ async function main() {
 	const thinkingServer = await initializeServer();
 	const lifecycle = new CliLifecycle(thinkingServer);
 	try {
+		const transportConfig = parseCliTransportConfig(process.env);
 		server.tool(
 			{
 				name: 'sequentialthinking_tools',
@@ -59,12 +61,15 @@ async function main() {
 			},
 			async (input) => thinkingServer.processThought(input)
 		);
-		if (transportType === 'streamable-http') {
-			await startStreamableHttpTransport(server, thinkingServer, lifecycle);
+		if (transportConfig.kind === 'streamable-http') {
+			await startStreamableHttpTransport(server, thinkingServer, {
+				lifecycle,
+				config: transportConfig,
+			});
 		} else {
 			await startStdioTransport(server, thinkingServer, lifecycle);
 		}
-		registerShutdownHandlers(lifecycle, thinkingServer, transportType === 'stdio');
+		registerShutdownHandlers(lifecycle, thinkingServer, transportConfig.kind === 'stdio');
 	} catch (error) {
 		await lifecycle.rollbackStartup(error);
 	}
@@ -75,23 +80,21 @@ async function main() {
 async function startStreamableHttpTransport(
 	server: McpServer,
 	thinkingServer: ToolAwareSequentialThinkingServer,
-	lifecycle: CliLifecycle
+	options: { readonly lifecycle: CliLifecycle; readonly config: CliHttpTransportConfig }
 ): Promise<void> {
 	const { StreamableHttpTransport } = await import('./transport/StreamableHttpTransport.js');
-	const port = parseInt(process.env.TRACELATTICE_STREAMABLE_HTTP_PORT || '9007', 10);
-	const host = process.env.TRACELATTICE_STREAMABLE_HTTP_HOST || 'localhost';
+	const { lifecycle, config } = options;
+	const { port, host } = config;
 	const transportMetrics = thinkingServer.getContainer().resolve('Metrics');
-	const stateful = process.env.TRACELATTICE_STREAMABLE_HTTP_STATEFUL !== 'false';
 	const streamableTransport = new StreamableHttpTransport({
 		port,
 		host,
-		corsOrigin: process.env.TRACELATTICE_CORS_ORIGIN || '*',
-		enableCors: process.env.TRACELATTICE_ENABLE_CORS !== 'false',
-		allowedHosts: process.env.TRACELATTICE_ALLOWED_HOSTS?.split(',').map((hostValue) =>
-			hostValue.trim()
-		),
+		corsOrigin: config.corsOrigin,
+		enableCors: config.enableCors,
+		allowedHosts: config.allowedHosts,
 		metrics: transportMetrics,
-		stateful,
+		stateful: config.stateful,
+		...config.retention,
 	});
 	lifecycle.attachTransport(streamableTransport);
 	// Connect the Streamable HTTP transport
