@@ -49,6 +49,7 @@ describe('built CLI invalid transport configuration rollback', () => {
 		{ TRACELATTICE_TRANSPORT_TYPE: 'streamble-http' },
 		{ ...retention, TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS: '0' },
 		{ ...retention, TRACELATTICE_STREAMABLE_HTTP_STATEFUL: 'false' },
+		{ ...retention, TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS: '2147483648' },
 	])('stops the initialized server before rejecting %j', async (invalid) => {
 		const { port, env } = await cliEnvironment();
 		const running = spawnCli({ ...env, ...invalid });

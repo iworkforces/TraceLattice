@@ -134,4 +134,13 @@ describe('CLI HTTP integers', () => {
 			retention: { maxSessions: 1, sessionIdleTimeoutMs: 2, sessionSweepIntervalMs: 3 },
 		});
 	});
+	it('bounds the sweep interval to the largest timer delay', () => {
+		const sweep = 'TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS';
+		expect(parseCliTransportConfig({ ...http, ...retention, [sweep]: '2147483647' })).toMatchObject(
+			{ retention: { sessionSweepIntervalMs: 2_147_483_647 } }
+		);
+		expect(() => parseCliTransportConfig({ ...http, ...retention, [sweep]: '2147483648' })).toThrow(
+			`${sweep} must be at most 2147483647`
+		);
+	});
 });

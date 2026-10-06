@@ -2,6 +2,8 @@ import { ConfigurationError } from '../errors.js';
 import { parseEnvironmentInteger } from './EnvironmentInteger.js';
 
 export const DEFAULT_STREAMABLE_HTTP_PORT = 9007;
+// Node and Bun clamp larger setInterval delays to 1 ms.
+export const MAX_SESSION_SWEEP_INTERVAL_MS = 2_147_483_647;
 
 export type CliSessionRetention = {
 	readonly maxSessions: number;
@@ -52,11 +54,17 @@ function parseRetention(
 			'Streamable HTTP retention requires TRACELATTICE_STREAMABLE_HTTP_STATEFUL to not be false'
 		);
 	}
-	return {
+	const retention = {
 		maxSessions: positiveRetentionInteger(env, retentionNames[0]),
 		sessionIdleTimeoutMs: positiveRetentionInteger(env, retentionNames[1]),
 		sessionSweepIntervalMs: positiveRetentionInteger(env, retentionNames[2]),
 	};
+	if (retention.sessionSweepIntervalMs > MAX_SESSION_SWEEP_INTERVAL_MS) {
+		throw new ConfigurationError(
+			`${retentionNames[2]} must be at most ${MAX_SESSION_SWEEP_INTERVAL_MS}`
+		);
+	}
+	return retention;
 }
 
 export function parseCliTransportConfig(env: NodeJS.ProcessEnv): CliTransportConfig {
