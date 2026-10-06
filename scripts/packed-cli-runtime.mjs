@@ -1,9 +1,13 @@
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { PackedCliError } from './packed-cli-cleanup.mjs';
+import {
+	PackedCliError,
+	appendCleanupDiagnostics,
+	removeTemporaryRoots,
+} from './packed-cli-cleanup.mjs';
 
 const OPERATION_TIMEOUT_MS = 10_000;
 const FORCE_CLOSE_MS = 5_000;
@@ -361,6 +365,7 @@ async function exerciseSqliteProcess(artifact, configPath, restore) {
 
 async function verifySqliteRoundTrip(artifact) {
 	const root = await mkdtemp(join(tmpdir(), 'tracelattice-packed-sqlite-'));
+	let primary = null;
 	try {
 		const dbPath = join(root, 'history.sqlite');
 		const configPath = join(root, 'config.json');
@@ -373,15 +378,21 @@ async function verifySqliteRoundTrip(artifact) {
 		await exerciseSqliteProcess(artifact, configPath, false);
 		await access(dbPath);
 		await exerciseSqliteProcess(artifact, configPath, true);
-		return { write: true, restoredVerification: true, missingTargetRejected: true };
 	} catch (error) {
-		throw runtimeError(
+		primary = runtimeError(
 			'PACKED_SQLITE_RESTORE_FAILED',
 			`SQLite round trip failed: ${String(error)}`
 		);
-	} finally {
-		await rm(root, { recursive: true, force: true });
 	}
+	const cleanupErrors = await removeTemporaryRoots([root]);
+	if (primary) throw appendCleanupDiagnostics(primary, cleanupErrors);
+	if (cleanupErrors.length > 0) {
+		throw appendCleanupDiagnostics(
+			runtimeError('PACKED_SQLITE_CLEANUP_FAILED', 'SQLite temporary root removal failed'),
+			cleanupErrors
+		);
+	}
+	return { write: true, restoredVerification: true, missingTargetRejected: true };
 }
 
 export async function verifyPackedRuntime(artifact) {
