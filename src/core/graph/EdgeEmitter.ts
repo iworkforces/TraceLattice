@@ -248,8 +248,8 @@ export class EdgeEmitter {
 			return false;
 		}
 		const duplicate = this._edgeStore
-			.edgesForSession(sessionId)
-			.some((existing) => existing.kind === kind && existing.from === from && existing.to === to);
+			.outgoing(sessionId, from)
+			.some((existing) => existing.kind === kind && existing.to === to);
 		if (duplicate) return false;
 		try {
 			this._edgeStore.addEdge(edge);
