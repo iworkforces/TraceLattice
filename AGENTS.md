@@ -102,7 +102,7 @@ Refs = production `.ts` files containing the identifier (tests excluded). LSP is
 - CI: Node **24.x + 26.x** (library); native/packed **26.x**. Hard gates: `verify:library`, `verify:native`, `verify:packed`. Soft: `npm audit` only.
 - CD `publish` (Node 24) ships the `gates` tarball (`npm publish --ignore-scripts --provenance`). It does not build a second time. Packed CLI shebang is **Bun 1.4.2**.
 - Coverage: branches 90 / functions 60 / lines 65 / statements 65.
-- Sentrux caps are CC 25 and 100 lines. The current scan still fails `scripts/validate-release-receipt.mjs` `validateReceiptContract` (cc 47) and `src/__tests__/eval/precisionRegression.eval.ts` `structuralReport` (122 lines).
+- Sentrux caps are CC 25 and 100 lines; `check_rules` passes with no violations. Split long or branchy functions (scripts and tests included) instead of raising the caps.
 - Layers: types → crosscutting → config → core → domain → infrastructure → di → app → cli. `contracts/` and `utils.ts` are unlayered.
 - `ConnectionPool` is off CLI/DI. `HttpTransport` is a **library export**; CLI never selects it. `cluster/` does not exist (still a sentrux boundary).
 - `maxHistorySize` default and cap are **10000**. Persistence buffer size, flush interval, and retries are file-only (no `TRACELATTICE_*` override).
