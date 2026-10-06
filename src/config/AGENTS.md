@@ -5,7 +5,7 @@
 
 ## OVERVIEW
 
-This folder is **only** `ConfigLoader.ts`. There is **no** `server-config.ts` shim here.
+This folder contains `ConfigLoader.ts` (YAML/JSON and environment loading), `EnvironmentInteger.ts` (shared strict unsigned-decimal safe-integer grammar), and `CliTransportConfig.ts` (CLI transport environment parser, imported by `cli.ts`, with no transport imports). There is **no** `server-config.ts` shim here.
 
 Canonical validated config is `src/ServerConfig.ts`. Loader returns raw `ConfigFileOptions`; `ServerConfig` validates + resolves feature flags.
 

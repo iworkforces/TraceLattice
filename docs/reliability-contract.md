@@ -48,7 +48,7 @@ SQLite persistence accepts only the exact v2 tables, indexes, constraints, and o
 
 Thought append and retention, atomic backtrack correction and append, branch replacement, per-session clearing, global clearing, edge replacement, and summary replacement run in transactions. Reads that combine or validate multiple rows use read transactions. Stored JSON is decoded and validated before it is returned.
 
-WAL is enabled unless `enableWAL` is `false`. Foreign keys, a five-second busy timeout, and normal synchronization are configured at startup. The optional `better-sqlite3` dependency must be available when this backend is selected.
+WAL is enabled unless `enableWAL` is `false`. Foreign keys, a five-second busy timeout, and normal synchronization are configured at startup. Bun, including the packed `tracelattice` CLI, uses built-in `bun:sqlite`; Node uses the optional `better-sqlite3` package, which the caller must install. There is no fallback between drivers. A missing or failing driver rejects startup with a `PersistenceCompatibilityError` naming the required driver. Both drivers use the same v2 schema and validation contract.
 
 ## Ordering and Buffering
 
@@ -70,7 +70,7 @@ Restart loses expiration markers. With persistence disabled, state cannot resume
 
 Branches and revisions may legally reuse thought numbers, but numeric `verification_target` must uniquely identify a retained thought identity in the same session. Clients should avoid reusing numbers when they intend unique numeric verification references. Targets may have any thought type. Recording a verification outcome requires an explicit result of `0` or `1` and a non-retracted target with confidence.
 
-`dispose()` is the complete library cleanup operation. It stops admission, drains or reports persistence failure, stops watchers and suspension timers, closes persistence, and disposes container-owned resources.
+`dispose()` is the complete library cleanup operation. It stops admission, drains or reports persistence failure, stops watchers and suspension timers, closes server-owned persistence, and disposes container-owned resources.
 
 Lifecycle failures are sticky and fail closed:
 
@@ -83,11 +83,15 @@ New work is rejected while the relevant scope is resetting, evicting, shutting d
 
 ## Ownership
 
+`createServer({ persistenceBackend })` uses the caller's backend instead of the configured persistence factory. The package root exports the types `PersistenceBackend`, `ThoughtData`, `Edge`, `Summary`, `SessionId`, `ThoughtId`, and `BranchId` for implementing it. Startup restore reads this backend unless `loadFromPersistence: false` is set. The injected backend is caller-owned: the server never calls its `close()`, even during failed startup. Buffered writes are drained before `stop()` or `dispose()` resolves successfully; the caller closes the backend afterward. Factory-created backends are server-owned and closed exactly once.
+
 Request ownership is independent from thought `session_id` and transport connection slots. Owner-aware access cannot read or mutate a session owned by another request owner. Restored sessions deny owner-aware access until an allowed ownerless context manages them. Stdio operation, which has no request owner, remains unrestricted.
 
 Authorization applies before reset, including for expired names. A same-owner reset or trusted ownerless administrative reset preserves an existing former owner; a foreign-owner reset is denied. Expiration and reset do not bypass the owner-aware denial for restored sessions. Request ownership is carried by the AsyncLocalStorage (ALS) context, separately from thought-session identity.
 
 The MCP-standard `Mcp-Session-Id` header is the Streamable HTTP session mechanism. It carries transport state; request-owner identity is a separate authorization context. Neither supplies a thought `session_id`. Query-string session aliases are not part of the transport contract. Optional `ConnectionPool` slots are a third isolation mechanism and likewise do not substitute for thought sessions.
+
+CLI transport retention requires all three variables: `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS`, `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS`, and `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS`. Values must be positive safe integers; both timing values use milliseconds. With none set, transport sessions remain unbounded until shutdown. Retention is rejected when `TRACELATTICE_STREAMABLE_HTTP_STATEFUL=false`. Capacity rejects new sessions with HTTP 503 and JSON-RPC code `-32000`; a swept session's next request receives HTTP 404 and code `-32001`, requiring client re-initialization. Sweeps skip sessions with accepted POSTs in flight and leave thought-session history, ownership, and TTL handling untouched.
 
 ## Configuration Contract
 

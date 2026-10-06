@@ -40,7 +40,7 @@ Shared GET: `/health`, `/ready`, `/metrics`.
 
 - Factories: `createStreamableHttpTransport()`, `createHttpTransport()`. Lib exports only `HttpTransport` / `createHttpTransport`.
 - Stateful StreamableHTTP keys sessions by `Mcp-Session-Id` after init.
-- Idle reaper is **opt-in**: `maxSessions` + `sessionIdleTimeoutMs` + `sessionSweepIntervalMs` must all be set together. CLI never sets them → sessions live until `stop()`.
+- Idle reaper is **opt-in**: `maxSessions` + `sessionIdleTimeoutMs` + `sessionSweepIntervalMs` must all be set together. CLI passes all three when `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS`, `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS`, and `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` are set. `src/config/CliTransportConfig.ts` parses them and rejects partial sets or stateless retention. With none set, sessions live until `stop()`.
 - `stop()` closes `PreDispatchTracker` then joins `_acceptedWork`. Do not drop in-flight POSTs. Cancel reasons: `peer` | `shutdown` | `timeout`.
 - `ConnectionPool` is unused here. Do not wire it in.
 - `HealthChecker` feeds `/health` + `/ready`.
