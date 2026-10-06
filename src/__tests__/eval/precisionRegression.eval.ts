@@ -176,6 +176,29 @@ async function calibrationReport() {
 	}
 }
 
+async function processWithPayload(server: Server, input: EvalThought) {
+	const result = await server.processThought(processorInput(input));
+	const payload = v.parse(processorPayloadSchema, JSON.parse(result.content[0]?.text ?? '{}'));
+	return { isError: result.isError === true, payload };
+}
+
+async function ambiguousTargetRejected(server: Server): Promise<boolean> {
+	for (const id of ['processor-ambiguous-source-a', 'processor-ambiguous-source-b']) {
+		await server.processThought(
+			processorInput({ id, thought_number: 1, session_id: AMBIGUOUS_SESSION })
+		);
+	}
+	const ambiguous = await processWithPayload(server, {
+		id: 'processor-ambiguous-verification',
+		thought_number: 3,
+		thought_type: 'verification',
+		verification_target: 1,
+		verification_result: 0,
+		session_id: AMBIGUOUS_SESSION,
+	});
+	return ambiguous.isError && ambiguous.payload.code === 'VALIDATION_ERROR';
+}
+
 async function structuralReport() {
 	const server = await createServer({
 		autoDiscover: false,
@@ -195,94 +218,46 @@ async function structuralReport() {
 				quality_score: 0.4,
 			})
 		);
-		const verification = await server.processThought(
-			processorInput({
-				id: 'processor-verification',
-				thought_number: 2,
-				thought_type: 'verification',
-				verification_target: 1,
-				verification_result: 1,
-			})
-		);
-		const verifiedPayload = v.parse(
-			processorPayloadSchema,
-			JSON.parse(verification.content[0]?.text ?? '{}')
-		);
-		await server.processThought(
-			processorInput({
-				id: 'processor-ambiguous-source-a',
-				thought_number: 1,
-				session_id: AMBIGUOUS_SESSION,
-			})
-		);
-		await server.processThought(
-			processorInput({
-				id: 'processor-ambiguous-source-b',
-				thought_number: 1,
-				session_id: AMBIGUOUS_SESSION,
-			})
-		);
-		const ambiguous = await server.processThought(
-			processorInput({
-				id: 'processor-ambiguous-verification',
-				thought_number: 3,
-				thought_type: 'verification',
-				verification_target: 1,
-				verification_result: 0,
-				session_id: AMBIGUOUS_SESSION,
-			})
-		);
-		const ambiguousPayload = v.parse(
-			processorPayloadSchema,
-			JSON.parse(ambiguous.content[0]?.text ?? '{}')
-		);
-		const duplicate = await server.processThought(
-			processorInput({
-				id: 'processor-verification',
-				thought_number: 3,
-			})
-		);
-		const duplicatePayload = v.parse(
-			processorPayloadSchema,
-			JSON.parse(duplicate.content[0]?.text ?? '{}')
-		);
-		const high = await server.processThought(
-			processorInput({
-				id: 'processor-high',
-				thought_number: 3,
-				confidence: 1,
-				quality_score: 1,
-			})
-		);
-		const highPayload = v.parse(processorPayloadSchema, JSON.parse(high.content[0]?.text ?? '{}'));
-		const backtrack = await server.processThought(
-			processorInput({
-				id: 'processor-backtrack',
-				thought_number: 4,
-				thought_type: 'backtrack',
-				backtrack_target: 3,
-				confidence: 0.1,
-				quality_score: 0.1,
-			})
-		);
-		const backtrackPayload = v.parse(
-			processorPayloadSchema,
-			JSON.parse(backtrack.content[0]?.text ?? '{}')
-		);
+		const verified = await processWithPayload(server, {
+			id: 'processor-verification',
+			thought_number: 2,
+			thought_type: 'verification',
+			verification_target: 1,
+			verification_result: 1,
+		});
+		const ambiguousRejected = await ambiguousTargetRejected(server);
+		const duplicate = await processWithPayload(server, {
+			id: 'processor-verification',
+			thought_number: 3,
+		});
+		const high = await processWithPayload(server, {
+			id: 'processor-high',
+			thought_number: 3,
+			confidence: 1,
+			quality_score: 1,
+		});
+		const backtrack = await processWithPayload(server, {
+			id: 'processor-backtrack',
+			thought_number: 4,
+			thought_type: 'backtrack',
+			backtrack_target: 3,
+			confidence: 0.1,
+			quality_score: 0.1,
+		});
+		const stats = verified.payload.reasoning_stats;
 		const structural = {
 			duplicate_rejected_without_mutation:
-				duplicate.isError === true &&
-				duplicatePayload.code === 'VALIDATION_ERROR' &&
+				duplicate.isError &&
+				duplicate.payload.code === 'VALIDATION_ERROR' &&
 				server.history.getHistory(PROCESSOR_SESSION).length === 4,
-			ambiguous_target_rejected_without_mutation:
-				ambiguous.isError === true && ambiguousPayload.code === 'VALIDATION_ERROR',
+			ambiguous_target_rejected_without_mutation: ambiguousRejected,
 			canonical_verification:
-				verifiedPayload.reasoning_stats?.hypothesis_count === 1 &&
-				verifiedPayload.reasoning_stats.verified_hypothesis_count === 1 &&
-				verifiedPayload.reasoning_stats.unresolved_hypothesis_count === 0,
+				stats?.hypothesis_count === 1 &&
+				stats.verified_hypothesis_count === 1 &&
+				stats.unresolved_hypothesis_count === 0,
 			active_tot_retraction:
-				highPayload.strategy_hint?.action === 'terminate' &&
-				backtrackPayload.strategy_hint?.action === 'continue' &&
+				high.payload.strategy_hint?.action === 'terminate' &&
+				backtrack.payload.strategy_hint?.action === 'continue' &&
 				server.history
 					.getHistory(PROCESSOR_SESSION)
 					.find((thought) => thought.id === 'processor-high')?.retracted === true,
