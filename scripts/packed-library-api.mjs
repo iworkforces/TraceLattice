@@ -28,6 +28,10 @@ for (const name of [
   'StreamableHttpTransport',
   'ToolRegistry',
   'createStreamableHttpTransport',
+  'MemoryPersistence',
+  'FilePersistence',
+  'SqlitePersistence',
+  'createPersistenceBackend',
 ]) {
   assert.equal(Object.hasOwn(PublicApi, name), false, \`internal export exposed: \${name}\`);
 }
@@ -53,6 +57,44 @@ const silentLogger = {
   getLevel() { return 'info'; },
 };
 let discoveryServer;
+const histories = new Map();
+const branches = new Map();
+const edges = new Map();
+const summaries = new Map();
+const writes = [];
+let closeCalls = 0;
+const persistenceBackend = {
+  async saveThoughtForSession(session, thought) {
+    histories.set(session, [...(histories.get(session) ?? []), thought]);
+    writes.push({ session, thought });
+  },
+  async saveBacktrackForSession(session, thought, target) {
+    const retained = (histories.get(session) ?? []).map((entry) =>
+      entry.id === target ? { ...entry, retracted: true } : entry);
+    histories.set(session, [...retained, thought]);
+  },
+  async loadHistoryForSession(session) { return histories.get(session) ?? []; },
+  async saveBranchForSession(session, branch, thoughts) {
+    const stored = branches.get(session) ?? new Map();
+    stored.set(branch, [...thoughts]); branches.set(session, stored);
+  },
+  async deleteBranchForSession(session, branch) { branches.get(session)?.delete(branch); },
+  async loadBranchForSession(session, branch) { return branches.get(session)?.get(branch); },
+  async listBranchesForSession(session) { return [...(branches.get(session)?.keys() ?? [])]; },
+  async listSessions() { return [...histories.keys()]; },
+  async healthy() { return true; },
+  async clearSession(session) {
+    for (const store of [histories, branches, edges, summaries]) store.delete(session);
+  },
+  async clearAll() {
+    for (const store of [histories, branches, edges, summaries]) store.clear();
+  },
+  async saveEdges(session, values) { edges.set(session, [...values]); },
+  async loadEdges(session) { return edges.get(session) ?? []; },
+  async saveSummaries(session, values) { summaries.set(session, [...values]); },
+  async loadSummaries(session) { return summaries.get(session) ?? []; },
+  async close() { closeCalls += 1; },
+};
 try {
   await Promise.all([mkdir(skillDir), mkdir(toolDir)]);
   await Promise.all([
@@ -68,6 +110,7 @@ try {
     ),
   ]);
   discoveryServer = await PublicApi.createServer({
+    persistenceBackend,
     logger: silentLogger,
     fileConfig: {
       skillDirs: [skillDir],
@@ -101,6 +144,8 @@ try {
   if (discoveryServer) await discoveryServer.dispose();
   await rm(discoveryRoot, { recursive: true, force: true });
 }
+assert.equal(writes.some(({ session }) => session === 'packed-library-verification'), true);
+assert.equal(closeCalls, 0);
 
 const reservation = createNodeServer();
 await new Promise((resolve, reject) => {
@@ -194,7 +239,57 @@ const declarationConsumer = `import {
   type ITransport,
   type TransportKind,
   type TransportOptions,
+  type ServerOptions,
+  type PersistenceBackend,
+  type ThoughtData,
+  type Edge,
+  type Summary,
+  type SessionId,
+  type ThoughtId,
+  type BranchId,
 } from '@iworkforces/tracelattice';
+
+class ConsumerBackend implements PersistenceBackend {
+  readonly histories = new Map<SessionId, ThoughtData[]>();
+  readonly branches = new Map<SessionId, Map<BranchId, ThoughtData[]>>();
+  readonly edges = new Map<SessionId, Edge[]>();
+  readonly summaries = new Map<SessionId, Summary[]>();
+  async saveThoughtForSession(session: SessionId, thought: ThoughtData): Promise<void> {
+    this.histories.set(session, [...(this.histories.get(session) ?? []), thought]);
+  }
+  async saveBacktrackForSession(session: SessionId, thought: ThoughtData, target: ThoughtId): Promise<void> {
+    const retained = (this.histories.get(session) ?? []).map((entry) =>
+      entry.id === target ? { ...entry, retracted: true } : entry);
+    this.histories.set(session, [...retained, thought]);
+  }
+  async loadHistoryForSession(session: SessionId): Promise<ThoughtData[]> { return this.histories.get(session) ?? []; }
+  async saveBranchForSession(session: SessionId, branch: BranchId, thoughts: readonly ThoughtData[]): Promise<void> {
+    const stored = this.branches.get(session) ?? new Map<BranchId, ThoughtData[]>();
+    stored.set(branch, [...thoughts]); this.branches.set(session, stored);
+  }
+  async deleteBranchForSession(session: SessionId, branch: BranchId): Promise<void> { this.branches.get(session)?.delete(branch); }
+  async loadBranchForSession(session: SessionId, branch: BranchId): Promise<ThoughtData[] | undefined> { return this.branches.get(session)?.get(branch); }
+  async listBranchesForSession(session: SessionId): Promise<BranchId[]> { return [...(this.branches.get(session)?.keys() ?? [])]; }
+  async listSessions(): Promise<SessionId[]> { return [...this.histories.keys()]; }
+  async healthy(): Promise<boolean> { return true; }
+  async clearSession(session: SessionId): Promise<void> {
+    this.histories.delete(session); this.branches.delete(session);
+    this.edges.delete(session); this.summaries.delete(session);
+  }
+  async clearAll(): Promise<void> {
+    this.histories.clear(); this.branches.clear(); this.edges.clear(); this.summaries.clear();
+  }
+  async saveEdges(session: SessionId, values: readonly Edge[]): Promise<void> { this.edges.set(session, [...values]); }
+  async loadEdges(session: SessionId): Promise<Edge[]> { return this.edges.get(session) ?? []; }
+  async saveSummaries(session: SessionId, values: readonly Summary[]): Promise<void> { this.summaries.set(session, [...values]); }
+  async loadSummaries(session: SessionId): Promise<Summary[]> { return this.summaries.get(session) ?? []; }
+  async close(): Promise<void> {}
+}
+const injectedServer = createServer({ persistenceBackend: new ConsumerBackend() });
+type MissingBacktrack = Omit<PersistenceBackend, 'saveBacktrackForSession'>;
+const backtrackRequired: MissingBacktrack extends ServerOptions['persistenceBackend'] ? false : true = true;
+void injectedServer;
+void backtrackRequired;
 
 const commonOptions: TransportOptions = {
   port: 9108,

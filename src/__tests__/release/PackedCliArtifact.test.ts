@@ -87,7 +87,7 @@ export class HttpTransport {
 }
 export function createHttpTransport(options = {}) { return new HttpTransport(options); }
 export class ToolAwareSequentialThinkingServer {
-  constructor() { this.refresh = undefined; }
+  constructor(options = {}) { this.refresh = undefined; this.backend = options.persistenceBackend; }
   refreshDiscovery() {
     this.refresh ??= Promise.resolve({ tools: 1, skills: 1 });
     return this.refresh;
@@ -100,12 +100,13 @@ export class ToolAwareSequentialThinkingServer {
     if (typeof input.session_id !== 'string' || input.session_id === '__global__') {
       return { isError: true, content: [{ type: 'text', text: 'invalid session' }] };
     }
+    await this.backend?.saveThoughtForSession(input.session_id, input);
     return { content: [{ type: 'text', text: JSON.stringify({ session_id: input.session_id }) }] };
   }
   async stop() {}
   async dispose() {}
 }
-export async function createServer() { return new ToolAwareSequentialThinkingServer(); }
+export async function createServer(options = {}) { return new ToolAwareSequentialThinkingServer(options); }
 export async function initializeServer() { return createServer(); }
 `;
 const libraryDeclarations = `export type TransportKind = 'http' | 'streamable-http';
@@ -133,7 +134,31 @@ export declare class HttpTransport implements ITransport {
   stop(timeout?: number): Promise<void>;
 }
 export declare function createHttpTransport(options?: HttpTransportOptions): HttpTransport;
-export interface ServerOptions { readonly autoDiscover?: boolean; readonly loadFromPersistence?: boolean; }
+export type SessionId = string & { readonly session: unique symbol };
+export type ThoughtId = string & { readonly thought: unique symbol };
+export type BranchId = string & { readonly branch: unique symbol };
+export interface ThoughtData { readonly id?: ThoughtId; readonly retracted?: boolean; }
+export interface Edge { readonly from: ThoughtId; readonly to: ThoughtId; }
+export interface Summary { readonly id: string; }
+export interface PersistenceBackend {
+  saveThoughtForSession(session: SessionId, thought: ThoughtData): Promise<void>;
+  saveBacktrackForSession(session: SessionId, thought: ThoughtData, target: ThoughtId): Promise<void>;
+  loadHistoryForSession(session: SessionId): Promise<ThoughtData[]>;
+  saveBranchForSession(session: SessionId, branch: BranchId, thoughts: readonly ThoughtData[]): Promise<void>;
+  deleteBranchForSession(session: SessionId, branch: BranchId): Promise<void>;
+  loadBranchForSession(session: SessionId, branch: BranchId): Promise<ThoughtData[] | undefined>;
+  listBranchesForSession(session: SessionId): Promise<BranchId[]>;
+  listSessions(): Promise<SessionId[]>;
+  healthy(): Promise<boolean>;
+  clearSession(session: SessionId): Promise<void>;
+  clearAll(): Promise<void>;
+  saveEdges(session: SessionId, edges: readonly Edge[]): Promise<void>;
+  loadEdges(session: SessionId): Promise<Edge[]>;
+  saveSummaries(session: SessionId, summaries: readonly Summary[]): Promise<void>;
+  loadSummaries(session: SessionId): Promise<Summary[]>;
+  close(): Promise<void>;
+}
+export interface ServerOptions { readonly persistenceBackend?: PersistenceBackend; readonly autoDiscover?: boolean; readonly loadFromPersistence?: boolean; }
 export interface IToolAwareSequentialThinkingServer {
   refreshDiscovery(): Promise<{ tools: number; skills: number }>;
   getBranches(sessionId: string): Record<string, readonly object[]>;
