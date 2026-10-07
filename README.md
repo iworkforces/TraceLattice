@@ -186,6 +186,9 @@ All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `f
 | `TRACELATTICE_STREAMABLE_HTTP_PORT`     | `9007`                  | Port for Streamable HTTP server              |
 | `TRACELATTICE_STREAMABLE_HTTP_HOST`     | `localhost`             | Host for Streamable HTTP server              |
 | `TRACELATTICE_STREAMABLE_HTTP_STATEFUL` | `true`                  | Enable stateful session tracking             |
+| `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS` | unset | Maximum retained transport sessions |
+| `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS` | unset | Transport-session idle timeout in milliseconds |
+| `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` | unset | Idle-session sweep interval in milliseconds |
 | `TRACELATTICE_CORS_ORIGIN`              | `*`                     | CORS origin                                  |
 | `TRACELATTICE_ENABLE_CORS`              | `true`                  | Enable CORS preflight                        |
 | `TRACELATTICE_ALLOWED_HOSTS`            | derived from bound host | Comma-separated allowed `Host` header values |
@@ -222,6 +225,10 @@ Set `TRACELATTICE_TRANSPORT_TYPE` to pick one:
 | `streamable-http` | Production deployments | `TRACELATTICE_TRANSPORT_TYPE=streamable-http tracelattice` |
 
 The Streamable HTTP endpoint defaults to `POST /mcp` for JSON-RPC requests and supports stateful sessions via the `Mcp-Session-Id` header. `GET /mcp` is not allowed. The library also exposes `HttpTransport` for stateless JSON-RPC over HTTP, but the CLI does not select it with `TRACELATTICE_TRANSPORT_TYPE`.
+
+Set all three transport-session retention variables or leave all three unset. Each must be a positive safe integer; the two timing values use milliseconds. With none set, transport sessions remain unbounded and live until shutdown. Retention settings are rejected with `TRACELATTICE_STREAMABLE_HTTP_STATEFUL=false`. At capacity, a request that would create a new session receives HTTP 503 with JSON-RPC code `-32000`. After an idle session is swept, a request using its header receives HTTP 404 with code `-32001`; the client must re-initialize without the old `Mcp-Session-Id`. Sweeps skip sessions with accepted POSTs still in flight and don't change thought sessions (`session_id`), their history, ownership, or TTL handling.
+
+In Streamable HTTP mode, the port and retention values accept only unsigned decimal integers without leading zeros (except `0`), signs, whitespace, or trailing characters, and must be safe integers. `TRACELATTICE_STREAMABLE_HTTP_PORT` accepts 0 through 65535 and defaults to 9007. `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` must be at most 2147483647, the largest timer delay Node and Bun honor. Invalid values, a partial retention set, or an unknown `TRACELATTICE_TRANSPORT_TYPE` stop CLI startup with exit code 1. Stdio ignores HTTP-only variables.
 
 ### Session model
 
@@ -288,6 +295,12 @@ Temperature fitting begins at 10 outcomes. It uses per-type leave-one-out blends
 The checked evaluation report separates deterministic structural validation and controlled raw and calibrated probability metrics. `natural_language_accuracy` is unmeasured. These checks do not judge factuality, guarantee better calibration, or promise that every individual confidence changes in one direction.
 
 ### Persistence, recovery, and backtracking
+
+Library callers can supply their own backend with `createServer({ persistenceBackend })`. This skips the persistence factory and the configured backend, whether or not configured persistence is enabled. The package root exports the implementation types `PersistenceBackend`, `ThoughtData`, `Edge`, `Summary`, `SessionId`, `ThoughtId`, and `BranchId` as types only; deep imports aren't needed. Startup restore reads the injected backend unless `loadFromPersistence: false` is set.
+
+An injected backend belongs to the caller. The server drains buffered writes before `stop()` or `dispose()` resolves, but never calls the backend's `close()`, including during startup-failure cleanup. The caller must close it after the awaited shutdown resolves. Factory-created backends are server-owned and closed exactly once.
+
+SQLite selects its driver by runtime. Bun, including the packed `tracelattice` CLI, uses the built-in `bun:sqlite` module. Node uses the optional `better-sqlite3` package, which you must install yourself (`npm install better-sqlite3`). Neither runtime falls back to the other driver. A missing or failing driver stops startup with a `PersistenceCompatibilityError` naming the required driver.
 
 `PersistenceBackend` requires `saveBacktrackForSession(sessionId, thought, targetThoughtId)`. Every custom backend must implement it. The operation atomically corrects every retained stable-ID copy of the target, appends the backtrack thought, and applies retention. There is no capability fallback; the ordinary persistence methods retain their existing contracts.
 

@@ -2,6 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+	DEFAULT_STREAMABLE_HTTP_PORT,
+	parseCliTransportConfig,
+} from '../../config/CliTransportConfig.js';
 
 type FileContents = {
 	readonly contents: string | undefined;
@@ -111,6 +115,10 @@ describe('legacy SSE removal', () => {
 		// Given
 		const { contents } = await readIfPresent('src/cli.ts');
 		// Then
-		expect(contents).toContain("process.env.TRACELATTICE_STREAMABLE_HTTP_PORT || '9007'");
+		expect(DEFAULT_STREAMABLE_HTTP_PORT).toBe(9007);
+		expect(
+			parseCliTransportConfig({ TRACELATTICE_TRANSPORT_TYPE: 'streamable-http' })
+		).toMatchObject({ port: 9007 });
+		expect(contents).not.toContain('parseInt(');
 	});
 });

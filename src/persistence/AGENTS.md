@@ -15,6 +15,9 @@ persistence/
 ├── MemoryPersistence.ts
 ├── FilePersistence.ts + FileWriter + FileSnapshotV2 + types/validation
 ├── SqlitePersistence.ts + SqliteDriver + SqliteSchemaV2 + SqliteSnapshotWriter
+├── BunSqliteDriver.ts        # Bun adapter for the shared SQLite driver contract
+├── SqliteDriverLoader.ts     # runtime selection; no driver fallback
+├── bun-sqlite.d.ts           # local ambient declaration, no Bun globals required
 ├── BacktrackPersistence.ts   # stageBacktrackPersistence + repairRetainedBacktracks
 └── PersistenceScope.ts / PersistenceCodec.ts / PersistenceErrors.ts
 ```
@@ -25,7 +28,7 @@ persistence/
 | --------- | --------------------------------- | ----------------------------------------------------------- |
 | Memory    | 4 `Map`s by `SessionId`           | In-memory sink. `enabled: false` → factory `null`. Omitted `backend` throws (no memory fallback) |
 | File v2   | **one** `<dataDir>/snapshot.json` | Exclusive lock; full rewrite; not `edges/{session}.json`    |
-| SQLite v2 | tables + `schema_version=(1,2)`   | WAL unless `enableWAL === false`; `better-sqlite3` optional |
+| SQLite v2 | tables + `schema_version=(1,2)`   | WAL unless `enableWAL === false`; Bun uses built-in `bun:sqlite`, Node uses optional `better-sqlite3`; no driver fallback |
 
 All three implement the indivisible, session-scoped `PersistenceBackend`. Every thought, branch, edge, summary, and single-session clear operation carries an explicit named `SessionId`; no backend recognizes a default or `__global__` session.
 

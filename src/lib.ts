@@ -5,7 +5,10 @@
 import { EventEmitter } from 'node:events';
 import type * as v from 'valibot';
 import type { ThoughtData } from './core/thought.js';
-import { asSessionId, type BranchId } from './contracts/ids.js';
+import { asSessionId } from './contracts/ids.js';
+import type { BranchId, SessionId, ThoughtId } from './contracts/ids.js';
+import type { Edge } from './core/graph/Edge.js';
+import type { Summary } from './core/compression/Summary.js';
 import type { SequentialThinkingSchema } from './schema.js';
 import { SEQUENTIAL_THINKING_TOOL } from './schema.js';
 import type { IDisposable } from './types/disposable.js';
@@ -46,7 +49,19 @@ import type { TransportOptions } from './transport/BaseTransport.js';
 import type { ITransport, TransportKind } from './contracts/transport.js';
 
 export { HttpTransport, createHttpTransport };
-export type { HttpTransportOptions, TransportOptions, ITransport, TransportKind };
+export type {
+	HttpTransportOptions,
+	TransportOptions,
+	ITransport,
+	TransportKind,
+	PersistenceBackend,
+	ThoughtData,
+	Edge,
+	Summary,
+	SessionId,
+	ThoughtId,
+	BranchId,
+};
 
 export interface ServerOptions {
 	maxHistorySize?: number;
@@ -57,6 +72,12 @@ export interface ServerOptions {
 	config?: ServerConfig;
 	fileConfig?: ConfigFileOptions;
 	container?: Container;
+	/**
+	 * Use this backend instead of the configured persistence factory.
+	 * The caller owns and closes it; the server only drains its buffered writes.
+	 * @default undefined
+	 */
+	persistenceBackend?: PersistenceBackend;
 	/**
 	 * Enable automatic tool and skill discovery on server startup.
 	 * @default true
@@ -85,6 +106,13 @@ interface ServerEvents {
 }
 
 type CleanupOperation = () => void | Promise<void>;
+
+async function closeOwnedPersistence(
+	persistence: PersistenceBackend | null,
+	borrowed: PersistenceBackend | null
+): Promise<void> {
+	if (persistence !== null && persistence !== borrowed) await persistence.close();
+}
 
 function appendCleanupFailure(failures: unknown[], failure: unknown): void {
 	if (failure instanceof AggregateError) {
@@ -224,7 +252,11 @@ export class ToolAwareSequentialThinkingServer
 									container.resolve('suspensionStore').stop();
 								}
 							},
-							() => container.resolve('Persistence')?.close(),
+							() =>
+								closeOwnedPersistence(
+									container.resolve('Persistence'),
+									options.persistenceBackend ?? null
+								),
 							() => container.dispose(),
 						]
 			);
@@ -253,6 +285,7 @@ export class ToolAwareSequentialThinkingServer
 
 	// DI Container for managing dependencies
 	private _container: Container;
+	private readonly _borrowedPersistence: PersistenceBackend | null;
 
 	// Component instances (private)
 	private _logger: StructuredLogger;
@@ -314,6 +347,7 @@ export class ToolAwareSequentialThinkingServer
 			throw new Error('Container is required. Use createServer() or provide a container.');
 		}
 		this._container = options.container;
+		this._borrowedPersistence = options.persistenceBackend ?? null;
 
 		// Resolve dependencies from container
 		this._logger = this._container.resolve('Logger');
@@ -594,7 +628,8 @@ export class ToolAwareSequentialThinkingServer
 
 		let persistence: PersistenceBackend | null = null;
 		try {
-			persistence = await createPersistenceBackend(config.persistence);
+			persistence =
+				options.persistenceBackend ?? (await createPersistenceBackend(config.persistence));
 			return ToolAwareSequentialThinkingServer._createContainerCore(
 				{ ...options, config },
 				fileConfig,
@@ -605,7 +640,9 @@ export class ToolAwareSequentialThinkingServer
 			const cleanupFailures =
 				acquiredPersistence === null
 					? []
-					: await collectCleanupFailures([() => acquiredPersistence.close()]);
+					: await collectCleanupFailures([
+							() => closeOwnedPersistence(acquiredPersistence, options.persistenceBackend ?? null),
+						]);
 			if (cleanupFailures.length > 0) {
 				throw new AggregateError(
 					[error, ...cleanupFailures],
@@ -755,7 +792,7 @@ export class ToolAwareSequentialThinkingServer
 
 			// Close persistence backend if available
 			const persistence = this._container.resolve('Persistence');
-			if (persistence) {
+			if (persistence && persistence !== this._borrowedPersistence) {
 				try {
 					await persistence.close();
 					this._logger.info('Persistence backend closed');

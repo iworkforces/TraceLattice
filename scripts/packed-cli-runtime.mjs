@@ -1,6 +1,13 @@
 import { spawn } from 'node:child_process';
+import { access, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { PackedCliError } from './packed-cli-cleanup.mjs';
+import {
+	PackedCliError,
+	appendCleanupDiagnostics,
+	removeTemporaryRoots,
+} from './packed-cli-cleanup.mjs';
 
 const OPERATION_TIMEOUT_MS = 10_000;
 const FORCE_CLOSE_MS = 5_000;
@@ -26,11 +33,12 @@ function deadline(promise, timeoutMs, operation) {
 	return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function captureProcess(binaryPath, args, cwd) {
+function captureProcess(binaryPath, args, cwd, extraEnv = {}) {
 	const child = spawn(binaryPath, args, {
 		cwd,
 		env: {
 			...process.env,
+			...extraEnv,
 			TRACELATTICE_PRETTY_LOG: 'false',
 			TRACELATTICE_TRANSPORT_TYPE: 'stdio',
 		},
@@ -285,8 +293,111 @@ async function exerciseProtocol(artifact) {
 	}
 }
 
+function requireSqlitePayload(result, session) {
+	if (result.isError === true || !Array.isArray(result.content)) {
+		throw runtimeError('PACKED_SQLITE_RESTORE_FAILED', 'SQLite thought call failed');
+	}
+	const text = result.content.find((entry) => isRecord(entry) && entry.type === 'text')?.text;
+	const payload = JSON.parse(text);
+	if (!isRecord(payload) || payload.session_id !== session) {
+		throw runtimeError('PACKED_SQLITE_RESTORE_FAILED', 'SQLite session was not echoed');
+	}
+}
+
+function requireMissingTargetRejected(result) {
+	const text = Array.isArray(result.content)
+		? result.content.find((entry) => isRecord(entry) && entry.type === 'text')?.text
+		: undefined;
+	if (
+		result.isError !== true ||
+		typeof text !== 'string' ||
+		!text.includes('verification_target 1 is missing')
+	) {
+		throw runtimeError('PACKED_SQLITE_RESTORE_FAILED', 'missing SQLite target was accepted');
+	}
+}
+
+async function exerciseSqliteProcess(artifact, configPath, restore) {
+	const running = captureProcess(artifact.binaryPath, [], artifact.consumerRoot, {
+		TRACELATTICE_CONFIG: configPath,
+	});
+	const client = new ProtocolClient(running);
+	const session = 'packed-sqlite-round-trip';
+	const input = {
+		thought: 'Verify installed SQLite persistence',
+		thought_number: restore ? 2 : 1,
+		total_thoughts: 2,
+		next_thought_needed: false,
+		session_id: session,
+		confidence: 0.8,
+		...(restore
+			? { thought_type: 'verification', verification_target: 1, verification_result: 1 }
+			: {}),
+	};
+	try {
+		await initializeProtocol(client);
+		requireSqlitePayload(
+			requireResult(await callThought(client, 'sqlite-call', input), 'sqlite-call'),
+			session
+		);
+		if (restore) {
+			requireMissingTargetRejected(
+				requireResult(
+					await callThought(client, 'sqlite-missing', {
+						...input,
+						session_id: 'packed-sqlite-missing-target',
+					}),
+					'sqlite-missing'
+				)
+			);
+		}
+		running.child.stdin.end();
+		const status = await deadline(running.closed, OPERATION_TIMEOUT_MS, 'SQLite stdio close');
+		if (client.failure) throw client.failure;
+		if (status.code !== 0 || status.signal !== null || client.pending.size !== 0) {
+			throw runtimeError('PACKED_SQLITE_RESTORE_FAILED', 'SQLite process did not close cleanly');
+		}
+	} finally {
+		client.close();
+		await terminate(running);
+	}
+}
+
+async function verifySqliteRoundTrip(artifact) {
+	const root = await mkdtemp(join(tmpdir(), 'tracelattice-packed-sqlite-'));
+	let primary = null;
+	try {
+		const dbPath = join(root, 'history.sqlite');
+		const configPath = join(root, 'config.json');
+		await writeFile(
+			configPath,
+			JSON.stringify({
+				persistence: { enabled: true, backend: 'sqlite', options: { dbPath } },
+			})
+		);
+		await exerciseSqliteProcess(artifact, configPath, false);
+		await access(dbPath);
+		await exerciseSqliteProcess(artifact, configPath, true);
+	} catch (error) {
+		primary = runtimeError(
+			'PACKED_SQLITE_RESTORE_FAILED',
+			`SQLite round trip failed: ${String(error)}`
+		);
+	}
+	const cleanupErrors = await removeTemporaryRoots([root]);
+	if (primary) throw appendCleanupDiagnostics(primary, cleanupErrors);
+	if (cleanupErrors.length > 0) {
+		throw appendCleanupDiagnostics(
+			runtimeError('PACKED_SQLITE_CLEANUP_FAILED', 'SQLite temporary root removal failed'),
+			cleanupErrors
+		);
+	}
+	return { write: true, restoredVerification: true, missingTargetRejected: true };
+}
+
 export async function verifyPackedRuntime(artifact) {
 	const version = await verifyVersion(artifact);
 	const exercised = await exerciseProtocol(artifact);
-	return { version, ...exercised };
+	const sqliteCheck = await verifySqliteRoundTrip(artifact);
+	return { version, ...exercised, sqliteCheck };
 }
