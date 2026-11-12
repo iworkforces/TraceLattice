@@ -2,8 +2,7 @@ import type { IEdgeStore, IGraphViewStore } from '../../contracts/interfaces.js'
 import type { ActiveEvidenceProjection } from '../../contracts/strategy.js';
 import type { SessionId, ThoughtId } from '../../contracts/ids.js';
 import {
-	collectActiveMainThoughts,
-	collectActiveThoughts,
+	collectActiveEvidence,
 	type ActiveThoughtBranches,
 } from '../evaluator/VerificationLinks.js';
 import { GraphView } from '../graph/GraphView.js';
@@ -59,8 +58,9 @@ class ProjectedGraphStore implements IGraphViewStore {
 export function buildActiveEvidenceProjection(
 	input: ActiveEvidenceProjectionInput
 ): ActiveEvidenceProjection {
-	const mainHistory = freezeThoughts(collectActiveMainThoughts(input.history, input.branches));
-	const activeThoughts = freezeThoughts(collectActiveThoughts(input.history, input.branches));
+	const { thoughts, mainCount } = collectActiveEvidence(input.history, input.branches);
+	const activeThoughts = freezeThoughts(thoughts);
+	const mainHistory = Object.freeze(activeThoughts.slice(0, mainCount));
 	const graph = input.edgeStore
 		? projectGraph(input.sessionId, activeThoughts, input.edgeStore)
 		: undefined;
