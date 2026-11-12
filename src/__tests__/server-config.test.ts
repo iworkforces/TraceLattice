@@ -222,6 +222,64 @@ describe('ServerConfig', () => {
 		});
 	});
 
+	describe('persistenceMaxPendingThoughtsPerSession validation', () => {
+		it('should default to 10000 when undefined', () => {
+			expect(new ServerConfig().persistenceMaxPendingThoughtsPerSession).toBe(10000);
+		});
+
+		it('should accept values at both bounds', () => {
+			expect(
+				new ServerConfig({ persistenceMaxPendingThoughtsPerSession: 1 })
+					.persistenceMaxPendingThoughtsPerSession
+			).toBe(1);
+			expect(
+				new ServerConfig({ persistenceMaxPendingThoughtsPerSession: 10000 })
+					.persistenceMaxPendingThoughtsPerSession
+			).toBe(10000);
+		});
+
+		it('should throw for values below 1', () => {
+			expect(() => new ServerConfig({ persistenceMaxPendingThoughtsPerSession: 0 })).toThrow(
+				ConfigurationError
+			);
+			expect(() => new ServerConfig({ persistenceMaxPendingThoughtsPerSession: 0 })).toThrow(
+				'persistenceMaxPendingThoughtsPerSession must be at least 1, got 0'
+			);
+			expect(() => new ServerConfig({ persistenceMaxPendingThoughtsPerSession: -5 })).toThrow(
+				'must be at least 1'
+			);
+		});
+
+		it('should throw for values exceeding 10000', () => {
+			expect(() => new ServerConfig({ persistenceMaxPendingThoughtsPerSession: 10001 })).toThrow(
+				ConfigurationError
+			);
+			expect(() => new ServerConfig({ persistenceMaxPendingThoughtsPerSession: 10001 })).toThrow(
+				'persistenceMaxPendingThoughtsPerSession must not exceed 10000, got 10001'
+			);
+		});
+
+		it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+			'should throw for non-finite value %s',
+			(value) => {
+				expect(() => new ServerConfig({ persistenceMaxPendingThoughtsPerSession: value })).toThrow(
+					'persistenceMaxPendingThoughtsPerSession must be a finite number'
+				);
+			}
+		);
+
+		it('should throw for a non-number value', () => {
+			const options = JSON.parse('{"persistenceMaxPendingThoughtsPerSession":"25"}');
+			expect(() => new ServerConfig(options)).toThrow(ConfigurationError);
+		});
+
+		it('should be reported by toJSON', () => {
+			const config = new ServerConfig({ persistenceMaxPendingThoughtsPerSession: 25 });
+			expect(config.toJSON().persistenceMaxPendingThoughtsPerSession).toBe(25);
+			expect(new ServerConfig().toJSON().persistenceMaxPendingThoughtsPerSession).toBe(10000);
+		});
+	});
+
 	describe('skillDirs', () => {
 		it('should use provided skillDirs', () => {
 			const config = new ServerConfig({ skillDirs: ['/a', '/b'] });

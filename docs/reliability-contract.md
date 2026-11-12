@@ -14,11 +14,14 @@ The persistence surface is:
 - `saveEdges` and `loadEdges`
 - `saveSummaries` and `loadSummaries`
 - `listSessions`, `clearSession`, and `clearAll`
+- `loadAllSessionsForRestore`
 - `healthy` and `close`
 
 `clearSession` removes thoughts, branches, edges, and summaries for exactly one session. `clearAll` removes all four collections. Edges and summaries are replacement snapshots per session.
 
 `saveBacktrackForSession` is required for every `PersistenceBackend`, including custom backends. It must atomically mark every retained stable-ID copy of `targetThoughtId` as retracted, append the supplied backtrack thought, and apply configured retention. The correction, append, and retention either all publish or none do. The core does not probe for this capability or fall back to ordinary thought writes; the ordinary persistence methods otherwise keep their existing meanings.
+
+`loadAllSessionsForRestore` is required for every `PersistenceBackend`, including custom backends. Startup restore calls `healthy()` and then only this method, so it cannot see state torn across several reads or a concurrent writer. The result lists each session once in ascending id order. It holds the session's history, its branches in ascending branch-id order, its edges, and its summaries. The session set equals `listSessions()`, including sessions that exist only through edges or summaries, and branches are empty when branch persistence is disabled. SQLite serves the call inside one read transaction, File from one parse of the snapshot under its writer ownership, and Memory from one pass over its maps. A read that is corrupt or incompatible fails closed with the existing persistence errors, and duplicate session or branch records are rejected as incompatible storage. The core does not probe for this method or fall back to the per-item loads, which stay available to other callers.
 
 `listSessions`, `clearAll`, `resetAll()`, and complete shutdown are explicit all-session administration. They do not define a default thought session and are never selected by omitting `session_id`.
 
@@ -66,7 +69,7 @@ Thought sessions have a 30-minute idle TTL with cleanup every five minutes, and 
 
 Expiration markers contain only the session identity and former owner, never histories. They remain for this server/process instance until a committed scoped or global reset, or terminal cleanup. They have no TTL or LRU forgetting. Marker memory is `O(distinct evicted names not reset)` and isn't bounded by the live-session quotas (100 total, 50 per owner by default).
 
-Restart loses expiration markers. With persistence disabled, state cannot resume across restart. Startup File/SQLite restore restores supported retained durable records subject to provenance restrictions, not all transient auxiliary state; ordinary access to an expired session doesn't trigger runtime restore.
+Restart loses expiration markers. With persistence disabled, state cannot resume across restart. Startup File/SQLite restore restores supported retained durable records from one backend read, subject to provenance restrictions, not all transient auxiliary state; a failure at any step leaves live state untouched; ordinary access to an expired session doesn't trigger runtime restore.
 
 Branches and revisions may legally reuse thought numbers, but numeric `verification_target` must uniquely identify a retained thought identity in the same session. Clients should avoid reusing numbers when they intend unique numeric verification references. Targets may have any thought type. Recording a verification outcome requires an explicit result of `0` or `1` and a non-retracted target with confidence.
 
@@ -83,7 +86,7 @@ New work is rejected while the relevant scope is resetting, evicting, shutting d
 
 ## Ownership
 
-`createServer({ persistenceBackend })` uses the caller's backend instead of the configured persistence factory. The package root exports the types `PersistenceBackend`, `ThoughtData`, `Edge`, `Summary`, `SessionId`, `ThoughtId`, and `BranchId` for implementing it. Startup restore reads this backend unless `loadFromPersistence: false` is set. The injected backend is caller-owned: the server never calls its `close()`, even during failed startup. Buffered writes are drained before `stop()` or `dispose()` resolves successfully; the caller closes the backend afterward. Factory-created backends are server-owned and closed exactly once.
+`createServer({ persistenceBackend })` uses the caller's backend instead of the configured persistence factory. The package root exports the types `PersistenceBackend`, `ThoughtData`, `Edge`, `Summary`, `SessionId`, `ThoughtId`, and `BranchId`, plus the restore-read types `PersistenceRestoreRead`, `PersistedSessionRecord`, and `PersistedBranchRecord`, for implementing it. Startup restore reads this backend unless `loadFromPersistence: false` is set. The injected backend is caller-owned: the server never calls its `close()`, even during failed startup. Buffered writes are drained before `stop()` or `dispose()` resolves successfully; the caller closes the backend afterward. Factory-created backends are server-owned and closed exactly once.
 
 Request ownership is independent from thought `session_id` and transport connection slots. Owner-aware access cannot read or mutate a session owned by another request owner. Restored sessions deny owner-aware access until an allowed ownerless context manages them. Stdio operation, which has no request owner, remains unrestricted.
 
@@ -106,3 +109,11 @@ Release verification must prove the contract at three surfaces:
 3. Packed checks inspect the installed tarball, compile package-root declarations requiring `processThought` input sessions and `getBranches(sessionId)`, and execute the library and CLI. A named CLI call must succeed and echo its session; omitted and retired sessions must fail.
 
 The release pipeline fails closed when any check is missing or detects a removed surface.
+
+## Persistence Backlog Limit
+
+`persistenceMaxPendingThoughtsPerSession` (file-only, default and maximum 10000) bounds the thought and backtrack writes a session may hold unacknowledged. Writes that failed terminally stay counted until a drain acknowledges them; coalesced branch, edge and summary work is not counted.
+
+At the limit the pre-mutation thought-identity check rejects with `PERSISTENCE_BACKLOG_FULL`, after authorization and after the duplicate-id check and for thoughts with or without an id. The check runs before branch registration, history, edges, verification targets, outcomes, suspensions and the write queue change, so the same thought id is admitted on a later retry and a rejected `tool_observation` keeps its continuation token. Other sessions keep their own count. A `reset_state: true` replacement is admitted when its durable delete succeeds, because the reset discards the session's queue first.
+
+Every rejection starts or joins an explicit drain without awaiting it. Timer and size-triggered drains still skip terminal failures, so the explicit drain is what retries them: once the backend recovers, a repeated call succeeds without a restart. Buffering itself never rejects on backlog.

@@ -9,7 +9,8 @@ import {
 } from './helpers/factories.js';
 import { MemoryPersistence } from '../persistence/MemoryPersistence.js';
 
-import { asBranchId } from '../contracts/ids.js';
+import { asBranchId, type BranchId, type SessionId } from '../contracts/ids.js';
+import type { ThoughtData } from '../core/thought.js';
 
 let persistentThoughtSequence = 0;
 function createTestThought(overrides: Parameters<typeof createBaseTestThought>[0] = {}) {
@@ -725,6 +726,131 @@ describe('MemoryPersistence', () => {
 			);
 
 			expect(await backend.loadHistoryForSession(TEST_SESSION_ID)).toHaveLength(50);
+		});
+	});
+
+	describe('loadAllSessionsForRestore', () => {
+		const sessionA = createTestSessionId('restore-A');
+		const sessionB = createTestSessionId('restore-B');
+		const sessionC = createTestSessionId('restore-C');
+		const sessionD = createTestSessionId('restore-D');
+
+		function thoughtIn(sessionId: SessionId, id: string, branchId?: BranchId): ThoughtData {
+			return createBaseTestThought({
+				id,
+				session_id: sessionId,
+				thought: id,
+				...(branchId === undefined ? {} : { branch_id: branchId }),
+			});
+		}
+
+		function edgeIn(sessionId: SessionId, id: string): Edge {
+			return {
+				id: createTestEdgeId(id),
+				from: createTestThoughtId(`${id}-from`),
+				to: createTestThoughtId(`${id}-to`),
+				kind: 'sequence',
+				sessionId,
+				createdAt: 1,
+			};
+		}
+
+		function summaryIn(sessionId: SessionId, id: string): Summary {
+			return {
+				id,
+				sessionId,
+				rootThoughtId: createTestThoughtId(`${id}-root`),
+				coveredIds: [createTestThoughtId(`${id}-root`)],
+				coveredRange: [1, 1],
+				topics: ['restore'],
+				aggregateConfidence: 0.5,
+				createdAt: 1,
+			};
+		}
+
+		async function seedAllNamespaces(target: MemoryPersistence): Promise<void> {
+			const branch = asBranchId('only');
+			await target.saveThoughtForSession(sessionB, thoughtIn(sessionB, 'history-B'));
+			await target.saveBranchForSession(sessionD, branch, [
+				thoughtIn(sessionD, 'branch-D', branch),
+			]);
+			await target.saveEdges(sessionA, [edgeIn(sessionA, 'edge-A')]);
+			await target.saveSummaries(sessionC, [summaryIn(sessionC, 'summary-C')]);
+		}
+
+		it('returns an empty read for an empty store', async () => {
+			expect(await backend.loadAllSessionsForRestore()).toEqual({ sessions: [] });
+		});
+
+		it('returns the union of all four namespaces as unique ascending sessions', async () => {
+			await seedAllNamespaces(backend);
+
+			const read = await backend.loadAllSessionsForRestore();
+
+			expect(read.sessions.map((record) => record.sessionId)).toEqual([
+				sessionA,
+				sessionB,
+				sessionC,
+				sessionD,
+			]);
+			expect(read.sessions.map((record) => record.sessionId)).toEqual(await backend.listSessions());
+			expect(read.sessions.map((record) => record.edges.length)).toEqual([1, 0, 0, 0]);
+			expect(read.sessions.map((record) => record.history.length)).toEqual([0, 1, 0, 0]);
+			expect(read.sessions.map((record) => record.summaries.length)).toEqual([0, 0, 1, 0]);
+			expect(read.sessions.map((record) => record.branches.length)).toEqual([0, 0, 0, 1]);
+		});
+
+		it('equals the per-item reads for every listed session', async () => {
+			await seedAllNamespaces(backend);
+
+			const read = await backend.loadAllSessionsForRestore();
+
+			for (const record of read.sessions) {
+				const branchIds = await backend.listBranchesForSession(record.sessionId);
+				expect(record).toEqual({
+					sessionId: record.sessionId,
+					history: await backend.loadHistoryForSession(record.sessionId),
+					branches: await Promise.all(
+						branchIds.map(async (branchId) => ({
+							branchId,
+							thoughts: await backend.loadBranchForSession(record.sessionId, branchId),
+						}))
+					),
+					edges: await backend.loadEdges(record.sessionId),
+					summaries: await backend.loadSummaries(record.sessionId),
+				});
+			}
+		});
+
+		it('delivers branches ascending by branch id regardless of save order', async () => {
+			for (const name of ['z', 'a', 'm']) {
+				const branchId = asBranchId(name);
+				await backend.saveBranchForSession(sessionA, branchId, [
+					thoughtIn(sessionA, `branch-${name}`, branchId),
+				]);
+			}
+
+			const read = await backend.loadAllSessionsForRestore();
+
+			expect(read.sessions[0]?.branches.map((branch) => branch.branchId)).toEqual(['a', 'm', 'z']);
+		});
+
+		it('returns no branches but the same session set when branch persistence is disabled', async () => {
+			const disabled = new MemoryPersistence({ persistBranches: false });
+			const branchId = asBranchId('ignored');
+			await disabled.saveThoughtForSession(sessionB, thoughtIn(sessionB, 'history-B'));
+			await disabled.saveBranchForSession(sessionA, branchId, [
+				thoughtIn(sessionA, 'branch-A', branchId),
+			]);
+			await disabled.saveEdges(sessionC, [edgeIn(sessionC, 'edge-C')]);
+
+			const read = await disabled.loadAllSessionsForRestore();
+
+			expect(read.sessions.map((record) => record.sessionId)).toEqual([sessionB, sessionC]);
+			expect(read.sessions.map((record) => record.branches)).toEqual([[], []]);
+			expect(read.sessions.map((record) => record.sessionId)).toEqual(
+				await disabled.listSessions()
+			);
 		});
 	});
 });

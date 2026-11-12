@@ -36,7 +36,12 @@ import { SessionLifecycleCoordinator } from './core/SessionLifecycleCoordinator.
 import { Container } from './di/Container.js';
 import { StructuredLogger } from './logger/StructuredLogger.js';
 import { Metrics } from './metrics/metrics.impl.js';
-import type { PersistenceBackend } from './contracts/PersistenceBackend.js';
+import type {
+	PersistedBranchRecord,
+	PersistedSessionRecord,
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from './contracts/PersistenceBackend.js';
 import { createPersistenceBackend } from './persistence/PersistenceFactory.js';
 import { SkillRegistry } from './registry/SkillRegistry.js';
 import { ToolRegistry } from './registry/ToolRegistry.js';
@@ -55,6 +60,9 @@ export type {
 	ITransport,
 	TransportKind,
 	PersistenceBackend,
+	PersistedBranchRecord,
+	PersistedSessionRecord,
+	PersistenceRestoreRead,
 	ThoughtData,
 	Edge,
 	Summary,
@@ -534,6 +542,7 @@ export class ToolAwareSequentialThinkingServer
 				persistenceBufferSize: cfg.persistenceBufferSize,
 				persistenceFlushInterval: cfg.persistenceFlushInterval,
 				persistenceMaxRetries: cfg.persistenceMaxRetries,
+				persistenceMaxPendingThoughtsPerSession: cfg.persistenceMaxPendingThoughtsPerSession,
 				persistenceHistorySize:
 					cfg.persistence.options?.maxHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
 				persistBranches: cfg.persistence.options?.persistBranches ?? true,

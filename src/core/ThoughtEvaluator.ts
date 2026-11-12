@@ -16,6 +16,7 @@ import { Aggregator } from './evaluator/Aggregator.js';
 import { PatternDetector } from './evaluator/PatternDetector.js';
 import { SignalComputer } from './evaluator/SignalComputer.js';
 import { resolveVerificationLinks } from './evaluator/VerificationLinks.js';
+import type { VerificationLinks } from './evaluator/VerificationLinks.js';
 import { GraphSignalComputer } from './evaluator/GraphSignalComputer.js';
 import type { ActiveGraphContext } from './evaluator/GraphSignalComputer.js';
 
@@ -73,9 +74,17 @@ export class ThoughtEvaluator {
 	): ConfidenceSignals {
 		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
 		const { branches: b } = filterRetracted(history, branches);
+		return this._computeConfidenceSignals(links, b, context);
+	}
+
+	private _computeConfidenceSignals(
+		links: VerificationLinks,
+		branches: Record<string, ThoughtData[]>,
+		context: ConfidenceSignalContext
+	): ConfidenceSignals {
 		const baseSignals = this._signalComputer.computeConfidenceSignals(
 			[...links.thoughts],
-			b,
+			branches,
 			links
 		);
 		const graphSignals =
@@ -122,6 +131,33 @@ export class ThoughtEvaluator {
 		const { history: h, branches: b } = filterRetracted(history, branches);
 		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
 		return this._patternDetector.computePatternSignals(h, b, links, context.activeGraph);
+	}
+
+	public computeAdmissionSignals(
+		history: ThoughtData[],
+		branches: Record<string, ThoughtData[]>,
+		context: ConfidenceSignalContext
+	): {
+		readonly confidenceSignals: ConfidenceSignals;
+		readonly reasoningStats: ReasoningStats;
+		readonly patternSignals: PatternSignal[];
+	} {
+		const links = resolveVerificationLinks(history, branches, context.verificationTargets);
+		const active = filterRetracted(history, branches);
+		return {
+			confidenceSignals: this._computeConfidenceSignals(links, active.branches, context),
+			reasoningStats: this._aggregator.computeReasoningStats(
+				[...links.thoughts],
+				active.branches,
+				links
+			),
+			patternSignals: this._patternDetector.computePatternSignals(
+				active.history,
+				active.branches,
+				links,
+				context.activeGraph
+			),
+		};
 	}
 }
 

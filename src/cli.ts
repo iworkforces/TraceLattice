@@ -17,6 +17,7 @@ import type { ToolAwareSequentialThinkingServer } from './lib.js';
 import { initializeServer } from './lib.js';
 import { StructuredLogger } from './logger/StructuredLogger.js';
 import { getErrorMessage } from './errors.js';
+import { HealthChecker } from './health/HealthChecker.js';
 import { SEQUENTIAL_THINKING_TOOL, SequentialThinkingSchema } from './schema.js';
 
 // Get version from package.json
@@ -25,6 +26,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const package_json = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8'));
 const { version } = package_json;
+// Orchestrators poll /ready often; one settled probe serves every poll inside this window.
+const READINESS_PROBE_FRESHNESS_MS = 1000;
 // Handle CLI arguments
 const args = process.argv.slice(2);
 const shouldShowVersion = args.includes('--version') || args.includes('-v');
@@ -85,14 +88,20 @@ async function startStreamableHttpTransport(
 	const { StreamableHttpTransport } = await import('./transport/StreamableHttpTransport.js');
 	const { lifecycle, config } = options;
 	const { port, host } = config;
-	const transportMetrics = thinkingServer.getContainer().resolve('Metrics');
+	const container = thinkingServer.getContainer();
+	const healthChecker = new HealthChecker({
+		persistence: container.resolve('Persistence'),
+		persistenceBacklog: container.resolve('HistoryManager'),
+		probeFreshnessMs: READINESS_PROBE_FRESHNESS_MS,
+	});
 	const streamableTransport = new StreamableHttpTransport({
 		port,
 		host,
 		corsOrigin: config.corsOrigin,
 		enableCors: config.enableCors,
 		allowedHosts: config.allowedHosts,
-		metrics: transportMetrics,
+		metrics: container.resolve('Metrics'),
+		healthChecker,
 		stateful: config.stateful,
 		...config.retention,
 	});

@@ -9,7 +9,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
 import type { BranchId, SessionId, ThoughtId } from '../contracts/ids.js';
 import type { PersistenceWork, PersistenceWorkToken } from '../contracts/persistence-work.js';
+import type { PersistenceBacklogView } from '../contracts/persistence-backlog.js';
 import {
+	PersistenceBacklogFullError,
 	PersistenceDrainError,
 	PersistenceSessionAdmissionClosedError,
 	PersistenceSessionBarrierReentrancyError,
@@ -45,7 +47,15 @@ export interface PersistenceBufferConfig {
 	readonly delay?: PersistenceDelay;
 	readonly durableHistorySize?: number;
 	readonly persistBranches?: boolean;
+	/**
+	 * Per-session limit on unacknowledged thought and backtrack writes, terminal failures
+	 * included. Enforced by {@link PersistenceBuffer.assertThoughtBacklogAvailable}.
+	 * @default 10000
+	 */
+	readonly maxPendingThoughtsPerSession?: number;
 }
+
+const DEFAULT_MAX_PENDING_THOUGHTS_PER_SESSION = 10_000;
 
 type ActiveDrain = {
 	readonly promise: Promise<void>;
@@ -83,6 +93,7 @@ type SessionQuiescence =
 export class PersistenceBuffer {
 	private readonly _bufferSize: number;
 	private readonly _flushInterval: number;
+	private readonly _maxPendingThoughtsPerSession: number;
 	private readonly _queue: PersistenceWorkQueue;
 	private readonly _writer: PersistenceWriter;
 	private _eventEmitter: PersistenceEventEmitter | null;
@@ -108,6 +119,8 @@ export class PersistenceBuffer {
 		this._queue = new PersistenceWorkQueue(config.durableHistorySize, config.persistBranches);
 		this._bufferSize = config.bufferSize;
 		this._flushInterval = config.flushInterval;
+		this._maxPendingThoughtsPerSession =
+			config.maxPendingThoughtsPerSession ?? DEFAULT_MAX_PENDING_THOUGHTS_PER_SESSION;
 		this._eventEmitter = config.eventEmitter ?? null;
 		this._logger = config.logger ?? new NullLogger();
 		this._writer = new PersistenceWriter({
@@ -152,18 +165,14 @@ export class PersistenceBuffer {
 	/**
 	 * Accepts a thought with authoritative session attribution.
 	 *
+	 * Never rejects on backlog: callers enforce the per-session limit before they mutate state
+	 * with {@link assertThoughtBacklogAvailable}.
+	 *
 	 * @param sessionId - Session that owns the accepted thought.
 	 * @param thought - Thought to persist.
 	 */
 	public bufferThought(sessionId: SessionId, thought: ThoughtData): void {
 		this._assertSessionAdmissionOpen(sessionId);
-		if (this._queue.pendingThoughtCount >= this._bufferSize && this.isFlushing) {
-			this._logger.info('Write buffer full and flush in progress, applying backpressure', {
-				bufferSize: this._queue.pendingThoughtCount,
-				maxSize: this._bufferSize,
-			});
-		}
-
 		this._queue.enqueueThought(sessionId, thought);
 		if (this._queue.pendingThoughtCount >= this._bufferSize) this._triggerBackgroundDrain();
 	}
@@ -228,6 +237,29 @@ export class PersistenceBuffer {
 	/** Rejects synchronously when lifecycle coordination has closed persistence admission. */
 	public assertSessionAdmissionOpen(sessionId: SessionId): void {
 		this._assertSessionAdmissionOpen(sessionId);
+	}
+
+	/**
+	 * Rejects synchronously when the session already holds its limit of unacknowledged thought
+	 * and backtrack writes, terminal failures included.
+	 *
+	 * At the limit this starts or joins an explicit drain without awaiting it, so retained
+	 * failures are retried and a later call succeeds once the backend recovers. Call it before
+	 * any session state changes: {@link bufferThought} and {@link bufferBacktrack} never reject.
+	 *
+	 * @param sessionId - Session whose thought backlog is checked.
+	 * @throws {@link PersistenceBacklogFullError} when the session is at its limit.
+	 */
+	public assertThoughtBacklogAvailable(sessionId: SessionId): void {
+		const pending = this._queue.pendingThoughtCountForSession(sessionId);
+		if (pending < this._maxPendingThoughtsPerSession) return;
+		void this._joinOrStart('explicit').promise.catch(() => undefined);
+		this._logger.warn('Persistence backlog full, rejecting thought', {
+			sessionId,
+			pending,
+			limit: this._maxPendingThoughtsPerSession,
+		});
+		throw new PersistenceBacklogFullError(sessionId, pending, this._maxPendingThoughtsPerSession);
 	}
 
 	/** Starts the periodic background-drain timer without keeping the process alive. */
@@ -484,6 +516,20 @@ export class PersistenceBuffer {
 			() => undefined
 		);
 		return result;
+	}
+
+	/** @returns A frozen point-in-time view of quarantine and unflushed work for readiness probes. */
+	public getBacklogView(): PersistenceBacklogView {
+		const quarantinedSessions = new Set<SessionId>([
+			...this._quarantinedSessions,
+			...this._evictionQuarantinedSessions,
+		]);
+		return Object.freeze({
+			globalQuarantined: this._globalQuarantined,
+			quarantinedSessionCount: quarantinedSessions.size,
+			retainedFailureCount: this._queue.currentFailures().length,
+			pendingThoughtCount: this._queue.pendingThoughtCount,
+		});
 	}
 
 	private _joinOrStart(mode: PersistenceSelectionMode): ActiveDrain {

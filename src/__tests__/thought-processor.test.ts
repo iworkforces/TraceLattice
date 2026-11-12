@@ -1,4 +1,4 @@
-import { asBranchId, type BranchId, type SessionId } from '../contracts/ids.js';
+import { asBranchId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
 /**
  * Comprehensive tests for ThoughtProcessor.
  *
@@ -6,7 +6,7 @@ import { asBranchId, type BranchId, type SessionId } from '../contracts/ids.js';
  * response formatting, and edge cases for the ThoughtProcessor class.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ThoughtProcessor } from '../core/ThoughtProcessor.js';
 import { ThoughtFormatter } from '../core/ThoughtFormatter.js';
 import { SessionLock } from '../core/SessionLock.js';
@@ -18,8 +18,21 @@ import type { ThoughtData } from '../core/thought.js';
 import { asSessionId } from '../contracts/ids.js';
 import type { HistorySessionSnapshot, IHistoryManager } from '../core/IHistoryManager.js';
 import type { ThoughtEvaluator } from '../core/ThoughtEvaluator.js';
-import { createTestThought, createHypothesisThought } from './helpers/factories.js';
+import {
+	createTestThought,
+	createHypothesisThought,
+	createMockToolRegistry,
+} from './helpers/factories.js';
 import { createDisabledThoughtEvaluator as createEvaluator } from './helpers/evaluator.js';
+import { HistoryManager } from '../core/HistoryManager.js';
+import { SessionLifecycleCoordinator } from '../core/SessionLifecycleCoordinator.js';
+import { EdgeStore } from '../core/graph/EdgeStore.js';
+import { OutcomeRecorder } from '../core/reasoning/OutcomeRecorder.js';
+import { InMemorySuspensionStore } from '../core/tools/InMemorySuspensionStore.js';
+import { DEFAULT_FLAGS } from '../contracts/features.js';
+import { PersistenceDrainError } from '../core/PersistenceBufferErrors.js';
+import { StallingPersistence } from './helpers/StallingPersistence.js';
+import { useFakeTimers, useRealTimers } from './helpers/timers.js';
 
 describe('ThoughtProcessor', () => {
 	let processor: ThoughtProcessor;
@@ -272,6 +285,10 @@ describe('ThoughtProcessor', () => {
 		it('should return error response when processing fails', async () => {
 			// Create a HistoryManager that throws on addThought
 			class ThrowingHistoryManager implements IHistoryManager {
+				assertSessionAccessible(_sessionId: string): void {}
+				getVerificationTargets(_sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+					return new Map();
+				}
 				assertSessionResetAuthorized(_sessionId: string): void {}
 				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
@@ -1877,6 +1894,10 @@ describe('ThoughtProcessor — uncovered branches', () => {
 		it('should handle non-Error thrown in process catch branch', async () => {
 			// Create a HistoryManager that throws a non-Error value
 			class StringThrowingHistoryManager implements IHistoryManager {
+				assertSessionAccessible(_sessionId: string): void {}
+				getVerificationTargets(_sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+					return new Map();
+				}
 				assertSessionResetAuthorized(_sessionId: string): void {}
 				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
@@ -1990,5 +2011,330 @@ describe('ThoughtProcessor — uncovered branches', () => {
 			expect(parsed.warnings[0]).toContain('merge_from_thoughts');
 			expect(result.isError).toBeUndefined();
 		});
+	});
+});
+
+describe('ThoughtProcessor persistence backlog limit', () => {
+	const BACKLOG_SESSION = asSessionId('backlog-session');
+	const OTHER_SESSION = asSessionId('backlog-other');
+
+	interface BacklogHarness {
+		readonly history: HistoryManager;
+		readonly processor: ThoughtProcessor;
+		readonly persistence: StallingPersistence;
+		readonly edgeStore: EdgeStore;
+		readonly suspensionStore: InMemorySuspensionStore;
+		readonly outcomeRecorder: OutcomeRecorder;
+	}
+
+	const harnesses: BacklogHarness[] = [];
+
+	afterEach(async () => {
+		for (const harness of harnesses.splice(0)) {
+			for (const sessionId of [BACKLOG_SESSION, OTHER_SESSION]) {
+				await harness.history.drainSession(sessionId).then(
+					() => undefined,
+					(error: unknown) => {
+						expect(error).toBeInstanceOf(PersistenceDrainError);
+					}
+				);
+			}
+			harness.persistence.down = false;
+			harness.persistence.failClear = false;
+			await harness.history.drainSession(BACKLOG_SESSION);
+			await harness.history.drainSession(OTHER_SESSION);
+			await harness.history.shutdown();
+		}
+		useRealTimers();
+	});
+
+	function createBacklogHarness(limit: number, flushInterval = 60_000): BacklogHarness {
+		const persistence = new StallingPersistence();
+		persistence.down = true;
+		const edgeStore = new EdgeStore();
+		const suspensionStore = new InMemorySuspensionStore();
+		const outcomeRecorder = new OutcomeRecorder({ enabled: true });
+		const lifecycle = new SessionLifecycleCoordinator();
+		const history = new HistoryManager({
+			persistence,
+			edgeStore,
+			dagEdges: true,
+			persistenceBufferSize: 1000,
+			persistenceFlushInterval: flushInterval,
+			persistenceMaxRetries: 0,
+			persistenceMaxPendingThoughtsPerSession: limit,
+			lifecycleCoordinator: lifecycle,
+		});
+		const processor = new ThoughtProcessor(
+			history,
+			new ThoughtFormatter(),
+			createEvaluator(),
+			undefined,
+			new SequentialStrategy(),
+			undefined,
+			suspensionStore,
+			createMockToolRegistry(['search']),
+			DEFAULT_FLAGS,
+			new SessionLock(),
+			outcomeRecorder,
+			lifecycle
+		);
+		const harness = {
+			history,
+			processor,
+			persistence,
+			edgeStore,
+			suspensionStore,
+			outcomeRecorder,
+		};
+		harnesses.push(harness);
+		return harness;
+	}
+
+	function backlogInput(thoughtNumber: number, fields: Record<string, unknown> = {}): ThoughtData {
+		return {
+			thought: `backlog thought ${thoughtNumber}`,
+			thought_number: thoughtNumber,
+			total_thoughts: 10,
+			next_thought_needed: true,
+			session_id: BACKLOG_SESSION,
+			id: `bl-${thoughtNumber}`,
+			...fields,
+		} as unknown as ThoughtData;
+	}
+
+	function verificationInput(): ThoughtData {
+		return backlogInput(3, {
+			thought_type: 'verification',
+			verification_target: 1,
+			verification_result: 1,
+			confidence: 0.9,
+			branch_id: 'bl-side',
+			branch_from_thought: 1,
+			register_branch_id: 'bl-registered',
+		});
+	}
+
+	async function seedFullSession(limit = 2): Promise<BacklogHarness> {
+		const harness = createBacklogHarness(limit);
+		const first = await harness.processor.process(
+			backlogInput(1, { thought_type: 'hypothesis', confidence: 0.8 })
+		);
+		const second = await harness.processor.process(backlogInput(2));
+		expect(first.isError).toBeUndefined();
+		expect(second.isError).toBeUndefined();
+		return harness;
+	}
+
+	function surface(harness: BacklogHarness, sessionId: SessionId = BACKLOG_SESSION): unknown {
+		const snapshot = harness.history.inspectSession(sessionId);
+		return structuredClone({
+			history: snapshot.history,
+			branches: snapshot.branches,
+			branchIds: snapshot.branchIds,
+			verificationTargets: snapshot.verificationTargets,
+			edges: harness.edgeStore.edgesForSession(sessionId),
+			outcomes: harness.outcomeRecorder.getOutcomes(sessionId),
+			suspensions: harness.suspensionStore.size(sessionId),
+			queued: harness.history.getWriteBufferLength(),
+		});
+	}
+
+	function payloadOf(result: { content: Array<{ text: string }> }): Record<string, unknown> {
+		return JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+	}
+
+	async function recoverAndDrain(harness: BacklogHarness): Promise<void> {
+		await expect(harness.history.drainSession(BACKLOG_SESSION)).rejects.toBeInstanceOf(
+			PersistenceDrainError
+		);
+		harness.persistence.down = false;
+	}
+
+	it('reports PERSISTENCE_BACKLOG_FULL in the tool error payload and mutates nothing', async () => {
+		// Given
+		const control = await seedFullSession(10);
+		const admitted = await control.processor.process(verificationInput());
+		const harness = await seedFullSession(2);
+		const before = surface(harness);
+
+		// When
+		const result = await harness.processor.process(verificationInput());
+
+		// Then
+		expect(admitted.isError).toBeUndefined();
+		expect(surface(control)).not.toEqual(before);
+		expect(control.outcomeRecorder.getOutcomes(BACKLOG_SESSION)).toHaveLength(1);
+		expect(control.history.branchExists(BACKLOG_SESSION, asBranchId('bl-registered'))).toBe(true);
+		expect(result.isError).toBe(true);
+		expect(payloadOf(result)).toMatchObject({
+			code: 'PERSISTENCE_BACKLOG_FULL',
+			status: 'failed',
+		});
+		expect(surface(harness)).toEqual(before);
+		expect(harness.history.branchExists(BACKLOG_SESSION, asBranchId('bl-registered'))).toBe(false);
+	});
+
+	it('admits the same thought id on a retry once the backend recovers, without a restart', async () => {
+		// Given
+		const harness = await seedFullSession(2);
+		const rejected = await harness.processor.process(verificationInput());
+		await recoverAndDrain(harness);
+
+		// When
+		const attemptsBeforeRetry = harness.persistence.thoughtAttempts;
+		const whileRetained = await harness.processor.process(verificationInput());
+		const attemptsStartedByRejection = harness.persistence.thoughtAttempts - attemptsBeforeRetry;
+		await harness.history.drainSession(BACKLOG_SESSION);
+		const retried = await harness.processor.process(verificationInput());
+		await harness.history.drainSession(BACKLOG_SESSION);
+
+		// Then
+		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(payloadOf(whileRetained).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(attemptsStartedByRejection).toBe(2);
+		expect(retried.isError).toBeUndefined();
+		expect(harness.history.getHistoryLength(BACKLOG_SESSION)).toBe(3);
+		expect(harness.outcomeRecorder.getOutcomes(BACKLOG_SESSION)).toHaveLength(1);
+		expect(harness.history.branchExists(BACKLOG_SESSION, asBranchId('bl-registered'))).toBe(true);
+		expect(harness.history.getWriteBufferLength()).toBe(0);
+	});
+
+	it('creates no suspension record for a rejected tool_call', async () => {
+		// Given
+		const harness = await seedFullSession(2);
+		const before = surface(harness);
+
+		// When
+		const result = await harness.processor.process(
+			backlogInput(3, { thought_type: 'tool_call', tool_name: 'search', tool_arguments: {} })
+		);
+
+		// Then
+		expect(result.isError).toBe(true);
+		expect(payloadOf(result).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(harness.suspensionStore.size(BACKLOG_SESSION)).toBe(0);
+		expect(surface(harness)).toEqual(before);
+	});
+
+	it('leaves the continuation token of a rejected tool_observation usable', async () => {
+		// Given
+		const harness = createBacklogHarness(2);
+		const call = await harness.processor.process(
+			backlogInput(1, { thought_type: 'tool_call', tool_name: 'search', tool_arguments: {} })
+		);
+		const token = payloadOf(call).continuation_token as string;
+		const filler = await harness.processor.process(backlogInput(2));
+		const observation = backlogInput(3, {
+			thought_type: 'tool_observation',
+			continuation_token: token,
+		});
+		const before = surface(harness);
+
+		// When
+		const rejected = await harness.processor.process(observation);
+		const tokenAfterRejection = harness.suspensionStore.peek(token);
+		await recoverAndDrain(harness);
+		const attemptsBeforeRetry = harness.persistence.thoughtAttempts;
+		const stillRetained = await harness.processor.process(observation);
+		const attemptsStartedByRejection = harness.persistence.thoughtAttempts - attemptsBeforeRetry;
+		await harness.history.drainSession(BACKLOG_SESSION);
+		const retried = await harness.processor.process(observation);
+
+		// Then
+		expect(filler.isError).toBeUndefined();
+		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(tokenAfterRejection).not.toBeNull();
+		expect(surface(harness)).not.toEqual(before);
+		expect(payloadOf(stillRetained).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(attemptsStartedByRejection).toBe(2);
+		expect(retried.isError).toBeUndefined();
+		expect(harness.suspensionStore.peek(token)).toBeNull();
+		expect(harness.history.getHistoryLength(BACKLOG_SESSION)).toBe(3);
+	});
+
+	it('keeps every other session admissible while one session is at its limit', async () => {
+		// Given
+		const harness = await seedFullSession(2);
+
+		// When
+		const rejected = await harness.processor.process(backlogInput(3));
+		const other = await harness.processor.process(
+			backlogInput(1, { session_id: OTHER_SESSION, id: 'other-1' })
+		);
+
+		// Then
+		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(other.isError).toBeUndefined();
+		expect(harness.history.getHistoryLength(OTHER_SESSION)).toBe(1);
+		expect(harness.history.getHistoryLength(BACKLOG_SESSION)).toBe(2);
+	});
+
+	it('admits a reset_state replacement whenever the durable delete succeeds', async () => {
+		// Given
+		const harness = await seedFullSession(2);
+		await expect(harness.history.drainSession(BACKLOG_SESSION)).rejects.toBeInstanceOf(
+			PersistenceDrainError
+		);
+		const rejected = await harness.processor.process(backlogInput(3));
+
+		// When
+		const replacement = await harness.processor.process(
+			backlogInput(1, { id: 'bl-replacement', reset_state: true })
+		);
+
+		// Then
+		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(replacement.isError).toBeUndefined();
+		expect(harness.history.getHistoryLength(BACKLOG_SESSION)).toBe(1);
+		expect(harness.history.getWriteBufferLength()).toBe(1);
+	});
+
+	it('does not admit a reset_state replacement when the durable delete fails', async () => {
+		// Given
+		const harness = await seedFullSession(2);
+		await expect(harness.history.drainSession(BACKLOG_SESSION)).rejects.toBeInstanceOf(
+			PersistenceDrainError
+		);
+		harness.persistence.failClear = true;
+
+		// When
+		const replacement = await harness.processor.process(
+			backlogInput(1, { id: 'bl-replacement', reset_state: true })
+		);
+
+		// Then
+		expect(replacement.isError).toBe(true);
+		expect(harness.history.getHistoryLength(BACKLOG_SESSION)).toBe(2);
+	});
+
+	it('keeps timer drains from retrying terminal failures while each rejection retries them', async () => {
+		// Given
+		useFakeTimers();
+		const harness = createBacklogHarness(1, 100);
+		const first = await harness.processor.process(backlogInput(1));
+		await vi.advanceTimersByTimeAsync(100);
+		const attemptsAfterFirstTimerDrain = harness.persistence.thoughtAttempts;
+		await vi.advanceTimersByTimeAsync(500);
+		const attemptsAfterIdleTimers = harness.persistence.thoughtAttempts;
+
+		// When
+		const rejected = await harness.processor.process(backlogInput(2));
+		const attemptsAfterRejection = harness.persistence.thoughtAttempts;
+		await vi.advanceTimersByTimeAsync(0);
+		harness.persistence.down = false;
+		await vi.advanceTimersByTimeAsync(0);
+		const stillRetained = await harness.processor.process(backlogInput(2));
+		await vi.advanceTimersByTimeAsync(0);
+		const admitted = await harness.processor.process(backlogInput(2));
+
+		// Then
+		expect(first.isError).toBeUndefined();
+		expect(attemptsAfterFirstTimerDrain).toBe(1);
+		expect(attemptsAfterIdleTimers).toBe(1);
+		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(attemptsAfterRejection).toBe(2);
+		expect(payloadOf(stillRetained).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(admitted.isError).toBeUndefined();
 	});
 });

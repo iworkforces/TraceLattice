@@ -3,7 +3,11 @@ import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { IMetrics } from '../contracts/interfaces.js';
-import type { PersistenceConfig, PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import type {
+	PersistenceConfig,
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from '../contracts/PersistenceBackend.js';
 import { asSessionId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
@@ -12,6 +16,7 @@ import { PersistenceCompatibilityError } from '../errors.js';
 import {
 	EMPTY_FILE_SNAPSHOT_V2,
 	parseFileSnapshotV2,
+	restoreRecordsInSnapshot,
 	serializeFileSnapshotV2,
 	sessionsInSnapshot,
 } from './FileSnapshotV2.js';
@@ -233,6 +238,12 @@ export class FilePersistence implements PersistenceBackend {
 
 	public async listSessions(): Promise<SessionId[]> {
 		return await this._read('list_sessions', sessionsInSnapshot);
+	}
+
+	public async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		return await this._read('load_restore', (snapshot) => ({
+			sessions: restoreRecordsInSnapshot(snapshot, this._persistBranches),
+		}));
 	}
 
 	public async clearAll(): Promise<void> {

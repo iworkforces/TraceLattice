@@ -16,7 +16,7 @@ Reasoning engine: ingest → graph mutation → quality signals → strategy. `H
 4. **inside the lock**: cross-ref → verification-outcome check → optional reset → identity admission → `registerBranch`
 5. **persist**: `tool_call` returns a suspend envelope and skips the rest; `tool_observation` → `compareAndAdmit`; else `addThought`
 6. **outcome** + calibrator `refit` (verification only)
-7. **format** → build active-evidence projection **once** → **evaluate** graph-aware signals/patterns → max-3 warning hints (cooldown on processor, not detector)
+7. **format** → build active-evidence projection **once** (one clone per active thought) → `computeAdmissionSignals` shares live verification links and filtered branches across graph-aware signals/stats/patterns → max-3 warning hints (cooldown on processor, not detector)
 8. **strategy** `decide()` and response `graph_context` read that same projection. On `terminate` + `branch_id` + compression wired → rollup
 
 ## SUBSYSTEMS
@@ -49,6 +49,7 @@ Reasoning engine: ingest → graph mutation → quality signals → strategy. `H
 - Every thought is appended to `thought_history`. A branch copy is stored only when both `branch_from_thought` and `branch_id` are set.
 - Thought IDs admit once per named session while live, queued, or durable. Admission rejects duplicates before branch registration, history, graph, outcome, suspension, or persistence side effects; cross-session reuse is allowed and ownership releases only when every owned copy is discarded.
 - Backtrack is append-only (`retracted: true`). Evaluator filters retracted.
+- Persistence backlog: `HistoryManager.assertThoughtIdentityAvailable` (authorize, duplicate id, then `PersistenceBuffer.assertThoughtBacklogAvailable`) rejects with `PERSISTENCE_BACKLOG_FULL` before any mutation once `PersistenceWorkQueue.pendingThoughtCountForSession` reaches `persistenceMaxPendingThoughtsPerSession` (terminal failures count). `bufferThought`/`bufferBacktrack` never throw on backlog. Each rejection joins or starts an explicit drain (the only drain that retries terminal failures) without awaiting it.
 - Verification resolves its canonical retained stable target before mutation. An explicit target is authoritative; duplicate, missing, ambiguous, and id-less canonical targets fail closed. A legacy label can resolve only one identity-bearing target. This verification outcome-key check is distinct from thought-ID duplicate admission.
 - Public clearing is awaitable: `resetSession(sessionId)` or `resetAll()` coordinates admission, locks, persistence barriers, and auxiliary state.
 - Thought processing and scoped reads require a named session; omitted sessions and retired `__global__` fail validation. Successful processor responses always include `session_id`.

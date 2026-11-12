@@ -23,7 +23,7 @@ const expectedReleaseScripts = {
 	'test:native':
 		'vitest run --config vitest.config.ts src/__tests__/integration/NativeSqliteConformance.test.ts',
 	'verify:library': 'npm run type-check && npm run lint && npm run build && npm run test:coverage',
-	'verify:native': 'npm ls better-sqlite3@13.0.3 --depth=0 && npm run test:native',
+	'verify:native': 'npm ls better-sqlite3@13.1.1 --depth=0 && npm run test:native',
 	'verify:packed': 'node scripts/verify-packed-cli.mjs',
 	'verify:release': 'npm run verify:library && npm run verify:native && npm run verify:packed',
 	prepublishOnly: 'npm run verify:release',
@@ -101,7 +101,7 @@ describe('release gate package scripts', () => {
 			composedScripts.every((script) => !script.includes(' || ') && !script.includes(';'))
 		).toBe(true);
 		expect(packageManifest.scripts['verify:native']).toContain(
-			'npm ls better-sqlite3@13.0.3 --depth=0'
+			'npm ls better-sqlite3@13.1.1 --depth=0'
 		);
 		expect(packageManifest.scripts['test:native']).not.toContain('||');
 	});
@@ -113,7 +113,7 @@ describe('release gate package scripts', () => {
 		const alternateHooks = alternatePublishHooks.map((hook) => packageManifest.scripts[hook]);
 		// Then
 		expect(packageManifest.dependencies?.['better-sqlite3']).toBeUndefined();
-		expect(packageManifest.devDependencies['better-sqlite3']).toBe('13.0.3');
+		expect(packageManifest.devDependencies['better-sqlite3']).toBe('13.1.1');
 		expect(alternateHooks).toEqual([
 			undefined,
 			undefined,

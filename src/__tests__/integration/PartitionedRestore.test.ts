@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
+import type {
+	PersistedBranchRecord,
+	PersistedSessionRecord,
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -23,6 +28,7 @@ import type { Edge } from '../../core/graph/Edge.js';
 import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import type { ThoughtData } from '../../core/thought.js';
 import { SessionAccessDeniedError } from '../../core/SessionErrors.js';
+import { PersistenceUnavailableError } from '../../errors.js';
 import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { FilePersistence } from '../../persistence/FilePersistence.js';
 import { SqlitePersistence } from '../../persistence/SqlitePersistence.js';
@@ -92,12 +98,33 @@ function manager(
 	return value;
 }
 
+function sessionRecord(
+	sessionId: SessionId,
+	overrides: Partial<PersistedSessionRecord> = {}
+): PersistedSessionRecord {
+	return { sessionId, history: [], branches: [], edges: [], summaries: [], ...overrides };
+}
+
+function branchRecord(
+	sessionId: SessionId,
+	name: string,
+	firstNumber: number
+): PersistedBranchRecord {
+	const branchId = asBranchId(name);
+	return { branchId, thoughts: [thought(sessionId, firstNumber, { branch_id: branchId })] };
+}
+
 class RecordingPersistence extends MemoryPersistence {
 	readonly calls: string[] = [];
 
 	override async healthy(): Promise<boolean> {
 		this.calls.push('healthy');
 		return await super.healthy();
+	}
+
+	override async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		this.calls.push('restore-read');
+		return await super.loadAllSessionsForRestore();
 	}
 
 	override async listSessions(): Promise<SessionId[]> {
@@ -173,17 +200,29 @@ class RecordingPersistence extends MemoryPersistence {
 	}
 }
 
-class FailingPartitionPersistence extends MemoryPersistence {
-	readonly failingSession: SessionId;
+class StubbedRestorePersistence extends MemoryPersistence {
+	readonly read: () => Promise<PersistenceRestoreRead>;
+	reads = 0;
 
-	constructor(failingSession: SessionId) {
+	constructor(read: () => Promise<PersistenceRestoreRead>) {
 		super();
-		this.failingSession = failingSession;
+		this.read = read;
 	}
 
-	override async loadHistoryForSession(sessionId: SessionId): Promise<ThoughtData[]> {
-		if (sessionId === this.failingSession) throw new Error(`read failed for ${sessionId}`);
-		return await super.loadHistoryForSession(sessionId);
+	override async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		this.reads += 1;
+		return await this.read();
+	}
+}
+
+function stubbed(sessions: readonly PersistedSessionRecord[]): StubbedRestorePersistence {
+	return new StubbedRestorePersistence(async () => ({ sessions }));
+}
+
+class UnhealthyPersistence extends RecordingPersistence {
+	override async healthy(): Promise<boolean> {
+		this.calls.push('healthy');
+		return false;
 	}
 }
 
@@ -313,7 +352,7 @@ describe('Task 10 partitioned startup restore', () => {
 		expect(summaryStore.forSession(summaryOnly)).toHaveLength(1);
 	});
 
-	it('T10-R04 uses scoped listSessions once and never calls durable mutation APIs', async () => {
+	it('T10-R04 reads the restore snapshot once and never calls durable mutation APIs', async () => {
 		// Given
 		const persistence = new RecordingPersistence();
 		const sessionA = asSessionId('A');
@@ -325,14 +364,55 @@ describe('Task 10 partitioned startup restore', () => {
 		await history.loadFromPersistence();
 
 		// Then
-		expect(persistence.calls).toEqual([
-			'healthy',
-			'listSessions',
-			'history:A',
-			'branches:A',
-			'edges:A',
-			'summaries:A',
-		]);
+		expect(persistence.calls).toEqual(['healthy', 'restore-read']);
+	});
+
+	it.each([
+		{ sessions: 0, branches: 0 },
+		{ sessions: 1, branches: 0 },
+		{ sessions: 3, branches: 4 },
+		{ sessions: 6, branches: 2 },
+	])(
+		'T10-R12 issues exactly one restore read for $sessions sessions with $branches branches each',
+		async ({ sessions, branches }) => {
+			// Given
+			const persistence = new RecordingPersistence();
+			const edgeStore = new EdgeStore();
+			const summaryStore = new InMemorySummaryStore();
+			const sessionIds = Array.from({ length: sessions }, (_, index) => asSessionId(`s${index}`));
+			for (const sessionId of sessionIds) {
+				await persistence.saveThoughtForSession(sessionId, thought(sessionId, 1));
+				for (let index = 0; index < branches; index += 1) {
+					const record = branchRecord(sessionId, `b${index}`, 10 + index);
+					await persistence.saveBranchForSession(sessionId, record.branchId, record.thoughts);
+				}
+				await persistence.saveEdges(sessionId, [edge(sessionId, `${sessionId}-edge`)]);
+				await persistence.saveSummaries(sessionId, [summary(sessionId, `${sessionId}-summary`)]);
+			}
+			persistence.calls.length = 0;
+			const history = manager(persistence, { edgeStore, summaryStore });
+
+			// When
+			await history.loadFromPersistence();
+
+			// Then
+			expect(persistence.calls).toEqual(['healthy', 'restore-read']);
+			expect(history.getSessionIds().sort()).toEqual(sessionIds.map(String).sort());
+			for (const sessionId of sessionIds) {
+				expect(history.getBranchIds(sessionId)).toHaveLength(branches);
+				expect(summaryStore.forSession(sessionId)).toHaveLength(1);
+			}
+		}
+	);
+
+	it('T10-R13 does not read the snapshot when the backend reports unhealthy', async () => {
+		// Given
+		const persistence = new UnhealthyPersistence();
+		const history = manager(persistence);
+
+		// When / Then
+		await expect(history.loadFromPersistence()).rejects.toBeInstanceOf(PersistenceUnavailableError);
+		expect(persistence.calls).toEqual(['healthy']);
 	});
 
 	it('T10-R05 derives tool and skill context before applying history and branch retention', async () => {
@@ -597,16 +677,7 @@ describe('Task 10 partitioned startup restore', () => {
 		const sessionA = asSessionId('A');
 		const sessionB = asSessionId('B');
 		const misplaced = thought(sessionB, 1);
-		const persistence = new MemoryPersistence();
-		await persistence.saveThoughtForSession(sessionB, misplaced);
-		const crossPartition = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				return [sessionA];
-			}
-			override async loadHistoryForSession(): Promise<ThoughtData[]> {
-				return [misplaced];
-			}
-		})();
+		const crossPartition = stubbed([sessionRecord(sessionA, { history: [misplaced] })]);
 		const before = structuredClone(misplaced);
 		const history = manager(crossPartition);
 
@@ -622,14 +693,9 @@ describe('Task 10 partitioned startup restore', () => {
 		// Given
 		const thoughtWithoutSession = thought(TEST_SESSION_ID, 1);
 		Reflect.deleteProperty(thoughtWithoutSession, 'session_id');
-		const persistence = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				return [TEST_SESSION_ID];
-			}
-			override async loadHistoryForSession(): Promise<ThoughtData[]> {
-				return [thoughtWithoutSession];
-			}
-		})();
+		const persistence = stubbed([
+			sessionRecord(TEST_SESSION_ID, { history: [thoughtWithoutSession] }),
+		]);
 		const history = manager(persistence);
 
 		// When / Then
@@ -642,14 +708,7 @@ describe('Task 10 partitioned startup restore', () => {
 		const sessionA = asSessionId('A');
 		const namedWithoutId = thought(sessionA, 1);
 		Reflect.deleteProperty(namedWithoutId, 'id');
-		const persistence = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				return [sessionA];
-			}
-			override async loadHistoryForSession(): Promise<ThoughtData[]> {
-				return [namedWithoutId];
-			}
-		})();
+		const persistence = stubbed([sessionRecord(sessionA, { history: [namedWithoutId] })]);
 		const history = manager(persistence);
 
 		// When / Then
@@ -663,10 +722,11 @@ describe('Task 10 partitioned startup restore', () => {
 		// Given
 		const sessionA = asSessionId('A');
 		const sessionB = asSessionId('B');
-		const persistence = new FailingPartitionPersistence(sessionB);
-		await persistence.saveThoughtForSession(TEST_SESSION_ID, thought(TEST_SESSION_ID, 1));
-		await persistence.saveThoughtForSession(sessionA, thought(sessionA, 1));
-		await persistence.saveThoughtForSession(sessionB, thought(sessionB, 1));
+		const persistence = stubbed([
+			sessionRecord(TEST_SESSION_ID, { history: [thought(TEST_SESSION_ID, 1)] }),
+			sessionRecord(sessionA, { history: [thought(sessionA, 1)] }),
+			sessionRecord(sessionB, { history: [thought(sessionA, 2)] }),
+		]);
 		const edgeStore = new EdgeStore();
 		const summaryStore = new InMemorySummaryStore();
 		const history = manager(persistence, { edgeStore, summaryStore });
@@ -678,22 +738,44 @@ describe('Task 10 partitioned startup restore', () => {
 		summaryStore.add(liveSummary);
 
 		// When / Then
-		await expect(history.loadFromPersistence()).rejects.toThrow('read failed for B');
+		await expect(history.loadFromPersistence()).rejects.toMatchObject({
+			code: 'PERSISTENCE_SCOPE_MISMATCH',
+		});
+		expect(persistence.reads).toBe(1);
 		expect(history.getHistory(TEST_SESSION_ID)).toEqual([liveThought]);
 		expect(history.getSessionIds()).toEqual([TEST_SESSION_ID]);
 		expect(edgeStore.edgesForSession(TEST_SESSION_ID)).toEqual([liveEdge]);
 		expect(summaryStore.forSession(TEST_SESSION_ID)).toEqual([liveSummary]);
 	});
 
+	it('T10-R14 leaves live state untouched when the restore read rejects', async () => {
+		// Given
+		const persistence = new StubbedRestorePersistence(async () => {
+			throw new Error('restore read failed');
+		});
+		const edgeStore = new EdgeStore();
+		const summaryStore = new InMemorySummaryStore();
+		const history = manager(persistence, { edgeStore, summaryStore });
+		const liveThought = thought(TEST_SESSION_ID, 99);
+		const liveEdge = edge(TEST_SESSION_ID, 'live-edge');
+		const liveSummary = summary(TEST_SESSION_ID, 'live-summary');
+		history.addThought(liveThought);
+		edgeStore.addEdge(liveEdge);
+		summaryStore.add(liveSummary);
+
+		// When / Then
+		await expect(history.loadFromPersistence()).rejects.toThrow('restore read failed');
+		expect(persistence.reads).toBe(1);
+		expect(history.getHistory(TEST_SESSION_ID)).toEqual([liveThought]);
+		expect(edgeStore.edgesForSession(TEST_SESSION_ID)).toEqual([liveEdge]);
+		expect(summaryStore.forSession(TEST_SESSION_ID)).toEqual([liveSummary]);
+	});
+
 	it('T10-R11 rejects malformed listed session identities before live mutation', async () => {
 		// Given
-		const persistence = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				const sessions: SessionId[] = [];
-				Array.prototype.push.call(sessions, 'bad/session');
-				return sessions;
-			}
-		})();
+		const malformed = sessionRecord(TEST_SESSION_ID);
+		Reflect.set(malformed, 'sessionId', 'bad/session');
+		const persistence = stubbed([malformed]);
 		const history = manager(persistence);
 
 		// When / Then
@@ -705,13 +787,9 @@ describe('Task 10 partitioned startup restore', () => {
 		// Given
 		const liveSession = asSessionId('live-session');
 		const liveThought = thought(liveSession, 1);
-		const persistence = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				const sessions: SessionId[] = [];
-				Array.prototype.push.call(sessions, '__global__');
-				return sessions;
-			}
-		})();
+		const retired = sessionRecord(liveSession);
+		Reflect.set(retired, 'sessionId', '__global__');
+		const persistence = stubbed([retired]);
 		const history = manager(persistence);
 		history.addThought(liveThought);
 
@@ -727,14 +805,7 @@ describe('Task 10 partitioned startup restore', () => {
 		const liveThought = thought(liveSession, 1);
 		const retiredThought = thought(restoredSession, 1);
 		Reflect.set(retiredThought, 'session_id', '__global__');
-		const persistence = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				return [restoredSession];
-			}
-			override async loadHistoryForSession(): Promise<ThoughtData[]> {
-				return [retiredThought];
-			}
-		})();
+		const persistence = stubbed([sessionRecord(restoredSession, { history: [retiredThought] })]);
 		const history = manager(persistence);
 		history.addThought(liveThought);
 
@@ -743,24 +814,70 @@ describe('Task 10 partitioned startup restore', () => {
 		expect(history.getHistory(liveSession)).toEqual([liveThought]);
 	});
 
-	it('T10-I01 rejects a listed branch that disappears during staging', async () => {
+	it('T10-I01 rejects duplicate and invalid branch records before mutation', async () => {
 		// Given
 		const sessionA = asSessionId('A');
-		const persistence = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				return [sessionA];
-			}
-			override async listBranchesForSession(): Promise<BranchId[]> {
-				return [asBranchId('missing')];
-			}
-		})();
+		const invalidBranch = branchRecord(sessionA, 'valid', 2);
+		Reflect.set(invalidBranch, 'branchId', 'bad/branch');
+		const duplicateBranches = stubbed([
+			sessionRecord(sessionA, {
+				history: [thought(sessionA, 1)],
+				branches: [branchRecord(sessionA, 'dup', 2), branchRecord(sessionA, 'dup', 3)],
+			}),
+		]);
+		const invalidBranches = stubbed([
+			sessionRecord(sessionA, { history: [thought(sessionA, 1)], branches: [invalidBranch] }),
+		]);
+
+		// When / Then
+		for (const persistence of [duplicateBranches, invalidBranches]) {
+			const history = manager(persistence);
+			await expect(history.loadFromPersistence()).rejects.toMatchObject({
+				code: 'PERSISTENCE_COMPATIBILITY',
+			});
+			expect(history.getSessionIds()).toEqual([]);
+		}
+	});
+
+	it('T10-I07 rejects duplicate session records instead of silently merging them', async () => {
+		// Given
+		const sessionA = asSessionId('A');
+		const liveThought = thought(TEST_SESSION_ID, 99);
+		const persistence = stubbed([
+			sessionRecord(sessionA, { history: [thought(sessionA, 1)] }),
+			sessionRecord(sessionA, { history: [thought(sessionA, 2)] }),
+		]);
 		const history = manager(persistence);
+		history.addThought(liveThought);
 
 		// When / Then
 		await expect(history.loadFromPersistence()).rejects.toMatchObject({
 			code: 'PERSISTENCE_COMPATIBILITY',
 		});
-		expect(history.getSessionIds()).toEqual([]);
+		expect(history.getHistory(TEST_SESSION_ID)).toEqual([liveThought]);
+		expect(history.getSessionIds()).toEqual([TEST_SESSION_ID]);
+	});
+
+	it('T10-I08 retains the highest branch ids even when a backend delivers branches unsorted', async () => {
+		// Given
+		const sessionA = asSessionId('A');
+		const persistence = stubbed([
+			sessionRecord(sessionA, {
+				history: [thought(sessionA, 1)],
+				branches: [
+					branchRecord(sessionA, 'z', 4),
+					branchRecord(sessionA, 'a', 2),
+					branchRecord(sessionA, 'm', 3),
+				],
+			}),
+		]);
+		const history = manager(persistence, { maxBranches: 2 });
+
+		// When
+		await history.loadFromPersistence();
+
+		// Then
+		expect(history.getBranchIds(sessionA).sort()).toEqual([asBranchId('m'), asBranchId('z')]);
 	});
 
 	it('T10-I02 restores same summary ids across sessions and rejects duplicates within one', async () => {
@@ -773,14 +890,9 @@ describe('Task 10 partitioned startup restore', () => {
 		const summaryStore = new InMemorySummaryStore();
 		const validHistory = manager(valid, { summaryStore });
 		const duplicateSummary = summary(sessionA, 'duplicate-id');
-		const invalid = new (class extends MemoryPersistence {
-			override async listSessions(): Promise<SessionId[]> {
-				return [sessionA];
-			}
-			override async loadSummaries(): Promise<Summary[]> {
-				return [duplicateSummary, duplicateSummary];
-			}
-		})();
+		const invalid = stubbed([
+			sessionRecord(sessionA, { summaries: [duplicateSummary, duplicateSummary] }),
+		]);
 		const invalidHistory = manager(invalid, { summaryStore: new InMemorySummaryStore() });
 
 		// When
@@ -792,6 +904,52 @@ describe('Task 10 partitioned startup restore', () => {
 		await expect(invalidHistory.loadFromPersistence()).rejects.toMatchObject({
 			code: 'PERSISTENCE_COMPATIBILITY',
 		});
+	});
+
+	it.each([
+		{
+			name: 'a branch thought from another session',
+			code: 'PERSISTENCE_SCOPE_MISMATCH',
+			record: (): PersistedSessionRecord => {
+				const other = asSessionId('B');
+				return sessionRecord(asSessionId('A'), {
+					branches: [
+						{
+							branchId: asBranchId('x'),
+							thoughts: [thought(other, 1, { branch_id: asBranchId('x') })],
+						},
+					],
+				});
+			},
+		},
+		{
+			name: 'an edge from another session',
+			code: 'PERSISTENCE_SCOPE_MISMATCH',
+			record: (): PersistedSessionRecord =>
+				sessionRecord(asSessionId('A'), { edges: [edge(asSessionId('B'), 'foreign-edge')] }),
+		},
+		{
+			name: 'a summary from another session',
+			code: 'PERSISTENCE_SCOPE_MISMATCH',
+			record: (): PersistedSessionRecord =>
+				sessionRecord(asSessionId('A'), { summaries: [summary(asSessionId('B'), 'foreign')] }),
+		},
+		{
+			name: 'duplicate edge ids',
+			code: 'PERSISTENCE_COMPATIBILITY',
+			record: (): PersistedSessionRecord => {
+				const duplicate = edge(asSessionId('A'), 'duplicate-edge');
+				return sessionRecord(asSessionId('A'), { edges: [duplicate, duplicate] });
+			},
+		},
+	])('T10-I09 rejects $name in a staged session record', async ({ code, record }) => {
+		// Given
+		const persistence = stubbed([record()]);
+		const history = manager(persistence);
+
+		// When / Then
+		await expect(history.loadFromPersistence()).rejects.toMatchObject({ code });
+		expect(history.getSessionIds()).toEqual([]);
 	});
 
 	it('T10-I03 reopens a File snapshot without changing bytes during restore retention', async () => {

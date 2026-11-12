@@ -33,21 +33,27 @@ export function resolveVerificationLinks(
 	const hypotheses = thoughts.filter(
 		(thought) => thought.thought_type === 'hypothesis' && Boolean(thought.id)
 	);
-	const hypothesisIds = new Set(hypotheses.flatMap((thought) => (thought.id ? [thought.id] : [])));
-	const activeThoughtIds = new Set(thoughts.flatMap((thought) => (thought.id ? [thought.id] : [])));
+	const hypothesesById = new Map<ThoughtId, ThoughtData>();
+	for (const hypothesis of hypotheses) {
+		const id = hypothesis.id;
+		if (id && !hypothesesById.has(id)) hypothesesById.set(id, hypothesis);
+	}
+	const hypothesisIds = new Set(hypothesesById.keys());
 	const targetsByVerifier = new Map<ThoughtData, ThoughtData>();
 	const targetsByVerifierId = new Map<ThoughtId, ThoughtId>();
 	const legacyTargets = uniqueLegacyTargets(hypotheses);
 
 	for (const verifier of thoughts) {
 		if (verifier.thought_type !== 'verification') continue;
-		const target = resolveTarget(
-			verifier,
-			hypotheses,
-			admissionTargets,
-			activeThoughtIds,
-			legacyTargets
-		);
+		const targetId = verifier.id ? admissionTargets.get(verifier.id) : undefined;
+		const target =
+			verifier.verification_target !== undefined
+				? targetId === undefined
+					? undefined
+					: hypothesesById.get(targetId)
+				: !verifier.id || verifier.hypothesis_id === undefined
+					? undefined
+					: legacyTargets.get(verifier.hypothesis_id);
 		if (target === undefined) continue;
 		targetsByVerifier.set(verifier, target);
 		if (verifier.id && target.id) {
@@ -76,44 +82,50 @@ export function collectActiveMainThoughts(
 	history: readonly ThoughtData[],
 	branches: ActiveThoughtBranches
 ): ThoughtData[] {
-	const branchThoughts = Object.values(branches).flat();
-	const allThoughts = [...history, ...branchThoughts];
-	const retractedIds = new Set(
-		allThoughts.flatMap((thought) => (thought.retracted === true && thought.id ? [thought.id] : []))
-	);
-	const includedIds = new Set<ThoughtId>();
-	const active: ThoughtData[] = [];
-	for (const thought of history) {
-		if (thought.retracted === true) continue;
-		if (!thought.id) {
-			active.push(thought);
-			continue;
-		}
-		if (retractedIds.has(thought.id) || includedIds.has(thought.id)) continue;
-		includedIds.add(thought.id);
-		active.push(thought);
-	}
-	return active;
+	const { thoughts, mainCount } = collectActiveEvidence(history, branches);
+	return thoughts.slice(0, mainCount);
 }
 
 export function collectActiveThoughts(
 	history: readonly ThoughtData[],
 	branches: ActiveThoughtBranches
 ): ThoughtData[] {
-	const branchThoughts = Object.values(branches).flat();
-	const allThoughts = [...history, ...branchThoughts];
-	const retractedIds = new Set(
-		allThoughts.flatMap((thought) => (thought.retracted === true && thought.id ? [thought.id] : []))
-	);
-	const active = collectActiveMainThoughts(history, branches);
-	const includedIds = new Set(active.flatMap((thought) => (thought.id ? [thought.id] : [])));
-	for (const thought of branchThoughts) {
-		if (!thought.id || thought.retracted === true) continue;
-		if (retractedIds.has(thought.id) || includedIds.has(thought.id)) continue;
-		includedIds.add(thought.id);
-		active.push(thought);
+	return collectActiveEvidence(history, branches).thoughts;
+}
+
+/** Visit each retained record once; later retractions delete earlier copies without reordering. */
+export function collectActiveEvidence(
+	history: readonly ThoughtData[],
+	branches: ActiveThoughtBranches
+): { readonly thoughts: ThoughtData[]; readonly mainCount: number } {
+	const retained = new Map<ThoughtId | symbol, { thought: ThoughtData; main: boolean }>();
+	const retractedIds = new Set<ThoughtId>();
+	const lists = [history, ...Object.values(branches)];
+	for (const [index, list] of lists.entries()) {
+		for (const thought of list) {
+			const id = thought.id;
+			if (thought.retracted === true) {
+				if (id) {
+					retractedIds.add(id);
+					retained.delete(id);
+				}
+				continue;
+			}
+			if (!id) {
+				if (index === 0) retained.set(Symbol(), { thought, main: true });
+				continue;
+			}
+			if (retractedIds.has(id) || retained.has(id)) continue;
+			retained.set(id, { thought, main: index === 0 });
+		}
 	}
-	return active;
+	const thoughts: ThoughtData[] = [];
+	let mainCount = 0;
+	for (const entry of retained.values()) {
+		thoughts.push(entry.thought);
+		if (entry.main) mainCount++;
+	}
+	return { thoughts, mainCount };
 }
 
 function uniqueLegacyTargets(hypotheses: readonly ThoughtData[]): ReadonlyMap<string, ThoughtData> {
@@ -132,22 +144,4 @@ function uniqueLegacyTargets(hypotheses: readonly ThoughtData[]): ReadonlyMap<st
 			target === undefined ? [] : ([[label, target]] as const)
 		)
 	);
-}
-
-function resolveTarget(
-	verifier: ThoughtData,
-	hypotheses: readonly ThoughtData[],
-	admissionTargets: ReadonlyMap<ThoughtId, ThoughtId>,
-	activeThoughtIds: ReadonlySet<ThoughtId>,
-	legacyTargets: ReadonlyMap<string, ThoughtData>
-): ThoughtData | undefined {
-	if (verifier.verification_target !== undefined) {
-		if (!verifier.id) return undefined;
-		const targetId = admissionTargets.get(verifier.id);
-		if (targetId === undefined || !activeThoughtIds.has(targetId)) return undefined;
-		return hypotheses.find((hypothesis) => hypothesis.id === targetId);
-	}
-	return !verifier.id || verifier.hypothesis_id === undefined
-		? undefined
-		: legacyTargets.get(verifier.hypothesis_id);
 }

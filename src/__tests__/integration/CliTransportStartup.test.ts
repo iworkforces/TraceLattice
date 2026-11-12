@@ -1,6 +1,8 @@
+import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { HealthCheckResult } from '../../health/HealthChecker.js';
 import { INITIALIZE_PARAMS, postJson } from './ProtocolHarness.js';
 import {
 	cleanupShutdownFixtures,
@@ -113,5 +115,68 @@ describe('built CLI transport retention', () => {
 		expect(running.stderr()).not.toContain('Fatal error running server');
 		expect(running.stdout()).toBe('');
 		await stopChild(running);
+	});
+});
+
+describe('built CLI readiness probes', () => {
+	async function startReadyCli(persistence: 'disabled' | 'file') {
+		const { port, env } = await cliEnvironment();
+		const directory = await createTemporaryDirectory('tracelattice-cli-ready-');
+		const dataDir = join(directory, 'data');
+		const configPath = join(directory, 'config.json');
+		await writeFile(
+			configPath,
+			JSON.stringify(
+				persistence === 'file'
+					? { persistence: { enabled: true, backend: 'file', options: { dataDir } } }
+					: {}
+			)
+		);
+		const running = spawnCli({ ...env, TRACELATTICE_CONFIG: configPath });
+		await withDeadline(running.waitForStderr('running on Streamable HTTP'), 5000, 'HTTP readiness');
+		const ready = async () => {
+			const response = await fetch(`http://127.0.0.1:${port}/ready`, {
+				signal: AbortSignal.timeout(5000),
+			});
+			const body: HealthCheckResult = JSON.parse(await response.text());
+			return { status: response.status, body };
+		};
+		return { dataDir, ready };
+	}
+
+	it('is ready with no components when persistence is disabled', async () => {
+		const { ready } = await startReadyCli('disabled');
+
+		const { status, body } = await ready();
+
+		expect(status).toBe(200);
+		expect(body.status).toBe('ok');
+		expect(body.components).toEqual({});
+	});
+
+	it('probes the configured store and reports its backlog counts', async () => {
+		const { ready } = await startReadyCli('file');
+
+		const { status, body } = await ready();
+
+		expect(status).toBe(200);
+		expect(body.status).toBe('ok');
+		expect(Object.keys(body.components).sort()).toEqual(['persistence', 'persistenceBacklog']);
+		expect(body.components['persistence']?.healthy).toBe(true);
+		expect(body.components['persistenceBacklog']).toEqual({
+			name: 'persistenceBacklog',
+			healthy: true,
+			details: 'quarantined sessions: 0, retained failures: 0, pending thoughts: 0',
+		});
+	});
+
+	it('answers 503 once the configured store stops being healthy', async () => {
+		const { dataDir, ready } = await startReadyCli('file');
+		await writeFile(join(dataDir, 'snapshot.json'), '{not json');
+
+		const { status, body } = await ready();
+
+		expect(status).toBe(503);
+		expect(body.components['persistence']?.healthy).toBe(false);
 	});
 });

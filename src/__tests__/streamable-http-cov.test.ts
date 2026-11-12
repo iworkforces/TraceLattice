@@ -446,6 +446,118 @@ describe('StreamableHttpTransport — coverage gaps', () => {
 			expect(sessionGaugeCalls[sessionGaugeCalls.length - 1]!.args[1]).toBe(3);
 		});
 	});
+
+	describe('probe routes ahead of the rate limiter', () => {
+		const mcpPost = (): Parameters<typeof httpRequest>[0] => ({
+			port,
+			headers: { 'content-type': 'application/json' },
+			body: jsonRpcBody(1, 'tools/list'),
+		});
+
+		it('serves /health and /ready after the client budget is spent', async () => {
+			// Given
+			await startTransport({
+				enableRateLimit: true,
+				maxRequestsPerMinute: 1,
+				healthChecker: new HealthChecker(),
+			});
+			await httpRequest(mcpPost());
+			const limited = await httpRequest(mcpPost());
+
+			// When
+			const health = await httpRequest({ port, method: 'GET', path: '/health' });
+			const ready = await httpRequest({ port, method: 'GET', path: '/ready' });
+
+			// Then
+			expect(limited.statusCode).toBe(429);
+			expect(health.statusCode).toBe(200);
+			expect(ready.statusCode).toBe(200);
+		});
+
+		it('does not spend the client budget', async () => {
+			// Given
+			await startTransport({
+				enableRateLimit: true,
+				maxRequestsPerMinute: 1,
+				healthChecker: new HealthChecker(),
+			});
+			for (let probe = 0; probe < 3; probe += 1) {
+				await httpRequest({ port, method: 'GET', path: '/health' });
+				await httpRequest({ port, method: 'GET', path: '/ready' });
+			}
+
+			// When
+			const first = await httpRequest(mcpPost());
+			const second = await httpRequest(mcpPost());
+
+			// Then
+			expect(first.statusCode).not.toBe(429);
+			expect(second.statusCode).toBe(429);
+		});
+
+		it('still rejects an invalid Host header before serving a probe', async () => {
+			// Given
+			const healthChecker = new HealthChecker();
+			const readiness = vi.spyOn(healthChecker, 'checkReadiness');
+			await startTransport({ healthChecker });
+
+			// When
+			const res = await httpRequest({
+				port,
+				method: 'GET',
+				path: '/ready',
+				headers: { host: 'evil.example.com' },
+			});
+
+			// Then
+			expect(res.statusCode).toBe(403);
+			expect(res.body).toContain('invalid host header');
+			expect(readiness).not.toHaveBeenCalled();
+		});
+
+		it('still answers 503 while shutting down instead of serving a probe', async () => {
+			// Given
+			const healthChecker = new HealthChecker();
+			const readiness = vi.spyOn(healthChecker, 'checkReadiness');
+			await startTransport({ healthChecker });
+			Reflect.set(transport, '_isShuttingDown', true);
+
+			// When
+			const res = await httpRequest({ port, method: 'GET', path: '/ready' });
+
+			// Then
+			expect(res.statusCode).toBe(503);
+			expect(res.body).toContain('Server is shutting down');
+			expect(readiness).not.toHaveBeenCalled();
+		});
+
+		it('keeps CORS origin validation and headers on probe responses', async () => {
+			// Given
+			const healthChecker = new HealthChecker();
+			const readiness = vi.spyOn(healthChecker, 'checkReadiness');
+			await startTransport({ healthChecker, corsOrigin: 'https://dash.example' });
+
+			// When
+			const foreign = await httpRequest({
+				port,
+				method: 'GET',
+				path: '/ready',
+				headers: { origin: 'https://evil.example' },
+			});
+			const allowed = await httpRequest({
+				port,
+				method: 'GET',
+				path: '/ready',
+				headers: { origin: 'https://dash.example' },
+			});
+
+			// Then
+			expect(foreign.statusCode).toBe(403);
+			expect(readiness).toHaveBeenCalledTimes(1);
+			expect(allowed.statusCode).toBe(200);
+			expect(allowed.headers['access-control-allow-origin']).toBe('https://dash.example');
+		});
+	});
 });
 
 describe('StreamableHttpTransport — error handling coverage', () => {

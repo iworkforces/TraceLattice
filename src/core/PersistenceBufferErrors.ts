@@ -46,3 +46,24 @@ export class PersistenceSessionBarrierReentrancyError extends SequentialThinking
 		this.sessionId = sessionId;
 	}
 }
+
+/** Error raised when a session already holds its limit of unacknowledged thought writes. */
+export class PersistenceBacklogFullError extends SequentialThinkingError {
+	/** Session whose persistence backlog is full. */
+	public readonly sessionId: SessionId;
+	/** Unacknowledged thought and backtrack writes at the time of rejection. */
+	public readonly pending: number;
+	/** Configured per-session limit. */
+	public readonly limit: number;
+
+	constructor(sessionId: SessionId, pending: number, limit: number) {
+		super(
+			`Persistence backlog for session '${sessionId}' is full: ${pending} of ${limit} thought writes are unacknowledged. Retry after the persistence backend recovers.`,
+			ERROR_CODES.PERSISTENCE_BACKLOG_FULL
+		);
+		this.name = 'PersistenceBacklogFullError';
+		this.sessionId = sessionId;
+		this.pending = pending;
+		this.limit = limit;
+	}
+}

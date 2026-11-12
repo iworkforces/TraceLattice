@@ -42,6 +42,7 @@ const ConfigFileOptionsSchema = v.looseObject({
 	persistenceBufferSize: v.optional(v.number()),
 	persistenceFlushInterval: v.optional(v.number()),
 	persistenceMaxRetries: v.optional(v.number()),
+	persistenceMaxPendingThoughtsPerSession: v.optional(v.number()),
 	features: v.optional(v.looseObject({})),
 	toolInterleaveTtlMs: v.optional(v.number()),
 	toolInterleaveSweepMs: v.optional(v.number()),
@@ -151,6 +152,9 @@ export interface ConfigFileOptions {
 
 	/** Maximum flush retries; file-only (default 3 in ServerConfig). */
 	readonly persistenceMaxRetries?: number;
+
+	/** Maximum unacknowledged thought writes per session; file-only (default 10000 in ServerConfig). */
+	readonly persistenceMaxPendingThoughtsPerSession?: number;
 
 	/**
 	 * Feature flag overrides. Each field can be set independently.
@@ -539,6 +543,7 @@ export class ConfigLoader {
 			persistenceBufferSize: config.persistenceBufferSize,
 			persistenceFlushInterval: config.persistenceFlushInterval,
 			persistenceMaxRetries: config.persistenceMaxRetries,
+			persistenceMaxPendingThoughtsPerSession: config.persistenceMaxPendingThoughtsPerSession,
 			features: config.features,
 			toolInterleaveTtlMs: config.toolInterleaveTtlMs,
 			toolInterleaveSweepMs: config.toolInterleaveSweepMs,
