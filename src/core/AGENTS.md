@@ -16,7 +16,7 @@ Reasoning engine: ingest → graph mutation → quality signals → strategy. `H
 4. **inside the lock**: cross-ref → verification-outcome check → optional reset → identity admission → `registerBranch`
 5. **persist**: `tool_call` returns a suspend envelope and skips the rest; `tool_observation` → `compareAndAdmit`; else `addThought`
 6. **outcome** + calibrator `refit` (verification only)
-7. **format** → build active-evidence projection **once** → **evaluate** graph-aware signals/patterns → max-3 warning hints (cooldown on processor, not detector)
+7. **format** → build active-evidence projection **once** (one clone per active thought) → `computeAdmissionSignals` shares live verification links and filtered branches across graph-aware signals/stats/patterns → max-3 warning hints (cooldown on processor, not detector)
 8. **strategy** `decide()` and response `graph_context` read that same projection. On `terminate` + `branch_id` + compression wired → rollup
 
 ## SUBSYSTEMS

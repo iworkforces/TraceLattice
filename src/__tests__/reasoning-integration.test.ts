@@ -1,4 +1,10 @@
-import { asBranchId, asSessionId, type BranchId, type SessionId } from '../contracts/ids.js';
+import {
+	asBranchId,
+	asSessionId,
+	type BranchId,
+	type SessionId,
+	type ThoughtId,
+} from '../contracts/ids.js';
 /**
  * Integration tests for the full reasoning pipeline.
  *
@@ -129,6 +135,10 @@ class BranchAwareMockHistoryManager implements IHistoryManager {
 	}
 
 	assertSessionResetAuthorized(_sessionId: string): void {}
+	assertSessionAccessible(_sessionId: string): void {}
+	getVerificationTargets(_sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+		return this._verificationTargets;
+	}
 
 	getSessionIds(): string[] {
 		return [REASONING_SESSION];

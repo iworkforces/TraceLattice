@@ -321,7 +321,7 @@ export class ThoughtProcessor {
 				this.historyManager.assertSessionResetAuthorized(sessionId);
 				return await this._lifecycle.withSessionReset(sessionId, operation);
 			}
-			this.historyManager.inspectSession(sessionId);
+			this.historyManager.assertSessionAccessible(sessionId);
 			return await this._lifecycle.runOperation(sessionId, operation);
 		} catch (error) {
 			return this._buildErrorResponse(error);
@@ -559,20 +559,14 @@ export class ThoughtProcessor {
 		const evidence = this._buildActiveEvidence(sessionId, history, branches);
 		const graphScope =
 			evidence?.graph === undefined ? {} : { activeGraph: { sessionId, view: evidence.graph } };
-		const verificationTargets = this.historyManager.inspectSession(sessionId).verificationTargets;
-		const confidenceSignals = this._thoughtEvaluator.computeConfidenceSignals(history, branches, {
-			currentThought: input,
-			sessionId,
-			verificationTargets,
-			...graphScope,
-		});
-		const reasoningStats = this._thoughtEvaluator.computeReasoningStats(history, branches, {
-			verificationTargets,
-		});
-		const patternSignals = this._thoughtEvaluator.computePatternSignals(history, branches, {
-			verificationTargets,
-			...graphScope,
-		});
+		const verificationTargets = this.historyManager.getVerificationTargets(sessionId);
+		const { confidenceSignals, reasoningStats, patternSignals } =
+			this._thoughtEvaluator.computeAdmissionSignals(history, branches, {
+				currentThought: input,
+				sessionId,
+				verificationTargets,
+				...graphScope,
+			});
 		const reasoningHints = this._generateHints(patternSignals, input.thought_number, sessionId);
 
 		return {

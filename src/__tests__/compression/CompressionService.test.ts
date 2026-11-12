@@ -123,6 +123,10 @@ class FakeHistoryManager implements IHistoryManager {
 		};
 	}
 	assertSessionResetAuthorized(_sessionId: string): void {}
+	assertSessionAccessible(_sessionId: string): void {}
+	getVerificationTargets(_sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+		return new Map();
+	}
 
 	getSessionIds(): string[] {
 		return [SESSION];
