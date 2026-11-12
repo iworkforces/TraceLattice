@@ -84,6 +84,8 @@ export interface HistoryManagerConfig {
 	persistenceFlushInterval?: number;
 	/** Max retries for failed persistence flushes. @default 3 */
 	persistenceMaxRetries?: number;
+	/** Per-session limit on unacknowledged thought writes, terminal failures included. @default 10000 */
+	persistenceMaxPendingThoughtsPerSession?: number;
 	persistenceHistorySize?: number;
 	persistBranches?: boolean;
 	eventEmitter?: PersistenceEventEmitter;
@@ -187,6 +189,7 @@ export class HistoryManager implements IHistoryManager {
 				bufferSize: config.persistenceBufferSize ?? 100,
 				flushInterval: config.persistenceFlushInterval ?? 1000,
 				maxRetries: config.persistenceMaxRetries ?? 3,
+				maxPendingThoughtsPerSession: config.persistenceMaxPendingThoughtsPerSession ?? 10_000,
 				durableHistorySize: config.persistenceHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
 				persistBranches: config.persistBranches ?? true,
 				eventEmitter: this._eventEmitter,
@@ -478,16 +481,24 @@ export class HistoryManager implements IHistoryManager {
 		);
 	}
 
+	/**
+	 * Pre-mutation admission guard: authorizes, rejects a duplicate thought id, then rejects when
+	 * the session already holds its limit of unacknowledged persistence writes.
+	 *
+	 * @throws {ValidationError} If the thought id already exists in the session.
+	 * @throws {PersistenceBacklogFullError} If the session persistence backlog is at its limit.
+	 */
 	public assertThoughtIdentityAvailable(thought: ThoughtData): void {
 		const sessionId = asSessionId(thought.session_id);
 		this._authorizeExistingSession(sessionId, this._getCurrentOwner());
-		if (thought.id === undefined) return;
 		if (
-			this._referenceIndex.has(sessionId, thought.id) ||
-			this._persistenceBuffer?.hasThoughtIdentity(sessionId, thought.id) === true
+			thought.id !== undefined &&
+			(this._referenceIndex.has(sessionId, thought.id) ||
+				this._persistenceBuffer?.hasThoughtIdentity(sessionId, thought.id) === true)
 		) {
 			throw new ValidationError('id', `Thought id already exists in session: ${thought.id}`);
 		}
+		this._persistenceBuffer?.assertThoughtBacklogAvailable(sessionId);
 	}
 
 	private _addThoughtWithinOperation(
