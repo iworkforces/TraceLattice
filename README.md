@@ -151,6 +151,7 @@ persistence:
 persistenceBufferSize: 7 # example file-only override; default 100
 persistenceFlushInterval: 750 # milliseconds, file-only; default 1000
 persistenceMaxRetries: 2 # example file-only override; default 3
+persistenceMaxPendingThoughtsPerSession: 500 # example file-only override; default and maximum 10000
 features:
   dagEdges: true
   reasoningStrategy: sequential # sequential or tot
@@ -210,10 +211,18 @@ environment value is not expanded by `ConfigLoader`. `TRACELATTICE_DISCOVERY_CAC
 300 seconds and becomes `discoveryCache.ttl: 300000` milliseconds. The interleave environment
 variables ending in `_MS` and the corresponding YAML fields use milliseconds.
 
-`persistenceBufferSize` (default 100 thoughts), `persistenceFlushInterval` (default 1000 ms), and
-`persistenceMaxRetries` (default 3) are YAML/JSON settings, not environment variables. There are no
-`TRACELATTICE_PERSISTENCE_BUFFER_SIZE`, `TRACELATTICE_PERSISTENCE_FLUSH_INTERVAL`, or
-`TRACELATTICE_PERSISTENCE_MAX_RETRIES` overrides.
+`persistenceBufferSize` (default 100 thoughts), `persistenceFlushInterval` (default 1000 ms),
+`persistenceMaxRetries` (default 3), and `persistenceMaxPendingThoughtsPerSession` (default 10000,
+allowed 1 to 10000) are YAML/JSON settings, not environment variables. There are no
+`TRACELATTICE_PERSISTENCE_BUFFER_SIZE`, `TRACELATTICE_PERSISTENCE_FLUSH_INTERVAL`,
+`TRACELATTICE_PERSISTENCE_MAX_RETRIES`, or `TRACELATTICE_PERSISTENCE_MAX_PENDING_THOUGHTS_PER_SESSION`
+overrides.
+
+`persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
+unacknowledged, counting writes that failed terminally. At the limit a thought is rejected with
+`PERSISTENCE_BACKLOG_FULL` before any history, branch, edge, outcome or suspension state changes, so
+the same call can be retried with the same thought id. Other sessions are unaffected. Each rejection
+also retries the retained failures in the background, so a retry succeeds once the backend is back.
 
 ## Transports
 

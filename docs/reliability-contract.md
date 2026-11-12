@@ -106,3 +106,11 @@ Release verification must prove the contract at three surfaces:
 3. Packed checks inspect the installed tarball, compile package-root declarations requiring `processThought` input sessions and `getBranches(sessionId)`, and execute the library and CLI. A named CLI call must succeed and echo its session; omitted and retired sessions must fail.
 
 The release pipeline fails closed when any check is missing or detects a removed surface.
+
+## Persistence Backlog Limit
+
+`persistenceMaxPendingThoughtsPerSession` (file-only, default and maximum 10000) bounds the thought and backtrack writes a session may hold unacknowledged. Writes that failed terminally stay counted until a drain acknowledges them; coalesced branch, edge and summary work is not counted.
+
+At the limit the pre-mutation thought-identity check rejects with `PERSISTENCE_BACKLOG_FULL`, after authorization and after the duplicate-id check and for thoughts with or without an id. The check runs before branch registration, history, edges, verification targets, outcomes, suspensions and the write queue change, so the same thought id is admitted on a later retry and a rejected `tool_observation` keeps its continuation token. Other sessions keep their own count. A `reset_state: true` replacement is admitted when its durable delete succeeds, because the reset discards the session's queue first.
+
+Every rejection starts or joins an explicit drain without awaiting it. Timer and size-triggered drains still skip terminal failures, so the explicit drain is what retries them: once the backend recovers, a repeated call succeeds without a restart. Buffering itself never rejects on backlog.
