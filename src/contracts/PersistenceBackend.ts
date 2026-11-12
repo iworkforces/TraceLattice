@@ -41,6 +41,25 @@ export interface PersistenceBackend {
 	close(): Promise<void>;
 }
 
+export interface PersistedBranchRecord {
+	readonly branchId: BranchId;
+	readonly thoughts: readonly ThoughtData[];
+}
+
+export interface PersistedSessionRecord {
+	readonly sessionId: SessionId;
+	readonly history: readonly ThoughtData[];
+	/** Ascending by branch id (code-point order). Empty when branch persistence is disabled. */
+	readonly branches: readonly PersistedBranchRecord[];
+	readonly edges: readonly Edge[];
+	readonly summaries: readonly Summary[];
+}
+
+export interface PersistenceRestoreRead {
+	/** Unique sessions in ascending id order: the union of history, branch, edge and summary sessions. */
+	readonly sessions: readonly PersistedSessionRecord[];
+}
+
 export interface PersistenceConfig {
 	enabled?: boolean;
 	backend?: 'file' | 'sqlite' | 'memory';
