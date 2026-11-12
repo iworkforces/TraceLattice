@@ -1,10 +1,15 @@
 import { createServer, request as httpRequest, Server, type ClientRequest } from 'node:http';
-import { describe, expect, it, vi } from 'vitest';
-import { HealthChecker } from '../../health/HealthChecker.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { asSessionId, type SessionId } from '../../contracts/ids.js';
+import { HistoryManager } from '../../core/HistoryManager.js';
+import type { ThoughtData } from '../../core/thought.js';
+import { HealthChecker, type HealthCheckResult } from '../../health/HealthChecker.js';
 import type { Logger } from '../../logger/StructuredLogger.js';
 import { NullLogger } from '../../logger/NullLogger.js';
 import { HttpTransport } from '../../transport/HttpTransport.js';
+import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { StreamableHttpTransport } from '../../transport/StreamableHttpTransport.js';
+import { createTestThought } from '../helpers/factories.js';
 import {
 	INITIALIZE_PARAMS,
 	createProtocolServer,
@@ -1199,5 +1204,160 @@ describe('Streamable HTTP fresh lifecycle repair', () => {
 					originalClose((error) => (error ? reject(error) : resolve()));
 				});
 		}
+	});
+});
+
+class ControlledPersistence extends MemoryPersistence {
+	public probe: () => Promise<boolean> = async () => true;
+	public failThoughtWrites = false;
+	public failClearSession = false;
+	public failClearAll = false;
+
+	public override healthy(): Promise<boolean> {
+		return this.probe();
+	}
+
+	public override async saveThoughtForSession(
+		sessionId: SessionId,
+		thought: ThoughtData
+	): Promise<void> {
+		if (this.failThoughtWrites) throw new LifecycleFixtureError('thought write failed');
+		await super.saveThoughtForSession(sessionId, thought);
+	}
+
+	public override async clearSession(sessionId: SessionId): Promise<void> {
+		if (this.failClearSession) throw new LifecycleFixtureError('session reset failed');
+		await super.clearSession(sessionId);
+	}
+
+	public override async clearAll(): Promise<void> {
+		if (this.failClearAll) throw new LifecycleFixtureError('global reset failed');
+		await super.clearAll();
+	}
+}
+
+describe.each(LIFECYCLE_CASES)('$name readiness from persistence state', (transportCase) => {
+	const histories: HistoryManager[] = [];
+	const transports: LifecycleTransport[] = [];
+
+	afterEach(async () => {
+		vi.useRealTimers();
+		await Promise.all(transports.splice(0).map((transport) => transport.stop(1_000)));
+		await Promise.all(histories.splice(0).map((history) => history.shutdown()));
+	});
+
+	async function startReady(persistence: ControlledPersistence) {
+		const history = new HistoryManager({
+			persistence,
+			persistenceFlushInterval: 60_000,
+			persistenceMaxRetries: 0,
+		});
+		histories.push(history);
+		const healthChecker = new HealthChecker({ persistence, persistenceBacklog: history });
+		const transport = transportCase.create({ healthChecker });
+		transports.push(transport);
+		await transport.connect(createProtocolServer().server);
+		const ready = async (): Promise<{ status: number; body: HealthCheckResult }> => {
+			const response = await fetch(`http://127.0.0.1:${getListeningPort(transport)}/ready`, {
+				signal: AbortSignal.timeout(5_000),
+			});
+			return { status: response.status, body: JSON.parse(await response.text()) };
+		};
+		return { history, ready };
+	}
+
+	it('stays ready and counts a quarantined session, a retained failure and pending work', async () => {
+		// Given
+		const persistence = new ControlledPersistence();
+		const { history, ready } = await startReady(persistence);
+		history.addThought(createTestThought({ id: 'quarantined-1', session_id: 'ready-quarantined' }));
+		await history.drainSession(asSessionId('ready-quarantined'));
+		persistence.failClearSession = true;
+		await expect(history.resetSession('ready-quarantined')).rejects.toThrow('session reset failed');
+		persistence.failClearSession = false;
+		persistence.failThoughtWrites = true;
+		history.addThought(createTestThought({ id: 'failed-1', session_id: 'ready-failing' }));
+		await expect(history.drainSession(asSessionId('ready-failing'))).rejects.toThrow();
+		persistence.failThoughtWrites = false;
+		history.addThought(createTestThought({ id: 'waiting-1', session_id: 'ready-waiting' }));
+
+		// When
+		const { status, body } = await ready();
+
+		// Then
+		expect(status).toBe(200);
+		expect(body.status).toBe('ok');
+		expect(body.components['persistenceBacklog']).toEqual({
+			name: 'persistenceBacklog',
+			healthy: true,
+			details: 'quarantined sessions: 1, retained failures: 1, pending thoughts: 2',
+		});
+	});
+
+	it('answers 503 while persistence is globally quarantined and 200 once a reset succeeds', async () => {
+		// Given
+		const persistence = new ControlledPersistence();
+		const { history, ready } = await startReady(persistence);
+		persistence.failClearAll = true;
+		await expect(history.resetAll()).rejects.toThrow('global reset failed');
+
+		// When
+		const quarantined = await ready();
+		persistence.failClearAll = false;
+		await history.resetAll();
+		const recovered = await ready();
+
+		// Then
+		expect(quarantined.status).toBe(503);
+		expect(quarantined.body.components['persistenceBacklog']?.healthy).toBe(false);
+		expect(quarantined.body.components['persistence']?.healthy).toBe(true);
+		expect(recovered.status).toBe(200);
+	});
+
+	it('answers 503 when the probe fails', async () => {
+		// Given
+		const persistence = new ControlledPersistence();
+		persistence.probe = async () => false;
+		const { ready } = await startReady(persistence);
+
+		// When
+		const { status, body } = await ready();
+
+		// Then
+		expect(status).toBe(503);
+		expect(body.components['persistence']?.healthy).toBe(false);
+	});
+
+	it('answers 503 at the deadline when the probe never settles and joins it until it does', async () => {
+		// Given
+		const persistence = new ControlledPersistence();
+		const probeStarted = createDeferred<undefined>();
+		const probeResult = createDeferred<boolean>();
+		let probeCalls = 0;
+		persistence.probe = () => {
+			probeCalls += 1;
+			probeStarted.resolve(undefined);
+			return probeResult.promise;
+		};
+		const { ready } = await startReady(persistence);
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		const first = ready();
+		await probeStarted.promise;
+
+		// When
+		await vi.advanceTimersByTimeAsync(1_000);
+		const timedOut = await first;
+		const joined = await ready();
+		probeResult.resolve(true);
+		const recovered = await ready();
+
+		// Then
+		expect(timedOut.status).toBe(503);
+		expect(timedOut.body.components['persistence']?.details).toBe(
+			'Health check timed out after 1000ms'
+		);
+		expect(joined.status).toBe(503);
+		expect(probeCalls).toBe(2);
+		expect(recovered.status).toBe(200);
 	});
 });
