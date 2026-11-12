@@ -25,6 +25,7 @@ import {
 import { NullLogger } from '../logger/NullLogger.js';
 import type { Logger } from '../logger/StructuredLogger.js';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import type { PersistenceBacklogView } from '../contracts/persistence-backlog.js';
 import {
 	DehydrationPolicy,
 	type DehydrationOptions,
@@ -1052,5 +1053,10 @@ export class HistoryManager implements IHistoryManager {
 	/** Number of coordinator-owned thought writes not yet acknowledged successful. */
 	public getWriteBufferLength(): number {
 		return this._persistenceBuffer?.pendingThoughtCount ?? 0;
+	}
+
+	/** Persistence backlog counts for readiness probes; `null` when persistence is disabled. */
+	public getPersistenceBacklogView(): PersistenceBacklogView | null {
+		return this._persistenceBuffer?.getBacklogView() ?? null;
 	}
 }
