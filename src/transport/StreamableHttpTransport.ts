@@ -332,6 +332,45 @@ export class StreamableHttpTransport extends BaseTransport implements ITransport
 	}
 
 	/**
+	 * Validate the request origin and attach CORS headers.
+	 *
+	 * @returns false when the origin is rejected and the 403 has been sent
+	 */
+	private _admitCors(req: IncomingMessage, res: ServerResponse): boolean {
+		if (!this.validateCorsOrigin(req)) {
+			this._sendJsonRpcError(res, 403, -32000, 'Forbidden - invalid origin');
+			return false;
+		}
+		this.setCorsHeaders(res);
+		return true;
+	}
+
+	/**
+	 * Serve GET /health and GET /ready. These run after Host validation and the shutdown check
+	 * but ahead of the rate limiter; they keep CORS origin validation and headers.
+	 *
+	 * @returns true when the request was a probe and has been answered
+	 */
+	private async _handleProbeRoute(
+		req: IncomingMessage,
+		res: ServerResponse,
+		urlPath: string
+	): Promise<boolean> {
+		if (req.method !== 'GET' || (urlPath !== '/health' && urlPath !== '/ready')) {
+			return false;
+		}
+		if (!this._admitCors(req, res)) {
+			return true;
+		}
+		if (urlPath === '/health') {
+			this._handleHealthCheck(res);
+		} else {
+			await this._handleReadinessCheck(res);
+		}
+		return true;
+	}
+
+	/**
 	 * Route and handle incoming HTTP requests.
 	 */
 	private async _handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -349,6 +388,14 @@ export class StreamableHttpTransport extends BaseTransport implements ITransport
 			return;
 		}
 
+		// Parse URL path
+		const urlPath = req.url?.split('?')[0] ?? '/';
+
+		// Probes (/health, /ready) precede rate limiting so polling never spends the client budget
+		if (await this._handleProbeRoute(req, res, urlPath)) {
+			return;
+		}
+
 		// Rate limiting
 		const clientIp = this.getClientIp(req);
 		if (this.checkRateLimit(clientIp)) {
@@ -358,12 +405,9 @@ export class StreamableHttpTransport extends BaseTransport implements ITransport
 		}
 
 		// CORS validation
-		if (!this.validateCorsOrigin(req)) {
-			this._sendJsonRpcError(res, 403, -32000, 'Forbidden - invalid origin');
+		if (!this._admitCors(req, res)) {
 			return;
 		}
-
-		this.setCorsHeaders(res);
 
 		// CORS preflight
 		if (req.method === 'OPTIONS') {
@@ -373,24 +417,9 @@ export class StreamableHttpTransport extends BaseTransport implements ITransport
 			return;
 		}
 
-		// Parse URL path
-		const urlPath = req.url?.split('?')[0] ?? '/';
-
 		// Metrics endpoint
 		if (req.method === 'GET' && urlPath === '/metrics') {
 			this._handleMetrics(res);
-			return;
-		}
-
-		// Health check (liveness)
-		if (req.method === 'GET' && urlPath === '/health') {
-			this._handleHealthCheck(res);
-			return;
-		}
-
-		// Readiness check
-		if (req.method === 'GET' && urlPath === '/ready') {
-			await this._handleReadinessCheck(res);
 			return;
 		}
 
