@@ -12,7 +12,7 @@ import {
 	PersistenceBacklogFullError,
 	PersistenceDrainError,
 } from '../core/PersistenceBufferErrors.js';
-import { MemoryPersistence } from '../persistence/MemoryPersistence.js';
+import { StallingPersistence } from './helpers/StallingPersistence.js';
 import { PersistenceUnavailableError, ValidationError } from '../errors.js';
 import { stageBacktrackPersistence } from '../persistence/BacktrackPersistence.js';
 
@@ -1497,36 +1497,6 @@ describe('HistoryManager — declarative branch registration', () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 });
-
-class StallingPersistence extends MemoryPersistence {
-	public down = false;
-	public failClear = false;
-	public thoughtAttempts = 0;
-
-	public override async saveThoughtForSession(
-		sessionId: SessionId,
-		thought: ThoughtData
-	): Promise<void> {
-		this.thoughtAttempts += 1;
-		if (this.down) throw new Error('backend down');
-		await super.saveThoughtForSession(sessionId, thought);
-	}
-
-	public override async saveBacktrackForSession(
-		sessionId: SessionId,
-		thought: ThoughtData,
-		targetThoughtId: ThoughtId
-	): Promise<void> {
-		this.thoughtAttempts += 1;
-		if (this.down) throw new Error('backend down');
-		await super.saveBacktrackForSession(sessionId, thought, targetThoughtId);
-	}
-
-	public override async clearSession(sessionId: SessionId): Promise<void> {
-		if (this.failClear) throw new Error('delete failed');
-		await super.clearSession(sessionId);
-	}
-}
 
 interface BacklogFixture {
 	readonly manager: HistoryManager;
