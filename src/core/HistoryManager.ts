@@ -809,6 +809,14 @@ export class HistoryManager implements IHistoryManager {
 		};
 	}
 
+	public assertSessionAccessible(sessionId: string): void {
+		this._authorizeExistingSession(asSessionId(sessionId), this._getCurrentOwner());
+	}
+
+	public getVerificationTargets(sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+		return this._getSession(sessionId, this._getCurrentOwner()).verificationTargets;
+	}
+
 	/** @throws {ValidationError} If branchId is empty or already exists. */
 	public registerBranch(sessionId: string, branchId: BranchId): void {
 		this._authorizeExistingSession(asSessionId(sessionId), this._getCurrentOwner());

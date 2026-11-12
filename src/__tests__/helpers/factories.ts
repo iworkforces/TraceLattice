@@ -288,6 +288,12 @@ export class MockHistoryManager implements IHistoryManager {
 
 	assertSessionResetAuthorized(_sessionId: string): void {}
 
+	assertSessionAccessible(_sessionId: string): void {}
+
+	getVerificationTargets(sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+		return this._getSession(sessionId).verificationTargets;
+	}
+
 	getSessionIds(): string[] {
 		return Array.from(this._sessions.keys());
 	}

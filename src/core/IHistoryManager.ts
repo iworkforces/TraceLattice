@@ -130,6 +130,8 @@ export interface IHistoryManager {
 
 	/** Returns a non-mutating session snapshot without creating or binding state. */
 	inspectSession(sessionId: string): HistorySessionSnapshot;
+	assertSessionAccessible(sessionId: string): void;
+	getVerificationTargets(sessionId: string): ReadonlyMap<ThoughtId, ThoughtId>;
 
 	/** Checks reset authorization without creating or claiming state; permits expired scopes. */
 	assertSessionResetAuthorized(sessionId: string): void;

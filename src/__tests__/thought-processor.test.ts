@@ -1,4 +1,4 @@
-import { asBranchId, type BranchId, type SessionId } from '../contracts/ids.js';
+import { asBranchId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
 /**
  * Comprehensive tests for ThoughtProcessor.
  *
@@ -272,6 +272,10 @@ describe('ThoughtProcessor', () => {
 		it('should return error response when processing fails', async () => {
 			// Create a HistoryManager that throws on addThought
 			class ThrowingHistoryManager implements IHistoryManager {
+				assertSessionAccessible(_sessionId: string): void {}
+				getVerificationTargets(_sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+					return new Map();
+				}
 				assertSessionResetAuthorized(_sessionId: string): void {}
 				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
@@ -1877,6 +1881,10 @@ describe('ThoughtProcessor — uncovered branches', () => {
 		it('should handle non-Error thrown in process catch branch', async () => {
 			// Create a HistoryManager that throws a non-Error value
 			class StringThrowingHistoryManager implements IHistoryManager {
+				assertSessionAccessible(_sessionId: string): void {}
+				getVerificationTargets(_sessionId: string): ReadonlyMap<ThoughtId, ThoughtId> {
+					return new Map();
+				}
 				assertSessionResetAuthorized(_sessionId: string): void {}
 				assertThoughtIdentityAvailable(_thought: ThoughtData): void {}
 				resolveThoughtReference(_sessionId: SessionId, _thoughtNumber: number) {
