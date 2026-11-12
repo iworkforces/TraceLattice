@@ -1,0 +1,3642 @@
+{
+	"sequential": [
+		{
+			"thought_number": 1,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 1,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 1,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 0,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": false,
+				"has_verification": false,
+				"average_confidence": null,
+				"structural_quality": 0.21867241478865562,
+				"quality_components": {
+					"type_diversity": 0.01,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.5
+				},
+				"quality_components_raw": {
+					"type_diversity": 0,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.5
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 1,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 1,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 0,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": null
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 2,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 2,
+			"thought_type": "hypothesis",
+			"confidence": 0.6,
+			"hypothesis_id": "H-A",
+			"confidence_signals": {
+				"reasoning_depth": 2,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 1,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": false,
+				"average_confidence": 0.6,
+				"structural_quality": 0.12454596365109677,
+				"quality_components": {
+					"type_diversity": 0.38685280723454163,
+					"verification_coverage": 0.01,
+					"depth_efficiency": 1,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.38685280723454163,
+					"verification_coverage": 0,
+					"depth_efficiency": 1,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 2,
+					"edge_count": 1,
+					"root_count": 1,
+					"leaf_count": 1,
+					"longest_path": 1,
+					"max_out_degree": 1,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1,
+					"relational_density": 0
+				},
+				"calibrated_confidence": 0.6,
+				"calibration_metrics": {
+					"brierScore": null,
+					"ece": null,
+					"sampleCount": 0,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": null,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 2,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 2,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 1,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 1,
+				"average_quality_score": null,
+				"average_confidence": 0.6
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 1,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 3,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 3,
+			"thought_type": "hypothesis",
+			"confidence": 0.5,
+			"hypothesis_id": "H-B",
+			"confidence_signals": {
+				"reasoning_depth": 3,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": false,
+				"average_confidence": 0.55,
+				"structural_quality": 0.1822649795103156,
+				"quality_components": {
+					"type_diversity": 0.355245321275764,
+					"verification_coverage": 0.01,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.95
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.355245321275764,
+					"verification_coverage": 0,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.95
+				},
+				"graph_signals": {
+					"node_count": 3,
+					"edge_count": 2,
+					"root_count": 1,
+					"leaf_count": 1,
+					"longest_path": 2,
+					"max_out_degree": 1,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1,
+					"relational_density": 0
+				},
+				"calibrated_confidence": 0.5,
+				"calibration_metrics": {
+					"brierScore": null,
+					"ece": null,
+					"sampleCount": 0,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": null,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 3,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 3,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 2,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 2,
+				"ancestor_count": 2,
+				"inbound": [
+					{
+						"thought_number": 2,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (1-3) without verification"
+			],
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 4,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 4,
+			"thought_type": "verification",
+			"confidence": 0.9,
+			"confidence_signals": {
+				"reasoning_depth": 4,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 1,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.6666666667,
+				"structural_quality": 0.6646624490929561,
+				"quality_components": {
+					"type_diversity": 0.5802792108518124,
+					"verification_coverage": 0.5,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.8300326828802405
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5802792108518124,
+					"verification_coverage": 0.5,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.8300326828802405
+				},
+				"graph_signals": {
+					"node_count": 4,
+					"edge_count": 3,
+					"root_count": 2,
+					"leaf_count": 1,
+					"longest_path": 2,
+					"max_out_degree": 1,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1,
+					"relational_density": 0.3333333333
+				},
+				"calibrated_confidence": 0.9,
+				"calibration_metrics": {
+					"brierScore": 0.16000000000000003,
+					"ece": 0.4,
+					"sampleCount": 1,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.16000000000000003,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 4,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 4,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 1,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 1,
+				"average_quality_score": null,
+				"average_confidence": 0.6666666667
+			},
+			"graph_context": {
+				"root_distance": 0,
+				"ancestor_count": 0,
+				"inbound": [],
+				"outbound": [
+					{
+						"thought_number": 2,
+						"kind": "verifies"
+					}
+				]
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 5,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 5,
+			"thought_type": "verification",
+			"confidence": 0.8,
+			"hypothesis_id": "H-B",
+			"confidence_signals": {
+				"reasoning_depth": 5,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.8242000483329109,
+				"quality_components": {
+					"type_diversity": 0.5887621559162939,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.841886116991581
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5887621559162939,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.841886116991581
+				},
+				"graph_signals": {
+					"node_count": 5,
+					"edge_count": 4,
+					"root_count": 2,
+					"leaf_count": 2,
+					"longest_path": 2,
+					"max_out_degree": 2,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.3333333333,
+					"relational_density": 0.25
+				},
+				"calibrated_confidence": 0.8,
+				"calibration_metrics": {
+					"brierScore": 0.16000000000000003,
+					"ece": 0.4,
+					"sampleCount": 1,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.16000000000000003,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 5,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 5,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 4,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"5+ thoughts with no critique or branching — consider exploring alternatives"
+			],
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 6,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 1,
+				"thought_type_distribution": {
+					"regular": 2,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.8044218223823882,
+				"quality_components": {
+					"type_diversity": 0.6131471927654584,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.8333333333333334,
+					"confidence_stability": 0.841886116991581
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.6131471927654584,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.8333333333333334,
+					"confidence_stability": 0.841886116991581
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 2,
+					"leaf_count": 2,
+					"longest_path": 3,
+					"max_out_degree": 2,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 1,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.25,
+					"relational_density": 0.4
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 1,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 5,
+				"thought_type_counts": {
+					"regular": 2,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 3,
+				"ancestor_count": 4,
+				"inbound": [
+					{
+						"thought_number": 3,
+						"kind": "branch"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (1-3) without verification"
+			],
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 7,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt"
+			],
+			"thought_history_length": 6,
+			"thought_type": "hypothesis",
+			"confidence": 0.7,
+			"hypothesis_id": "H-C",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 1,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 3,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.66711991957,
+				"quality_components": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 0.6666666666666666,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": 0.8585786437626904
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 0.6666666666666666,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": 0.8585786437626904
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 3,
+					"max_out_degree": 2,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.6666666667,
+					"relational_density": 0.6
+				},
+				"calibrated_confidence": 0.7272727272727273,
+				"calibration_metrics": {
+					"brierScore": 0.16000000000000003,
+					"ece": 0.4,
+					"sampleCount": 1,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.16000000000000003,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 1,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 4,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 3,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 3,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 1,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 3,
+				"ancestor_count": 3,
+				"inbound": [
+					{
+						"thought_number": 3,
+						"kind": "branch"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 8,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt"
+			],
+			"thought_history_length": 6,
+			"thought_type": "verification",
+			"confidence": 0.4,
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 1,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.66,
+				"structural_quality": 0.7038314787818537,
+				"quality_components": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8145276300900859
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8145276300900859
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 2,
+					"leaf_count": 3,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 3,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 2,
+					"branching_factor": 1.6666666667,
+					"relational_density": 0.8
+				},
+				"calibrated_confidence": 0.4,
+				"calibration_metrics": {
+					"brierScore": 0.32499999999999996,
+					"ece": 0.55,
+					"sampleCount": 2,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.32499999999999996,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 1,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 3,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.66
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 3,
+						"kind": "branch"
+					}
+				],
+				"outbound": [
+					{
+						"thought_number": 7,
+						"kind": "verifies",
+						"branch_id": "alt"
+					}
+				]
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 9,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 2,
+					"hypothesis": 1,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.7035529326148096,
+				"quality_components": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8129171306613029
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8129171306613029
+				},
+				"graph_signals": {
+					"node_count": 5,
+					"edge_count": 3,
+					"root_count": 2,
+					"leaf_count": 3,
+					"longest_path": 1,
+					"max_out_degree": 2,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 1,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 2,
+					"branching_factor": 1.5,
+					"relational_density": 0.6666666667
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 2,
+				"thought_type_counts": {
+					"regular": 2,
+					"hypothesis": 1,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 8,
+						"kind": "branch",
+						"branch_id": "alt"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 10,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.6333333333,
+				"structural_quality": 0.7064908819684323,
+				"quality_components": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8300326828802405
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8300326828802405
+				},
+				"graph_signals": {
+					"node_count": 4,
+					"edge_count": 3,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 1,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 0,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 3,
+					"relational_density": 1
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 1,
+				"thought_type_counts": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.6333333333
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 8,
+						"kind": "branch",
+						"branch_id": "alt"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 11,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "critique",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.55,
+				"structural_quality": 0.7550538011997725,
+				"quality_components": {
+					"type_diversity": 0.6934264036172707,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.6934264036172707,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"graph_signals": {
+					"node_count": 5,
+					"edge_count": 4,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 0,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 2,
+					"relational_density": 1
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 2,
+				"thought_type_counts": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 0,
+				"ancestor_count": 0,
+				"inbound": [],
+				"outbound": [
+					{
+						"thought_number": 8,
+						"kind": "critiques",
+						"branch_id": "alt"
+					}
+				]
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (9-11) without verification"
+			],
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 12,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 7,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 4,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.55,
+				"structural_quality": 0.7160397296371013,
+				"quality_components": {
+					"type_diversity": 0.6439156385193586,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.42857142857142855,
+					"confidence_stability": 0.8500000000000001
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.6439156385193586,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.42857142857142855,
+					"confidence_stability": 0.8500000000000001
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 1,
+					"leaf_count": 4,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 2.5,
+					"relational_density": 0.8
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 7,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 3,
+				"thought_type_counts": {
+					"regular": 4,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 11,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 13,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 8,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.55,
+				"structural_quality": 0.7226694373408433,
+				"quality_components": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"graph_signals": {
+					"node_count": 7,
+					"edge_count": 6,
+					"root_count": 1,
+					"leaf_count": 4,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 2,
+					"relational_density": 0.6666666667
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 8,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 4,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 2,
+				"ancestor_count": 2,
+				"inbound": [
+					{
+						"thought_number": 12,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"Critique at thought 11 of thought 8 has not been addressed by a revision or verification within 3 thoughts"
+			],
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 14,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "backtrack",
+			"confidence_signals": {
+				"reasoning_depth": 8,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"has_hypothesis": false,
+				"has_verification": true,
+				"average_confidence": 0.4,
+				"structural_quality": 0.7337487629856148,
+				"quality_components": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.625,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.625,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 7,
+					"edge_count": 6,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 3,
+					"max_out_degree": 2,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.5,
+					"relational_density": 0.5
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 8,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 5,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.4
+			},
+			"graph_context": {
+				"root_distance": 3,
+				"ancestor_count": 3,
+				"inbound": [
+					{
+						"thought_number": 13,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (9-11) without verification"
+			],
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 15,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "synthesis",
+			"confidence_signals": {
+				"reasoning_depth": 9,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"has_hypothesis": false,
+				"has_verification": true,
+				"average_confidence": 0.4,
+				"structural_quality": 0.801886679966824,
+				"quality_components": {
+					"type_diversity": 0.7272697179176238,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.7272697179176238,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 8,
+					"edge_count": 8,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 3,
+					"max_out_degree": 3,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 1,
+						"derives_from": 2,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.6,
+					"relational_density": 0.625
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 9,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 6,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.4
+			},
+			"graph_context": {
+				"root_distance": 2,
+				"ancestor_count": 3,
+				"inbound": [
+					{
+						"thought_number": 8,
+						"kind": "derives_from",
+						"branch_id": "alt"
+					},
+					{
+						"thought_number": 10,
+						"kind": "derives_from",
+						"branch_id": "alt"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 16,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "verification",
+			"confidence_signals": {
+				"reasoning_depth": 10,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 2,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"has_hypothesis": false,
+				"has_verification": true,
+				"average_confidence": 0.4,
+				"structural_quality": 0.7934938801824083,
+				"quality_components": {
+					"type_diversity": 0.7586044466395969,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.7586044466395969,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 9,
+					"edge_count": 8,
+					"root_count": 2,
+					"leaf_count": 4,
+					"longest_path": 3,
+					"max_out_degree": 3,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 1,
+						"derives_from": 2,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 2,
+					"branching_factor": 1.6,
+					"relational_density": 0.625
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 10,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 6,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 2,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.4
+			},
+			"reasoning_hints": [
+				"Critique at thought 11 of thought 8 has not been addressed by a revision or verification within 3 thoughts"
+			],
+			"strategy_hint": {
+				"action": "continue"
+			},
+			"session_id": "admission-pin"
+		}
+	],
+	"tot": [
+		{
+			"thought_number": 1,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 1,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 1,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 0,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": false,
+				"has_verification": false,
+				"average_confidence": null,
+				"structural_quality": 0.21867241478865562,
+				"quality_components": {
+					"type_diversity": 0.01,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.5
+				},
+				"quality_components_raw": {
+					"type_diversity": 0,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.5
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 1,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 1,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 0,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": null
+			},
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 2,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 2,
+			"thought_type": "hypothesis",
+			"confidence": 0.6,
+			"hypothesis_id": "H-A",
+			"confidence_signals": {
+				"reasoning_depth": 2,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 1,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": false,
+				"average_confidence": 0.6,
+				"structural_quality": 0.12454596365109677,
+				"quality_components": {
+					"type_diversity": 0.38685280723454163,
+					"verification_coverage": 0.01,
+					"depth_efficiency": 1,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.38685280723454163,
+					"verification_coverage": 0,
+					"depth_efficiency": 1,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 2,
+					"edge_count": 1,
+					"root_count": 1,
+					"leaf_count": 1,
+					"longest_path": 1,
+					"max_out_degree": 1,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1,
+					"relational_density": 0
+				},
+				"calibrated_confidence": 0.6,
+				"calibration_metrics": {
+					"brierScore": null,
+					"ece": null,
+					"sampleCount": 0,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": null,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 2,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 2,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 1,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 1,
+				"average_quality_score": null,
+				"average_confidence": 0.6
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 1,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 3,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 3,
+			"thought_type": "hypothesis",
+			"confidence": 0.5,
+			"hypothesis_id": "H-B",
+			"confidence_signals": {
+				"reasoning_depth": 3,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": false,
+				"average_confidence": 0.55,
+				"structural_quality": 0.1822649795103156,
+				"quality_components": {
+					"type_diversity": 0.355245321275764,
+					"verification_coverage": 0.01,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.95
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.355245321275764,
+					"verification_coverage": 0,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.95
+				},
+				"graph_signals": {
+					"node_count": 3,
+					"edge_count": 2,
+					"root_count": 1,
+					"leaf_count": 1,
+					"longest_path": 2,
+					"max_out_degree": 1,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1,
+					"relational_density": 0
+				},
+				"calibrated_confidence": 0.5,
+				"calibration_metrics": {
+					"brierScore": null,
+					"ece": null,
+					"sampleCount": 0,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": null,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 3,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 3,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 0,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 2,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 2,
+				"ancestor_count": 2,
+				"inbound": [
+					{
+						"thought_number": 2,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (1-3) without verification"
+			],
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 4,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 4,
+			"thought_type": "verification",
+			"confidence": 0.9,
+			"confidence_signals": {
+				"reasoning_depth": 4,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 1,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.6666666667,
+				"structural_quality": 0.6646624490929561,
+				"quality_components": {
+					"type_diversity": 0.5802792108518124,
+					"verification_coverage": 0.5,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.8300326828802405
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5802792108518124,
+					"verification_coverage": 0.5,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.8300326828802405
+				},
+				"graph_signals": {
+					"node_count": 4,
+					"edge_count": 3,
+					"root_count": 2,
+					"leaf_count": 1,
+					"longest_path": 2,
+					"max_out_degree": 1,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1,
+					"relational_density": 0.3333333333
+				},
+				"calibrated_confidence": 0.9,
+				"calibration_metrics": {
+					"brierScore": 0.16000000000000003,
+					"ece": 0.4,
+					"sampleCount": 1,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.16000000000000003,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 4,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 4,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 1,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 1,
+				"average_quality_score": null,
+				"average_confidence": 0.6666666667
+			},
+			"graph_context": {
+				"root_distance": 0,
+				"ancestor_count": 0,
+				"inbound": [],
+				"outbound": [
+					{
+						"thought_number": 2,
+						"kind": "verifies"
+					}
+				]
+			},
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 5,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [],
+			"thought_history_length": 5,
+			"thought_type": "verification",
+			"confidence": 0.8,
+			"hypothesis_id": "H-B",
+			"confidence_signals": {
+				"reasoning_depth": 5,
+				"revision_count": 0,
+				"branch_count": 0,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.8242000483329109,
+				"quality_components": {
+					"type_diversity": 0.5887621559162939,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.841886116991581
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5887621559162939,
+					"verification_coverage": 1,
+					"depth_efficiency": 1,
+					"confidence_stability": 0.841886116991581
+				},
+				"graph_signals": {
+					"node_count": 5,
+					"edge_count": 4,
+					"root_count": 2,
+					"leaf_count": 2,
+					"longest_path": 2,
+					"max_out_degree": 2,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 0,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.3333333333,
+					"relational_density": 0.25
+				},
+				"calibrated_confidence": 0.8,
+				"calibration_metrics": {
+					"brierScore": 0.16000000000000003,
+					"ece": 0.4,
+					"sampleCount": 1,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.16000000000000003,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 5,
+				"total_branches": 0,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 5,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 4,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"5+ thoughts with no critique or branching — consider exploring alternatives"
+			],
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 6,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 1,
+				"thought_type_distribution": {
+					"regular": 2,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.8044218223823882,
+				"quality_components": {
+					"type_diversity": 0.6131471927654584,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.8333333333333334,
+					"confidence_stability": 0.841886116991581
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.6131471927654584,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.8333333333333334,
+					"confidence_stability": 0.841886116991581
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 2,
+					"leaf_count": 2,
+					"longest_path": 3,
+					"max_out_degree": 2,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 1,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.25,
+					"relational_density": 0.4
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 1,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 5,
+				"thought_type_counts": {
+					"regular": 2,
+					"hypothesis": 2,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 3,
+				"ancestor_count": 4,
+				"inbound": [
+					{
+						"thought_number": 3,
+						"kind": "branch"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (1-3) without verification"
+			],
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 7,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt"
+			],
+			"thought_history_length": 6,
+			"thought_type": "hypothesis",
+			"confidence": 0.7,
+			"hypothesis_id": "H-C",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 1,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 3,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.66711991957,
+				"quality_components": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 0.6666666666666666,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": 0.8585786437626904
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 0.6666666666666666,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": 0.8585786437626904
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 3,
+					"max_out_degree": 2,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.6666666667,
+					"relational_density": 0.6
+				},
+				"calibrated_confidence": 0.7272727272727273,
+				"calibration_metrics": {
+					"brierScore": 0.16000000000000003,
+					"ece": 0.4,
+					"sampleCount": 1,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.16000000000000003,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 1,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 4,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 3,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 3,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 1,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 3,
+				"ancestor_count": 3,
+				"inbound": [
+					{
+						"thought_number": 3,
+						"kind": "branch"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 8,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt"
+			],
+			"thought_history_length": 6,
+			"thought_type": "verification",
+			"confidence": 0.4,
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 1,
+				"thought_type_distribution": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.66,
+				"structural_quality": 0.7038314787818537,
+				"quality_components": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8145276300900859
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8145276300900859
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 2,
+					"leaf_count": 3,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 3,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 2,
+					"branching_factor": 1.6666666667,
+					"relational_density": 0.8
+				},
+				"calibrated_confidence": 0.4,
+				"calibration_metrics": {
+					"brierScore": 0.32499999999999996,
+					"ece": 0.55,
+					"sampleCount": 2,
+					"perTypeBrier": {
+						"regular": null,
+						"hypothesis": 0.32499999999999996,
+						"verification": null,
+						"critique": null,
+						"synthesis": null,
+						"meta": null,
+						"tool_call": null,
+						"tool_observation": null,
+						"assumption": null,
+						"decomposition": null,
+						"backtrack": null
+					}
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 1,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 3,
+				"thought_type_counts": {
+					"regular": 1,
+					"hypothesis": 2,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 2,
+				"verified_hypothesis_count": 2,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.66
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 3,
+						"kind": "branch"
+					}
+				],
+				"outbound": [
+					{
+						"thought_number": 7,
+						"kind": "verifies",
+						"branch_id": "alt"
+					}
+				]
+			},
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 9,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 2,
+					"hypothesis": 1,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.7,
+				"structural_quality": 0.7035529326148096,
+				"quality_components": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8129171306613029
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724236,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8129171306613029
+				},
+				"graph_signals": {
+					"node_count": 5,
+					"edge_count": 3,
+					"root_count": 2,
+					"leaf_count": 3,
+					"longest_path": 1,
+					"max_out_degree": 2,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 1,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 2,
+					"branching_factor": 1.5,
+					"relational_density": 0.6666666667
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 2,
+				"thought_type_counts": {
+					"regular": 2,
+					"hypothesis": 1,
+					"verification": 3,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.7
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 8,
+						"kind": "branch",
+						"branch_id": "alt"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 10,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.6333333333,
+				"structural_quality": 0.7064908819684323,
+				"quality_components": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8300326828802405
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5644754678724235,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8300326828802405
+				},
+				"graph_signals": {
+					"node_count": 4,
+					"edge_count": 3,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 1,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 0,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 0,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 3,
+					"relational_density": 1
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 1,
+				"thought_type_counts": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 2,
+					"critique": 0,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.6333333333
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 8,
+						"kind": "branch",
+						"branch_id": "alt"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "continue",
+				"nextHint": "explore frontier"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 11,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "critique",
+			"confidence_signals": {
+				"reasoning_depth": 6,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.55,
+				"structural_quality": 0.7550538011997725,
+				"quality_components": {
+					"type_diversity": 0.6934264036172707,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.6934264036172707,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"graph_signals": {
+					"node_count": 5,
+					"edge_count": 4,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 0,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 2,
+					"relational_density": 1
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 6,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 2,
+				"thought_type_counts": {
+					"regular": 3,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 0,
+				"ancestor_count": 0,
+				"inbound": [],
+				"outbound": [
+					{
+						"thought_number": 8,
+						"kind": "critiques",
+						"branch_id": "alt"
+					}
+				]
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (9-11) without verification"
+			],
+			"strategy_hint": {
+				"action": "terminate",
+				"reason": "plateau"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 12,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 7,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 4,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.55,
+				"structural_quality": 0.7160397296371013,
+				"quality_components": {
+					"type_diversity": 0.6439156385193586,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.42857142857142855,
+					"confidence_stability": 0.8500000000000001
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.6439156385193586,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.42857142857142855,
+					"confidence_stability": 0.8500000000000001
+				},
+				"graph_signals": {
+					"node_count": 6,
+					"edge_count": 5,
+					"root_count": 1,
+					"leaf_count": 4,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 1,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 2.5,
+					"relational_density": 0.8
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 7,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 3,
+				"thought_type_counts": {
+					"regular": 4,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 1,
+				"ancestor_count": 1,
+				"inbound": [
+					{
+						"thought_number": 11,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "terminate",
+				"reason": "plateau"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 13,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "regular",
+			"confidence_signals": {
+				"reasoning_depth": 8,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"has_hypothesis": true,
+				"has_verification": true,
+				"average_confidence": 0.55,
+				"structural_quality": 0.7226694373408433,
+				"quality_components": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.5,
+					"confidence_stability": 0.8500000000000001
+				},
+				"graph_signals": {
+					"node_count": 7,
+					"edge_count": 6,
+					"root_count": 1,
+					"leaf_count": 4,
+					"longest_path": 2,
+					"max_out_degree": 3,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 2,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 1,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 2,
+					"relational_density": 0.6666666667
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 8,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 4,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 1,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 0
+				},
+				"hypothesis_count": 1,
+				"verified_hypothesis_count": 1,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.55
+			},
+			"graph_context": {
+				"root_distance": 2,
+				"ancestor_count": 2,
+				"inbound": [
+					{
+						"thought_number": 12,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"Critique at thought 11 of thought 8 has not been addressed by a revision or verification within 3 thoughts"
+			],
+			"strategy_hint": {
+				"action": "terminate",
+				"reason": "plateau"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 14,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "backtrack",
+			"confidence_signals": {
+				"reasoning_depth": 8,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"has_hypothesis": false,
+				"has_verification": true,
+				"average_confidence": 0.4,
+				"structural_quality": 0.7337487629856148,
+				"quality_components": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.625,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.5991556706386703,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.625,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 7,
+					"edge_count": 6,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 3,
+					"max_out_degree": 2,
+					"max_in_degree": 1,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 1,
+						"derives_from": 0,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.5,
+					"relational_density": 0.5
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 8,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 5,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 0,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.4
+			},
+			"graph_context": {
+				"root_distance": 3,
+				"ancestor_count": 3,
+				"inbound": [
+					{
+						"thought_number": 13,
+						"kind": "sequence"
+					}
+				],
+				"outbound": []
+			},
+			"reasoning_hints": [
+				"3+ consecutive thoughts (9-11) without verification"
+			],
+			"strategy_hint": {
+				"action": "terminate",
+				"reason": "plateau"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 15,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "synthesis",
+			"confidence_signals": {
+				"reasoning_depth": 9,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"has_hypothesis": false,
+				"has_verification": true,
+				"average_confidence": 0.4,
+				"structural_quality": 0.801886679966824,
+				"quality_components": {
+					"type_diversity": 0.7272697179176238,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.7272697179176238,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6666666666666666,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 8,
+					"edge_count": 8,
+					"root_count": 1,
+					"leaf_count": 3,
+					"longest_path": 3,
+					"max_out_degree": 3,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 1,
+						"derives_from": 2,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 1,
+					"branching_factor": 1.6,
+					"relational_density": 0.625
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 9,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 6,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 1,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.4
+			},
+			"graph_context": {
+				"root_distance": 2,
+				"ancestor_count": 3,
+				"inbound": [
+					{
+						"thought_number": 8,
+						"kind": "derives_from",
+						"branch_id": "alt"
+					},
+					{
+						"thought_number": 10,
+						"kind": "derives_from",
+						"branch_id": "alt"
+					}
+				],
+				"outbound": []
+			},
+			"strategy_hint": {
+				"action": "terminate",
+				"reason": "plateau"
+			},
+			"session_id": "admission-pin"
+		},
+		{
+			"thought_number": 16,
+			"total_thoughts": 20,
+			"next_thought_needed": true,
+			"branches": [
+				"alt",
+				"beta"
+			],
+			"thought_history_length": 6,
+			"thought_type": "verification",
+			"confidence_signals": {
+				"reasoning_depth": 10,
+				"revision_count": 0,
+				"branch_count": 2,
+				"thought_type_distribution": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 2,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"has_hypothesis": false,
+				"has_verification": true,
+				"average_confidence": 0.4,
+				"structural_quality": 0.7934938801824083,
+				"quality_components": {
+					"type_diversity": 0.7586044466395969,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6,
+					"confidence_stability": null
+				},
+				"quality_components_raw": {
+					"type_diversity": 0.7586044466395969,
+					"verification_coverage": 1,
+					"depth_efficiency": 0.6,
+					"confidence_stability": null
+				},
+				"graph_signals": {
+					"node_count": 9,
+					"edge_count": 8,
+					"root_count": 2,
+					"leaf_count": 4,
+					"longest_path": 3,
+					"max_out_degree": 3,
+					"max_in_degree": 2,
+					"edge_kind_counts": {
+						"sequence": 3,
+						"branch": 2,
+						"merge": 0,
+						"verifies": 0,
+						"critiques": 1,
+						"derives_from": 2,
+						"tool_invocation": 0,
+						"revises": 0
+					},
+					"component_count": 2,
+					"branching_factor": 1.6,
+					"relational_density": 0.625
+				}
+			},
+			"reasoning_stats": {
+				"total_thoughts": 10,
+				"total_branches": 2,
+				"total_revisions": 0,
+				"total_merges": 0,
+				"chain_depth": 6,
+				"thought_type_counts": {
+					"regular": 5,
+					"hypothesis": 0,
+					"verification": 2,
+					"critique": 1,
+					"synthesis": 1,
+					"meta": 0,
+					"tool_call": 0,
+					"tool_observation": 0,
+					"assumption": 0,
+					"decomposition": 0,
+					"backtrack": 1
+				},
+				"hypothesis_count": 0,
+				"verified_hypothesis_count": 0,
+				"unresolved_hypothesis_count": 0,
+				"average_quality_score": null,
+				"average_confidence": 0.4
+			},
+			"reasoning_hints": [
+				"Critique at thought 11 of thought 8 has not been addressed by a revision or verification within 3 thoughts"
+			],
+			"strategy_hint": {
+				"action": "terminate",
+				"reason": "plateau"
+			},
+			"session_id": "admission-pin"
+		}
+	]
+}
