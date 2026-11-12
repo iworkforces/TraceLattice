@@ -42,6 +42,8 @@ const SQL = {
 	selectBranchPayloads: 'SELECT branch_id, data FROM branches WHERE session_id = ?',
 } as const;
 
+export const STATEFUL_SQLITE_SQL = SQL;
+
 const EXEC_SQL = [
 	'BEGIN',
 	'BEGIN IMMEDIATE',
@@ -117,6 +119,16 @@ type DatabaseState = {
 };
 
 type StatementMethod = 'run' | 'get' | 'all';
+
+type StatementObservation = {
+	readonly sql: string;
+	readonly inTransaction: boolean;
+};
+
+type AfterStatementHook = {
+	readonly sql: string;
+	readonly callback: () => void;
+};
 
 export class UnsupportedStructuralSqlError extends Error {
 	public constructor(surface: string, sql: string) {
@@ -225,9 +237,14 @@ function emptyState(): DatabaseState {
 
 export class StatefulSqliteDatabase implements SqliteDatabase {
 	public readonly execLog: string[] = [];
+	public readonly statementLog: StatementObservation[] = [];
 	private _state = emptyState();
 	private _transactionSnapshot: DatabaseState | undefined;
+	// A plain BEGIN reads from this frozen view; seeders and overwrites below keep acting on the
+	// committed state, which models another connection committing while the reader is open.
+	private _readView: DatabaseState | undefined;
 	private _beforeNextBeginImmediate: (() => void) | undefined;
+	private _afterNextStatement: AfterStatementHook | undefined;
 	private _failingStatement: string | undefined;
 	private _commitWillFail = false;
 	private _healthy = true;
@@ -244,6 +261,7 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 				if (this._transactionSnapshot !== undefined)
 					throw new StructuralSqliteFailure('nested transaction');
 				this._transactionSnapshot = cloneState(this._state);
+				this._readView = this._transactionSnapshot;
 				return;
 			case 'BEGIN IMMEDIATE': {
 				if (this._transactionSnapshot !== undefined)
@@ -262,12 +280,14 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 					throw new StructuralSqliteFailure('COMMIT');
 				}
 				this._transactionSnapshot = undefined;
+				this._readView = undefined;
 				return;
 			case 'ROLLBACK':
 				if (this._transactionSnapshot === undefined)
 					throw new StructuralSqliteFailure('rollback without transaction');
-				this._state = this._transactionSnapshot;
+				if (this._readView === undefined) this._state = this._transactionSnapshot;
 				this._transactionSnapshot = undefined;
+				this._readView = undefined;
 				return;
 			case SQLITE_V2_SCHEMA_DDL:
 				this._state.schemaRows = schemaRowsFromDdl();
@@ -296,9 +316,9 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 		this._assertOpen();
 		if (!PREPARED_SQL.has(sql)) throw new UnsupportedStructuralSqlError('prepare', sql);
 		return {
-			run: (...params) => this._run(sql, params),
-			get: (...params) => this._get(sql, params),
-			all: (...params) => this._all(sql, params),
+			run: (...params) => this._observe(sql, () => this._run(sql, params)),
+			get: (...params) => this._observe(sql, () => this._get(sql, params)),
+			all: (...params) => this._observe(sql, () => this._all(sql, params)),
 		};
 	}
 
@@ -321,6 +341,17 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 
 	public beforeNextBeginImmediate(callback: () => void): void {
 		this._beforeNextBeginImmediate = callback;
+	}
+
+	public afterNextStatement(sql: string, callback: () => void): void {
+		if (!PREPARED_SQL.has(sql)) throw new UnsupportedStructuralSqlError('hook target', sql);
+		this._afterNextStatement = { sql, callback };
+	}
+
+	public removeBranchData(sessionId: string, branchId: string): void {
+		const branches = this._state.branches.get(sessionId);
+		branches?.delete(branchId);
+		if (branches?.size === 0) this._state.branches.delete(sessionId);
 	}
 
 	public setHealthy(healthy: boolean): void {
@@ -415,17 +446,32 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 		}
 	}
 
+	private _observe<T>(sql: string, execute: () => T): T {
+		this.statementLog.push({ sql, inTransaction: this._transactionSnapshot !== undefined });
+		const value = execute();
+		const hook = this._afterNextStatement;
+		if (hook?.sql === sql) {
+			this._afterNextStatement = undefined;
+			hook.callback();
+		}
+		return value;
+	}
+
+	private _visibleState(): DatabaseState {
+		return this._readView ?? this._state;
+	}
+
 	private _get(sql: string, params: readonly unknown[]): unknown {
 		this._maybeFail(sql);
+		const state = this._visibleState();
 		switch (sql) {
 			case SQL.countSessionThoughts:
 				return {
-					count: this._state.thoughts.filter(
-						(row) => row.session_id === stringParameter(params, 0, sql)
-					).length,
+					count: state.thoughts.filter((row) => row.session_id === stringParameter(params, 0, sql))
+						.length,
 				};
 			case SQL.selectBranch: {
-				const row = this._state.branches
+				const row = state.branches
 					.get(stringParameter(params, 0, sql))
 					?.get(stringParameter(params, 1, sql));
 				return row === undefined ? undefined : { data: row.data };
@@ -434,13 +480,10 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 				if (!this._healthy) throw new StructuralSqliteFailure('health check');
 				return { result: 1 };
 			case SQL.countThoughts:
-				return { count: this._state.thoughts.length };
+				return { count: state.thoughts.length };
 			case SQL.countBranches:
 				return {
-					count: [...this._state.branches.values()].reduce(
-						(total, branches) => total + branches.size,
-						0
-					),
+					count: [...state.branches.values()].reduce((total, branches) => total + branches.size, 0),
 				};
 			default:
 				throw this._wrongMethod('get', sql);
@@ -449,43 +492,44 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 
 	private _all(sql: string, params: readonly unknown[]): unknown[] {
 		this._maybeFail(sql);
+		const state = this._visibleState();
 		switch (sql) {
 			case SQL.schemaObjects:
-				return this._state.schemaRows.map((row) => ({ ...row }));
+				return state.schemaRows.map((row) => ({ ...row }));
 			case SQL.versionRows:
-				return structuredClone(this._state.versionRows);
+				return structuredClone(state.versionRows);
 			case SQL.selectHistory:
-				return this._state.thoughts
+				return state.thoughts
 					.filter((row) => row.session_id === stringParameter(params, 0, sql))
 					.sort((left, right) => left.id - right.id)
 					.map((row) => ({ data: row.data }));
 			case SQL.listBranches:
-				return [...(this._state.branches.get(stringParameter(params, 0, sql))?.values() ?? [])]
+				return [...(state.branches.get(stringParameter(params, 0, sql))?.values() ?? [])]
 					.sort((left, right) => compareCodePoint(left.branch_id, right.branch_id))
 					.map(({ branch_id }) => ({ branch_id }));
 			case SQL.listSessions:
-				return [...this._sessionIds()].map((session_id) => ({ session_id }));
+				return [...this._sessionIds(state)].map((session_id) => ({ session_id }));
 			case SQL.selectEdges:
-				return [...(this._state.edges.get(stringParameter(params, 0, sql))?.values() ?? [])]
+				return [...(state.edges.get(stringParameter(params, 0, sql))?.values() ?? [])]
 					.sort(
 						(left, right) =>
 							left.created_at - right.created_at || compareCodePoint(left.id, right.id)
 					)
 					.map((row) => ({ ...row }));
 			case SQL.listEdgeSessions:
-				return [...this._state.edges]
+				return [...state.edges]
 					.filter(([, rows]) => rows.size > 0)
 					.map(([session_id]) => ({ session_id }))
 					.sort((left, right) => compareCodePoint(left.session_id, right.session_id));
 			case SQL.selectSummaries:
-				return [...(this._state.summaries.get(stringParameter(params, 0, sql))?.values() ?? [])]
+				return [...(state.summaries.get(stringParameter(params, 0, sql))?.values() ?? [])]
 					.sort(
 						(left, right) =>
 							left.created_at - right.created_at || compareCodePoint(left.id, right.id)
 					)
 					.map((row) => ({ ...row }));
 			case SQL.selectBranchPayloads:
-				return [...(this._state.branches.get(stringParameter(params, 0, sql))?.values() ?? [])].map(
+				return [...(state.branches.get(stringParameter(params, 0, sql))?.values() ?? [])].map(
 					({ branch_id, data }) => ({ branch_id, data })
 				);
 			default:
@@ -602,13 +646,11 @@ export class StatefulSqliteDatabase implements SqliteDatabase {
 		return rows;
 	}
 
-	private _sessionIds(): Set<string> {
-		const sessionIds = new Set(this._state.thoughts.map(({ session_id }) => session_id));
-		for (const [sessionId, rows] of this._state.branches)
-			if (rows.size > 0) sessionIds.add(sessionId);
-		for (const [sessionId, rows] of this._state.edges) if (rows.size > 0) sessionIds.add(sessionId);
-		for (const [sessionId, rows] of this._state.summaries)
-			if (rows.size > 0) sessionIds.add(sessionId);
+	private _sessionIds(state: DatabaseState): Set<string> {
+		const sessionIds = new Set(state.thoughts.map(({ session_id }) => session_id));
+		for (const [sessionId, rows] of state.branches) if (rows.size > 0) sessionIds.add(sessionId);
+		for (const [sessionId, rows] of state.edges) if (rows.size > 0) sessionIds.add(sessionId);
+		for (const [sessionId, rows] of state.summaries) if (rows.size > 0) sessionIds.add(sessionId);
 		return sessionIds;
 	}
 
