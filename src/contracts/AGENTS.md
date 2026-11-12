@@ -1,6 +1,6 @@
 # CONTRACTS MODULE
 
-**Updated:** 2026-09-22
+**Updated:** 2026-11-12
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
@@ -22,6 +22,7 @@ Cross-module type hub. No barrel. Import the specific file.
 | `transport.ts`          | `ITransport`                                                                                                                                                  |
 | `PersistenceBackend.ts` | Session-scoped persistence contract + config                                                                                                                  |
 | `persistence-work.ts`   | Queue jobs (`thought`, `backtrack`, coalesced branch/edge/summary snapshots) and tokens                                                                       |
+| `persistence-backlog.ts` | `PersistenceBacklogView` + `PersistenceBacklogSource` (`HistoryManager.getPersistenceBacklogView()`): quarantine and unflushed-work counts for `HealthChecker`                |
 
 ## RULES
 
