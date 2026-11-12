@@ -1119,8 +1119,8 @@ describe('HistoryManager — uncovered branches', () => {
 		useRealTimers();
 	});
 
-	describe('backpressure logging (line 382)', () => {
-		it('should log backpressure warning when buffer is full and flush is in progress', async () => {
+	describe('buffer-size trigger while a flush is in progress', () => {
+		it('should keep accepting thoughts without claiming backpressure it does not apply', async () => {
 			useFakeTimers();
 			const persistence = new MockPersistence();
 			// Hold the first write so the coordinator keeps one drain generation active.
@@ -1153,16 +1153,15 @@ describe('HistoryManager — uncovered branches', () => {
 			// Later capacity triggers join that generation while accepted work remains queued.
 			manager.addThought(createTestThought({ thought_number: 2 }));
 
-			// The next acceptance observes a full coordinator-owned queue and logs backpressure.
+			// The next acceptance is still enqueued; only the per-session limit can reject.
 			manager.addThought(createTestThought({ thought_number: 3 }));
 
-			expect(mockLogger.info).toHaveBeenCalledWith(
-				'Write buffer full and flush in progress, applying backpressure',
-				expect.objectContaining({
-					bufferSize: expect.any(Number),
-					maxSize: 1,
-				})
+			expect(manager.getHistoryLength(SESSION_ID)).toBe(3);
+			expect(mockLogger.info).not.toHaveBeenCalledWith(
+				expect.stringContaining('backpressure'),
+				expect.anything()
 			);
+			expect(mockLogger.warn).not.toHaveBeenCalled();
 
 			// Unblock the joined generation.
 			resolveSave();
