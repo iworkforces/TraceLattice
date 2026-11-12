@@ -9,6 +9,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
 import type { BranchId, SessionId, ThoughtId } from '../contracts/ids.js';
 import type { PersistenceWork, PersistenceWorkToken } from '../contracts/persistence-work.js';
+import type { PersistenceBacklogView } from '../contracts/persistence-backlog.js';
 import {
 	PersistenceDrainError,
 	PersistenceSessionAdmissionClosedError,
@@ -484,6 +485,20 @@ export class PersistenceBuffer {
 			() => undefined
 		);
 		return result;
+	}
+
+	/** @returns A frozen point-in-time view of quarantine and unflushed work for readiness probes. */
+	public getBacklogView(): PersistenceBacklogView {
+		const quarantinedSessions = new Set<SessionId>([
+			...this._quarantinedSessions,
+			...this._evictionQuarantinedSessions,
+		]);
+		return Object.freeze({
+			globalQuarantined: this._globalQuarantined,
+			quarantinedSessionCount: quarantinedSessions.size,
+			retainedFailureCount: this._queue.currentFailures().length,
+			pendingThoughtCount: this._queue.pendingThoughtCount,
+		});
 	}
 
 	private _joinOrStart(mode: PersistenceSelectionMode): ActiveDrain {
