@@ -150,6 +150,15 @@ export type BranchId = string & { readonly branch: unique symbol };
 export interface ThoughtData { readonly id?: ThoughtId; readonly retracted?: boolean; }
 export interface Edge { readonly from: ThoughtId; readonly to: ThoughtId; }
 export interface Summary { readonly id: string; }
+export interface PersistedBranchRecord { readonly branchId: BranchId; readonly thoughts: readonly ThoughtData[]; }
+export interface PersistedSessionRecord {
+  readonly sessionId: SessionId;
+  readonly history: readonly ThoughtData[];
+  readonly branches: readonly PersistedBranchRecord[];
+  readonly edges: readonly Edge[];
+  readonly summaries: readonly Summary[];
+}
+export interface PersistenceRestoreRead { readonly sessions: readonly PersistedSessionRecord[]; }
 export interface PersistenceBackend {
   saveThoughtForSession(session: SessionId, thought: ThoughtData): Promise<void>;
   saveBacktrackForSession(session: SessionId, thought: ThoughtData, target: ThoughtId): Promise<void>;
@@ -159,6 +168,7 @@ export interface PersistenceBackend {
   loadBranchForSession(session: SessionId, branch: BranchId): Promise<ThoughtData[] | undefined>;
   listBranchesForSession(session: SessionId): Promise<BranchId[]>;
   listSessions(): Promise<SessionId[]>;
+  loadAllSessionsForRestore(): Promise<PersistenceRestoreRead>;
   healthy(): Promise<boolean>;
   clearSession(session: SessionId): Promise<void>;
   clearAll(): Promise<void>;

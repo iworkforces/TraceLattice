@@ -82,6 +82,22 @@ const persistenceBackend = {
   async loadBranchForSession(session, branch) { return branches.get(session)?.get(branch); },
   async listBranchesForSession(session) { return [...(branches.get(session)?.keys() ?? [])]; },
   async listSessions() { return [...histories.keys()]; },
+  async loadAllSessionsForRestore() {
+    const sessions = new Set([
+      ...histories.keys(), ...branches.keys(), ...edges.keys(), ...summaries.keys(),
+    ]);
+    return {
+      sessions: [...sessions].sort().map((sessionId) => ({
+        sessionId,
+        history: [...(histories.get(sessionId) ?? [])],
+        branches: [...(branches.get(sessionId) ?? [])]
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .map(([branchId, thoughts]) => ({ branchId, thoughts: [...thoughts] })),
+        edges: [...(edges.get(sessionId) ?? [])],
+        summaries: [...(summaries.get(sessionId) ?? [])],
+      })),
+    };
+  },
   async healthy() { return true; },
   async clearSession(session) {
     for (const store of [histories, branches, edges, summaries]) store.delete(session);
@@ -241,6 +257,9 @@ const declarationConsumer = `import {
   type TransportOptions,
   type ServerOptions,
   type PersistenceBackend,
+  type PersistedBranchRecord,
+  type PersistedSessionRecord,
+  type PersistenceRestoreRead,
   type ThoughtData,
   type Edge,
   type Summary,
@@ -271,6 +290,22 @@ class ConsumerBackend implements PersistenceBackend {
   async loadBranchForSession(session: SessionId, branch: BranchId): Promise<ThoughtData[] | undefined> { return this.branches.get(session)?.get(branch); }
   async listBranchesForSession(session: SessionId): Promise<BranchId[]> { return [...(this.branches.get(session)?.keys() ?? [])]; }
   async listSessions(): Promise<SessionId[]> { return [...this.histories.keys()]; }
+  async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+    const sessions = new Set<SessionId>([
+      ...this.histories.keys(), ...this.branches.keys(), ...this.edges.keys(), ...this.summaries.keys(),
+    ]);
+    return {
+      sessions: [...sessions].sort().map((sessionId): PersistedSessionRecord => ({
+        sessionId,
+        history: [...(this.histories.get(sessionId) ?? [])],
+        branches: [...(this.branches.get(sessionId) ?? [])]
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .map(([branchId, thoughts]): PersistedBranchRecord => ({ branchId, thoughts: [...thoughts] })),
+        edges: [...(this.edges.get(sessionId) ?? [])],
+        summaries: [...(this.summaries.get(sessionId) ?? [])],
+      })),
+    };
+  }
   async healthy(): Promise<boolean> { return true; }
   async clearSession(session: SessionId): Promise<void> {
     this.histories.delete(session); this.branches.delete(session);
@@ -288,8 +323,11 @@ class ConsumerBackend implements PersistenceBackend {
 const injectedServer = createServer({ persistenceBackend: new ConsumerBackend() });
 type MissingBacktrack = Omit<PersistenceBackend, 'saveBacktrackForSession'>;
 const backtrackRequired: MissingBacktrack extends ServerOptions['persistenceBackend'] ? false : true = true;
+type MissingRestoreRead = Omit<PersistenceBackend, 'loadAllSessionsForRestore'>;
+const restoreReadRequired: MissingRestoreRead extends ServerOptions['persistenceBackend'] ? false : true = true;
 void injectedServer;
 void backtrackRequired;
+void restoreReadRequired;
 
 const commonOptions: TransportOptions = {
   port: 9108,
