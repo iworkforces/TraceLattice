@@ -17,7 +17,7 @@ MCP sequential-thinking server (`@iworkforces/tracelattice`). TypeScript ESM + V
 ├── src/CliLifecycle.ts   # SIGINT/SIGTERM + stdin-end shutdown
 ├── src/schema.ts         # Valibot SSOT + TOOL_DESCRIPTION
 ├── src/ServerConfig.ts   # Validated config + 7 feature flags
-├── src/errors.ts         # SequentialThinkingError + ERROR_CODES (37)
+├── src/errors.ts         # SequentialThinkingError + ERROR_CODES (38)
 ├── src/core/             # Pipeline + session/persistence coordinators
 ├── src/persistence/      # File v2 / SQLite v2 / Memory sinks
 ├── src/contracts/        # Cross-module interfaces (no barrels)
@@ -50,7 +50,7 @@ Refs = production `.ts` files containing the identifier (tests excluded). LSP is
 | Symbol                              | Type   | Location                                   | Refs | Role                                                                      |
 | ----------------------------------- | ------ | ------------------------------------------ | ---- | ------------------------------------------------------------------------- |
 | `asSessionId`                       | fn     | `src/contracts/ids.ts`                     | 36   | Only validated SessionId constructor; rejects retired `__global__`        |
-| `SequentialThinkingError`           | class  | `src/errors.ts`                            | 10   | ERROR_CODES hub (37). Module `errors.ts` is imported much more widely     |
+| `SequentialThinkingError`           | class  | `src/errors.ts`                            | 10   | ERROR_CODES hub (38). Module `errors.ts` is imported much more widely     |
 | `ThoughtData` / `ValidatedThought`  | type   | `src/core/thought.ts`                      | 56   | Branded schema output. `ValidatedThought` is 7 arms over 11 `ThoughtType`s |
 | `PersistenceBackend`                | iface  | `src/contracts/PersistenceBackend.ts`      | 22   | Session-scoped sink contract                                              |
 | `SequentialThinkingSchema`          | schema | `src/schema.ts`                            | 9    | Thought input SSOT (11 `thought_type` values)                             |

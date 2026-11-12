@@ -19,7 +19,12 @@ import { PersistenceBuffer, type PersistenceEventEmitter } from '../../core/Pers
 import { PersistenceWorkQueue } from '../../core/PersistenceWorkQueue.js';
 import { PersistenceWriter, type PersistenceDelay } from '../../core/PersistenceWriter.js';
 import type { ThoughtData } from '../../core/thought.js';
-import { PersistenceSessionBarrierReentrancyError } from '../../core/PersistenceBufferErrors.js';
+import {
+	PersistenceBacklogFullError,
+	PersistenceSessionBarrierReentrancyError,
+} from '../../core/PersistenceBufferErrors.js';
+import { NullLogger } from '../../logger/NullLogger.js';
+import type { Logger } from '../../logger/StructuredLogger.js';
 import { createTestThought } from '../helpers/factories.js';
 
 interface Deferred {
@@ -192,6 +197,8 @@ interface HarnessOptions {
 	readonly flushInterval?: number;
 	readonly eventEmitter?: PersistenceEventEmitter;
 	readonly delay?: PersistenceDelay;
+	readonly maxPendingThoughtsPerSession?: number;
+	readonly logger?: Logger;
 }
 
 const activeBuffers: PersistenceBuffer[] = [];
@@ -215,6 +222,8 @@ function createHarness(options: HarnessOptions): Harness {
 		maxRetries: options.maxRetries ?? 0,
 		eventEmitter: options.eventEmitter,
 		delay: options.delay,
+		maxPendingThoughtsPerSession: options.maxPendingThoughtsPerSession,
+		logger: options.logger,
 	});
 	activeBuffers.push(buffer);
 	return { buffer };
@@ -1733,5 +1742,410 @@ describe('PersistenceBuffer eviction state and barrier', () => {
 			{ hasWork: true, hasFailure: false },
 			{ hasWork: true, hasFailure: false },
 		]);
+	});
+});
+
+describe('PersistenceWorkQueue per-session pending thought counts', () => {
+	function queuedThought(sessionId: SessionId, thoughtNumber: number): ThoughtData {
+		return createTestThought({
+			id: `${sessionId}-thought-${thoughtNumber}`,
+			session_id: sessionId,
+			thought_number: thoughtNumber,
+		});
+	}
+
+	it('counts thought and backtrack entries per session and ignores coalesced entries', () => {
+		// Given
+		const sessionA = asSessionId('count-a');
+		const sessionB = asSessionId('count-b');
+		const queue = new PersistenceWorkQueue();
+
+		// When
+		queue.enqueueThought(sessionA, queuedThought(sessionA, 1));
+		queue.enqueueBacktrack(sessionA, queuedThought(sessionA, 2), asThoughtId('count-a-thought-1'));
+		queue.enqueueThought(sessionB, queuedThought(sessionB, 1));
+		queue.replaceBranch(sessionA, asBranchId('count-branch'), []);
+		queue.deleteBranch(sessionA, asBranchId('count-deleted'));
+		queue.replaceEdges(sessionA, [edge(sessionA, 'count', 1)]);
+		queue.replaceSummaries(sessionA, [summary(sessionA, 'count')]);
+
+		// Then
+		expect(queue.pendingThoughtCountForSession(sessionA)).toBe(2);
+		expect(queue.pendingThoughtCountForSession(sessionB)).toBe(1);
+		expect(queue.pendingThoughtCountForSession(asSessionId('count-unknown'))).toBe(0);
+		expect(queue.pendingThoughtCount).toBe(3);
+	});
+
+	it('keeps terminal failures counted and releases entries only on acknowledged success', () => {
+		// Given
+		const sessionId = asSessionId('count-ack');
+		const queue = new PersistenceWorkQueue();
+		const first = queue.enqueueThought(sessionId, queuedThought(sessionId, 1));
+		const second = queue.enqueueBacktrack(
+			sessionId,
+			queuedThought(sessionId, 2),
+			asThoughtId('count-ack-thought-1')
+		);
+
+		// When
+		queue.acknowledgeFailure(first, {
+			kind: 'thought',
+			token: first.token,
+			sessionId,
+			attempts: 1,
+			cause: new ExpectedWriteError('terminal'),
+		});
+		const afterFailure = queue.pendingThoughtCountForSession(sessionId);
+		queue.acknowledgeSuccess(second);
+		const afterBacktrackAck = queue.pendingThoughtCountForSession(sessionId);
+		queue.acknowledgeSuccess(second);
+		const afterDuplicateAck = queue.pendingThoughtCountForSession(sessionId);
+		queue.acknowledgeSuccess(first);
+
+		// Then
+		expect(afterFailure).toBe(2);
+		expect(afterBacktrackAck).toBe(1);
+		expect(afterDuplicateAck).toBe(1);
+		expect(queue.pendingThoughtCountForSession(sessionId)).toBe(0);
+		expect(queue.pendingThoughtCount).toBe(0);
+	});
+
+	it('forgets one session on discardSession and every session on discardAll', () => {
+		// Given
+		const sessionA = asSessionId('count-discard-a');
+		const sessionB = asSessionId('count-discard-b');
+		const queue = new PersistenceWorkQueue();
+		const stale = queue.enqueueThought(sessionA, queuedThought(sessionA, 1));
+		queue.enqueueThought(sessionB, queuedThought(sessionB, 1));
+
+		// When
+		queue.discardSession(sessionA);
+		const replacement = queue.enqueueThought(sessionA, queuedThought(sessionA, 1));
+		queue.acknowledgeSuccess(stale);
+		const afterStaleAck = queue.pendingThoughtCountForSession(sessionA);
+		queue.discardAll();
+
+		// Then
+		expect(replacement.token).not.toBe(stale.token);
+		expect(afterStaleAck).toBe(1);
+		expect(queue.pendingThoughtCountForSession(sessionA)).toBe(0);
+		expect(queue.pendingThoughtCountForSession(sessionB)).toBe(0);
+	});
+});
+
+describe('PersistenceBuffer per-session backlog limit', () => {
+	function limitedHarness(persistence: PersistenceBackend, limit: number): Harness {
+		return createHarness({ persistence, maxRetries: 0, maxPendingThoughtsPerSession: limit });
+	}
+
+	function thrownBy(operation: () => void): unknown {
+		try {
+			operation();
+		} catch (error) {
+			return error;
+		}
+		return undefined;
+	}
+
+	function thoughtNumbers(persistence: RecordingPersistence): number[] {
+		return persistence.thoughtWrites.map((write) => write.thought.thought_number);
+	}
+
+	function failingBackend(isDown: () => boolean): RecordingPersistence {
+		return new RecordingPersistence({
+			thought: async () => {
+				if (isDown()) throw new ExpectedWriteError('backend down');
+			},
+		});
+	}
+
+	it('rejects at the limit with a typed error, keeps the queue intact, and drains the backlog', async () => {
+		// Given
+		const sessionId = asSessionId('limit-reject');
+		const logger = new NullLogger();
+		const warn = vi.spyOn(logger, 'warn');
+		const persistence = new RecordingPersistence();
+		const harness = createHarness({
+			persistence,
+			maxRetries: 0,
+			maxPendingThoughtsPerSession: 2,
+			logger,
+		});
+		acceptThought(harness, sessionId, 1);
+		const belowLimit = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		acceptThought(harness, sessionId, 2);
+
+		// When
+		const atLimit = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		const pendingAfterRejection = harness.buffer.pendingThoughtCount;
+		await harness.buffer.drain();
+
+		// Then
+		expect(belowLimit).toBeUndefined();
+		expect(atLimit).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(atLimit).toMatchObject({
+			name: 'PersistenceBacklogFullError',
+			code: 'PERSISTENCE_BACKLOG_FULL',
+			sessionId,
+			pending: 2,
+			limit: 2,
+		});
+		expect(warn).toHaveBeenCalledWith(
+			expect.stringContaining('backlog'),
+			expect.objectContaining({ sessionId, pending: 2, limit: 2 })
+		);
+		expect(pendingAfterRejection).toBe(2);
+		expect(thoughtNumbers(persistence)).toEqual([1, 2]);
+		expect(harness.buffer.pendingThoughtCount).toBe(0);
+		expect(() => harness.buffer.assertThoughtBacklogAvailable(sessionId)).not.toThrow();
+	});
+
+	it('counts terminal failures, skips them in timer drains, and retries them when it rejects', async () => {
+		// Given
+		const sessionId = asSessionId('limit-terminal');
+		const persistence = failingBackend(() => true);
+		const harness = createHarness({
+			persistence,
+			maxRetries: 0,
+			flushInterval: 100,
+			maxPendingThoughtsPerSession: 1,
+		});
+		acceptThought(harness, sessionId, 1);
+		const first = await settle(drain(harness.buffer));
+		harness.buffer.startFlushTimer();
+		await vi.advanceTimersByTimeAsync(500);
+		const attemptsAfterTimerDrains = persistence.thoughtWrites.length;
+		harness.buffer.stopFlushTimer();
+
+		// When
+		const rejection = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		const attemptsStartedByRejection = persistence.thoughtWrites.length;
+		const joined = await settle(drain(harness.buffer));
+
+		// Then
+		expect(first.status).toBe('rejected');
+		expect(attemptsAfterTimerDrains).toBe(1);
+		expect(rejection).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(attemptsStartedByRejection).toBe(2);
+		expect(joined.status).toBe('rejected');
+		expect(persistence.thoughtWrites).toHaveLength(2);
+		expect(harness.buffer.pendingThoughtCount).toBe(1);
+	});
+
+	it('admits the same session again after the backend recovers without a restart', async () => {
+		// Given
+		const sessionId = asSessionId('limit-recovery');
+		let down = true;
+		const persistence = failingBackend(() => down);
+		const harness = limitedHarness(persistence, 2);
+		acceptThought(harness, sessionId, 1);
+		acceptThought(harness, sessionId, 2);
+		await settle(drain(harness.buffer));
+		const whileDown = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		await vi.advanceTimersByTimeAsync(0);
+		const attemptsWhileDown = thoughtNumbers(persistence);
+		down = false;
+
+		// When
+		const afterRecovery = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		await vi.advanceTimersByTimeAsync(0);
+		const pendingAfterRejectionDrain = harness.buffer.pendingThoughtCount;
+		const retry = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		acceptThought(harness, sessionId, 3);
+		await drain(harness.buffer);
+
+		// Then
+		expect(whileDown).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(attemptsWhileDown).toEqual([1, 2, 1, 2]);
+		expect(afterRecovery).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(pendingAfterRejectionDrain).toBe(0);
+		expect(retry).toBeUndefined();
+		expect(thoughtNumbers(persistence)).toEqual([1, 2, 1, 2, 1, 2, 3]);
+		expect(harness.buffer.pendingThoughtCount).toBe(0);
+	});
+
+	it('joins the generation already in flight instead of starting another writer', async () => {
+		// Given
+		const sessionId = asSessionId('limit-join');
+		const gate = createDeferred();
+		const persistence = new RecordingPersistence({ thought: async () => gate.promise });
+		const harness = limitedHarness(persistence, 1);
+		acceptThought(harness, sessionId, 1);
+
+		// When
+		const first = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		const second = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		await flushMicrotasks();
+		const writesWhileBlocked = persistence.thoughtWrites.length;
+		gate.resolve();
+		await harness.buffer.drain();
+
+		// Then
+		expect(first).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(second).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(writesWhileBlocked).toBe(1);
+		expect(thoughtNumbers(persistence)).toEqual([1]);
+		expect(harness.buffer.pendingThoughtCount).toBe(0);
+	});
+
+	it('upgrades a background generation so retained failures are retried in the same pass', async () => {
+		// Given
+		const sessionId = asSessionId('limit-upgrade');
+		const gate = createDeferred();
+		let recovered = false;
+		const persistence = new RecordingPersistence({
+			thought: async ({ thought }) => {
+				if (thought.thought_number === 2) await gate.promise;
+				else if (!recovered) throw new ExpectedWriteError('terminal');
+			},
+		});
+		const harness = createHarness({
+			persistence,
+			maxRetries: 0,
+			flushInterval: 100,
+			maxPendingThoughtsPerSession: 2,
+		});
+		acceptThought(harness, sessionId, 1);
+		await settle(drain(harness.buffer));
+		acceptThought(harness, sessionId, 2);
+		harness.buffer.startFlushTimer();
+		await vi.advanceTimersByTimeAsync(100);
+		harness.buffer.stopFlushTimer();
+		recovered = true;
+
+		// When
+		const rejection = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		gate.resolve();
+		await vi.advanceTimersByTimeAsync(0);
+
+		// Then
+		expect(rejection).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(thoughtNumbers(persistence)).toEqual([1, 2, 1]);
+		expect(harness.buffer.pendingThoughtCount).toBe(0);
+		expect(harness.buffer.isFlushing).toBe(false);
+	});
+
+	it('leaves other sessions admissible while one session is at its limit', async () => {
+		// Given
+		const full = asSessionId('limit-full');
+		const other = asSessionId('limit-other');
+		const gate = createDeferred();
+		const persistence = new RecordingPersistence({ thought: async () => gate.promise });
+		const harness = limitedHarness(persistence, 1);
+		acceptThought(harness, full, 1);
+		acceptThought(harness, other, 1);
+
+		// When
+		const fullRejection = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(full));
+		const otherBelowLimit = thrownBy(() =>
+			harness.buffer.assertThoughtBacklogAvailable(asSessionId('limit-idle'))
+		);
+		const otherAtLimit = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(other));
+		gate.resolve();
+		await harness.buffer.drain();
+
+		// Then
+		expect(fullRejection).toMatchObject({ sessionId: full, pending: 1, limit: 1 });
+		expect(otherBelowLimit).toBeUndefined();
+		expect(otherAtLimit).toMatchObject({ sessionId: other, pending: 1, limit: 1 });
+	});
+
+	it('admits a replacement once a successful session reset discards the backlog', async () => {
+		// Given
+		const sessionId = asSessionId('limit-reset');
+		const persistence = failingBackend(() => true);
+		const harness = limitedHarness(persistence, 2);
+		acceptThought(harness, sessionId, 1);
+		acceptThought(harness, sessionId, 2);
+		await settle(drain(harness.buffer));
+		const failedReset = await settle(
+			harness.buffer.withSessionResetBarrier(sessionId, async () =>
+				Promise.reject(new ExpectedWriteError('delete failed'))
+			)
+		);
+		const afterFailedReset = thrownBy(() =>
+			harness.buffer.assertThoughtBacklogAvailable(sessionId)
+		);
+		await settle(drain(harness.buffer));
+
+		// When
+		await harness.buffer.withSessionResetBarrier(sessionId, async () => undefined);
+
+		// Then
+		expect(failedReset.status).toBe('rejected');
+		expect(afterFailedReset).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(() => harness.buffer.assertThoughtBacklogAvailable(sessionId)).not.toThrow();
+		expect(() => acceptThought(harness, sessionId, 3)).not.toThrow();
+		expect(harness.buffer.pendingThoughtCount).toBe(1);
+	});
+
+	it('never throws from bufferThought or bufferBacktrack because the check runs before mutation', () => {
+		// Given
+		const sessionId = asSessionId('limit-never-throws');
+		const harness = limitedHarness(new RecordingPersistence(), 1);
+		acceptThought(harness, sessionId, 1);
+
+		// When
+		const overflowThought = (): void => acceptThought(harness, sessionId, 2);
+		const overflowBacktrack = (): void =>
+			harness.buffer.bufferBacktrack(
+				sessionId,
+				createTestThought({ id: 'limit-never-throws-3', session_id: sessionId, thought_number: 3 }),
+				asThoughtId('limit-never-throws-thought-1')
+			);
+
+		// Then
+		expect(overflowThought).not.toThrow();
+		expect(overflowBacktrack).not.toThrow();
+		expect(harness.buffer.pendingThoughtCount).toBe(3);
+	});
+
+	it('observes the rejection of the drain it starts so a dead backend cannot leak an unhandled rejection', async () => {
+		// Given
+		const sessionId = asSessionId('limit-observed');
+		const unhandled: unknown[] = [];
+		const record = (reason: unknown): void => {
+			unhandled.push(reason);
+		};
+		const harness = limitedHarness(
+			failingBackend(() => true),
+			1
+		);
+		acceptThought(harness, sessionId, 1);
+		process.on('unhandledRejection', record);
+
+		// When
+		try {
+			expect(() => harness.buffer.assertThoughtBacklogAvailable(sessionId)).toThrow(
+				PersistenceBacklogFullError
+			);
+			await vi.runAllTimersAsync();
+			await flushMicrotasks();
+		} finally {
+			process.off('unhandledRejection', record);
+		}
+
+		// Then
+		expect(unhandled).toEqual([]);
+	});
+
+	it('defaults to the durable history cap of 10000 pending thoughts per session', () => {
+		// Given
+		const sessionId = asSessionId('limit-default');
+		const neverSettles = new Promise<void>(() => undefined);
+		const persistence = new RecordingPersistence({ thought: async () => neverSettles });
+		const harness = createHarness({ persistence, bufferSize: 10_000 });
+		for (let thoughtNumber = 1; thoughtNumber <= 9_999; thoughtNumber += 1) {
+			acceptThought(harness, sessionId, thoughtNumber);
+		}
+		const belowDefault = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+		acceptThought(harness, sessionId, 10_000);
+
+		// When
+		const atDefault = thrownBy(() => harness.buffer.assertThoughtBacklogAvailable(sessionId));
+
+		// Then
+		expect(belowDefault).toBeUndefined();
+		expect(atDefault).toMatchObject({ sessionId, pending: 10_000, limit: 10_000 });
 	});
 });

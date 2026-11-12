@@ -52,6 +52,7 @@ import type { ERROR_CODES, ErrorCode } from '../errors.js';
  *  - PersistenceDrainError     → PERSISTENCE_DRAIN
  *  - PersistenceSessionAdmissionClosedError → PERSISTENCE_SESSION_ADMISSION_CLOSED
  *  - PersistenceSessionBarrierReentrancyError → PERSISTENCE_SESSION_BARRIER_REENTRANCY
+ *  - PersistenceBacklogFullError → PERSISTENCE_BACKLOG_FULL
  *  - PersistenceUnavailableError → PERSISTENCE_UNAVAILABLE
  *
  * Direct `SequentialThinkingError` usages (no dedicated subclass):
@@ -95,6 +96,7 @@ type _AllSubclassCodes =
 	| 'PERSISTENCE_SCOPE_MISMATCH'
 	| 'PERSISTENCE_UNAVAILABLE'
 	| 'PERSISTENCE_COMPATIBILITY'
+	| 'PERSISTENCE_BACKLOG_FULL'
 	| 'DUPLICATE_SUMMARY';
 
 type _ErrorCodeValues = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

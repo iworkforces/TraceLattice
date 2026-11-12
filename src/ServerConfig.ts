@@ -105,6 +105,14 @@ export interface ServerConfigOptions {
 	persistenceMaxRetries?: number;
 
 	/**
+	 * Maximum unacknowledged thought and backtrack writes per session, counting writes
+	 * that failed terminally. At the limit new thoughts are rejected before any state changes.
+	 * YAML/JSON only; no environment override.
+	 * @default 10000
+	 */
+	persistenceMaxPendingThoughtsPerSession?: number;
+
+	/**
 	 * Feature flag overrides. Missing fields are filled with defaults (all ON,
 	 * reasoningStrategy='sequential').
 	 */
@@ -189,6 +197,9 @@ export class ServerConfig {
 	/** Maximum number of retries for failed persistence flushes. */
 	public persistenceMaxRetries: number;
 
+	/** Maximum unacknowledged thought and backtrack writes per session. */
+	public persistenceMaxPendingThoughtsPerSession: number;
+
 	/** Feature flag toggles. */
 	public features: FeatureFlags;
 
@@ -230,6 +241,9 @@ export class ServerConfig {
 			options.persistenceFlushInterval
 		);
 		this.persistenceMaxRetries = this.validatePersistenceMaxRetries(options.persistenceMaxRetries);
+		this.persistenceMaxPendingThoughtsPerSession = this.validatePersistenceMaxPendingThoughts(
+			options.persistenceMaxPendingThoughtsPerSession
+		);
 		this.features = this.validateFeatures(options.features);
 		this.toolInterleaveTtlMs = this.validatePositiveMs(
 			options.toolInterleaveTtlMs,
@@ -441,6 +455,33 @@ export class ServerConfig {
 	}
 
 	/**
+	 * Validates the per-session pending thought limit.
+	 * @param value - The value to validate
+	 * @returns The validated value or default (10000)
+	 * @private
+	 */
+	private validatePersistenceMaxPendingThoughts(value?: number): number {
+		const defaultValue = 10000;
+		if (value === undefined || value === null) return defaultValue;
+		if (typeof value !== 'number' || !Number.isFinite(value)) {
+			throw new ConfigurationError(
+				`persistenceMaxPendingThoughtsPerSession must be a finite number, got ${value}`
+			);
+		}
+		if (value < 1) {
+			throw new ConfigurationError(
+				`persistenceMaxPendingThoughtsPerSession must be at least 1, got ${value}`
+			);
+		}
+		if (value > 10000) {
+			throw new ConfigurationError(
+				`persistenceMaxPendingThoughtsPerSession must not exceed 10000, got ${value}`
+			);
+		}
+		return value;
+	}
+
+	/**
 	 * Validates feature flags and fills defaults for missing fields.
 	 * @param value - Partial feature flag overrides
 	 * @returns Fully populated FeatureFlags with defaults applied
@@ -535,6 +576,7 @@ export class ServerConfig {
 			persistenceBufferSize: this.persistenceBufferSize,
 			persistenceFlushInterval: this.persistenceFlushInterval,
 			persistenceMaxRetries: this.persistenceMaxRetries,
+			persistenceMaxPendingThoughtsPerSession: this.persistenceMaxPendingThoughtsPerSession,
 			features: this.features,
 			toolInterleaveTtlMs: this.toolInterleaveTtlMs,
 			toolInterleaveSweepMs: this.toolInterleaveSweepMs,

@@ -542,6 +542,7 @@ export class ToolAwareSequentialThinkingServer
 				persistenceBufferSize: cfg.persistenceBufferSize,
 				persistenceFlushInterval: cfg.persistenceFlushInterval,
 				persistenceMaxRetries: cfg.persistenceMaxRetries,
+				persistenceMaxPendingThoughtsPerSession: cfg.persistenceMaxPendingThoughtsPerSession,
 				persistenceHistorySize:
 					cfg.persistence.options?.maxHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
 				persistBranches: cfg.persistence.options?.persistBranches ?? true,

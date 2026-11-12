@@ -141,7 +141,10 @@ describe('effective runtime configuration', () => {
 		const exampleEnv = await readFile(new URL('.example.env', documentationRoot), 'utf8');
 		const defaults = new ServerConfig();
 		const documentedDefault = (key: string): string | undefined =>
-			readme.split('\n').find((line) => line.startsWith(`| \`${key}\``))?.split('`')[3];
+			readme
+				.split('\n')
+				.find((line) => line.startsWith(`| \`${key}\``))
+				?.split('`')[3];
 
 		expect(defaults.maxHistorySize).toBe(10_000);
 		expect(documentedDefault('TRACELATTICE_MAX_HISTORY_SIZE')).toBe('10000');
@@ -177,6 +180,7 @@ describe('effective runtime configuration', () => {
 		expect(effective.persistenceBufferSize).toBe(7);
 		expect(effective.persistenceFlushInterval).toBe(750);
 		expect(effective.persistenceMaxRetries).toBe(2);
+		expect(effective.persistenceMaxPendingThoughtsPerSession).toBe(500);
 		expect(effective.discoveryCache.ttl).not.toBe(42);
 		expect(effective.persistenceBufferSize).not.toBe(100);
 		const server = await createServer({
@@ -186,6 +190,7 @@ describe('effective runtime configuration', () => {
 		});
 		liveServers.add(server);
 		expect(server.config.persistenceBufferSize).toBe(7);
+		expect(server.config.persistenceMaxPendingThoughtsPerSession).toBe(500);
 		expect(server.getContainer().has('suspensionStore')).toBe(true);
 		expect(server.getContainer().resolve('suspensionStore')).toBeInstanceOf(
 			InMemorySuspensionStore
@@ -227,7 +232,9 @@ describe('effective runtime configuration', () => {
 		]);
 		expect(loaded.prettyLog).toBeUndefined();
 		expect(effective.discoveryCache.ttl).not.toBe(300);
-		expect(example).not.toMatch(/^TRACELATTICE_PERSISTENCE_(BUFFER_SIZE|FLUSH_INTERVAL|MAX_RETRIES)=/m);
+		expect(example).not.toMatch(
+			/^TRACELATTICE_PERSISTENCE_(BUFFER_SIZE|FLUSH_INTERVAL|MAX_RETRIES)=/m
+		);
 	});
 
 	it('keeps raw logging configuration independent of explicit server configuration', async () => {
@@ -382,6 +389,53 @@ describe('effective runtime configuration', () => {
 		await server.history.drainSession(sessionId);
 		expect(save).toHaveBeenCalledTimes(2);
 		expect(server.history.getWriteBufferLength()).toBe(0);
+	});
+
+	it('rejects thoughts at the configured per-session backlog limit and recovers without a restart', async () => {
+		const server = await createServer({
+			fileConfig: {
+				persistence: { enabled: true, backend: 'memory' },
+				persistenceBufferSize: 100,
+				persistenceFlushInterval: 60_000,
+				persistenceMaxRetries: 0,
+				persistenceMaxPendingThoughtsPerSession: 2,
+				features: { toolInterleave: false },
+			},
+			autoDiscover: false,
+			loadFromPersistence: false,
+		});
+		liveServers.add(server);
+		const persistence = persistenceBackend(server);
+		const save = vi
+			.spyOn(persistence, 'saveThoughtForSession')
+			.mockRejectedValue(new Error('controlled backend outage'));
+		const sessionId = asSessionId('configured-backlog');
+		const otherSessionId = asSessionId('configured-backlog-other');
+		expect(server.config.persistenceMaxPendingThoughtsPerSession).toBe(2);
+
+		await server.processThought(thoughtInput(sessionId, 1, 4));
+		await server.processThought(thoughtInput(sessionId, 2, 4));
+		const rejected = await server.processThought(thoughtInput(sessionId, 3, 4));
+		const other = await server.processThought(thoughtInput(otherSessionId, 1, 1));
+		await expect(server.history.drainSession(sessionId)).rejects.toBeInstanceOf(
+			PersistenceDrainError
+		);
+		save.mockRestore();
+		const whileRetained = await server.processThought(thoughtInput(sessionId, 3, 4));
+		await server.history.drainSession(sessionId);
+		const recovered = await server.processThought(thoughtInput(sessionId, 3, 4));
+
+		expect(rejected.isError).toBe(true);
+		expect(JSON.parse(rejected.content[0]!.text)).toMatchObject({
+			code: 'PERSISTENCE_BACKLOG_FULL',
+			status: 'failed',
+		});
+		expect(other.isError).toBeUndefined();
+		expect(whileRetained.isError).toBe(true);
+		expect(recovered.isError).toBeUndefined();
+		expect(server.history.getHistoryLength(sessionId)).toBe(3);
+		await server.history.drainSession(sessionId);
+		await server.history.drainSession(otherSessionId);
 	});
 
 	it('flushes at the exact configured file timer boundary', async () => {

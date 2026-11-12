@@ -11,7 +11,11 @@ import { createTestThought } from './helpers/factories.js';
 import { useFakeTimers, useRealTimers } from './helpers/timers.js';
 import type { Logger } from '../logger/StructuredLogger.js';
 import type { ThoughtData } from '../core/thought.js';
-import { PersistenceDrainError } from '../core/PersistenceBufferErrors.js';
+import {
+	PersistenceBacklogFullError,
+	PersistenceDrainError,
+} from '../core/PersistenceBufferErrors.js';
+import { StallingPersistence } from './helpers/StallingPersistence.js';
 import { PersistenceUnavailableError, ValidationError } from '../errors.js';
 import { stageBacktrackPersistence } from '../persistence/BacktrackPersistence.js';
 
@@ -1139,8 +1143,8 @@ describe('HistoryManager — uncovered branches', () => {
 		useRealTimers();
 	});
 
-	describe('backpressure logging (line 382)', () => {
-		it('should log backpressure warning when buffer is full and flush is in progress', async () => {
+	describe('buffer-size trigger while a flush is in progress', () => {
+		it('should keep accepting thoughts without claiming backpressure it does not apply', async () => {
 			useFakeTimers();
 			const persistence = new MockPersistence();
 			// Hold the first write so the coordinator keeps one drain generation active.
@@ -1173,16 +1177,15 @@ describe('HistoryManager — uncovered branches', () => {
 			// Later capacity triggers join that generation while accepted work remains queued.
 			manager.addThought(createTestThought({ thought_number: 2 }));
 
-			// The next acceptance observes a full coordinator-owned queue and logs backpressure.
+			// The next acceptance is still enqueued; only the per-session limit can reject.
 			manager.addThought(createTestThought({ thought_number: 3 }));
 
-			expect(mockLogger.info).toHaveBeenCalledWith(
-				'Write buffer full and flush in progress, applying backpressure',
-				expect.objectContaining({
-					bufferSize: expect.any(Number),
-					maxSize: 1,
-				})
+			expect(manager.getHistoryLength(SESSION_ID)).toBe(3);
+			expect(mockLogger.info).not.toHaveBeenCalledWith(
+				expect.stringContaining('backpressure'),
+				expect.anything()
 			);
+			expect(mockLogger.warn).not.toHaveBeenCalled();
 
 			// Unblock the joined generation.
 			resolveSave();
@@ -1510,5 +1513,330 @@ describe('HistoryManager — declarative branch registration', () => {
 		expect(ids).toContain('with-thoughts');
 		expect(ids).toContain('registered-only');
 		expect(new Set(ids).size).toBe(ids.length);
+	});
+});
+
+interface BacklogFixture {
+	readonly manager: HistoryManager;
+	readonly persistence: StallingPersistence;
+	readonly edgeStore: EdgeStore;
+}
+
+const OTHER_SESSION_ID = asSessionId('other-session');
+
+describe('HistoryManager persistence backlog limit', () => {
+	const fixtures: BacklogFixture[] = [];
+
+	afterEach(async () => {
+		for (const fixture of fixtures.splice(0)) {
+			await settleDrains(fixture);
+			fixture.persistence.down = false;
+			fixture.persistence.failClear = false;
+			await fixture.manager.drainSession(SESSION_ID);
+			await fixture.manager.drainSession(OTHER_SESSION_ID);
+			await fixture.manager.shutdown();
+		}
+	});
+
+	async function settleDrains(fixture: BacklogFixture): Promise<void> {
+		for (const sessionId of [SESSION_ID, OTHER_SESSION_ID]) {
+			await fixture.manager.drainSession(sessionId).then(
+				() => undefined,
+				(error: unknown) => {
+					expect(error).toBeInstanceOf(PersistenceDrainError);
+				}
+			);
+		}
+	}
+
+	function createFixture(limit: number | undefined, down = true): BacklogFixture {
+		const persistence = new StallingPersistence();
+		persistence.down = down;
+		const edgeStore = new EdgeStore();
+		const manager = new HistoryManager({
+			persistence,
+			edgeStore,
+			dagEdges: true,
+			persistenceBufferSize: 1000,
+			persistenceFlushInterval: 60_000,
+			persistenceMaxRetries: 0,
+			...(limit === undefined ? {} : { persistenceMaxPendingThoughtsPerSession: limit }),
+		});
+		const fixture = { manager, persistence, edgeStore };
+		fixtures.push(fixture);
+		return fixture;
+	}
+
+	function seededFixture(limit = 2, down = true): BacklogFixture {
+		const fixture = createFixture(limit, down);
+		fixture.manager.addThought(createTestThought({ id: 'seed-1', thought_number: 1 }));
+		fixture.manager.addThought(createTestThought({ id: 'seed-2', thought_number: 2 }));
+		return fixture;
+	}
+
+	function fullTerminalFixture(): Promise<BacklogFixture> {
+		const fixture = seededFixture();
+		return expect(fixture.manager.drainSession(SESSION_ID))
+			.rejects.toBeInstanceOf(PersistenceDrainError)
+			.then(() => fixture);
+	}
+
+	function blockedThought(): ThoughtData {
+		return createTestThought({
+			id: 'blocked-3',
+			thought_number: 3,
+			thought_type: 'verification',
+			verification_target: 2,
+			branch_id: asBranchId('blocked-branch'),
+			branch_from_thought: 1,
+		});
+	}
+
+	function sessionState(fixture: BacklogFixture, sessionId = SESSION_ID): unknown {
+		const snapshot = fixture.manager.inspectSession(sessionId);
+		return structuredClone({
+			history: snapshot.history,
+			branches: snapshot.branches,
+			branchIds: snapshot.branchIds,
+			verificationTargets: snapshot.verificationTargets,
+			edges: fixture.edgeStore.edgesForSession(sessionId),
+			queued: fixture.manager.getWriteBufferLength(),
+		});
+	}
+
+	function thrownBy(operation: () => void): unknown {
+		try {
+			operation();
+		} catch (error) {
+			return error;
+		}
+		return undefined;
+	}
+
+	it('rejects a branching verification thought at the limit and leaves the session untouched', () => {
+		// Given
+		const control = seededFixture(10);
+		control.manager.addThought(blockedThought());
+		const admitted = control.manager.inspectSession(SESSION_ID);
+		const fixture = seededFixture(2);
+		const before = sessionState(fixture);
+
+		// When
+		const error = thrownBy(() => fixture.manager.addThought(blockedThought()));
+
+		// Then
+		expect(error).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(error).toMatchObject({
+			code: 'PERSISTENCE_BACKLOG_FULL',
+			sessionId: SESSION_ID,
+			pending: 2,
+			limit: 2,
+		});
+		expect(admitted.history).toHaveLength(3);
+		expect(admitted.branchIds).toEqual(['blocked-branch']);
+		expect(admitted.verificationTargets.size).toBe(1);
+		expect(control.edgeStore.edgesForSession(SESSION_ID).length).toBeGreaterThan(
+			fixture.edgeStore.edgesForSession(SESSION_ID).length
+		);
+		expect(control.manager.getWriteBufferLength()).toBeGreaterThan(
+			fixture.manager.getWriteBufferLength()
+		);
+		expect(sessionState(fixture)).toEqual(before);
+		expect(fixture.manager.getHistoryLength(SESSION_ID)).toBe(2);
+		expect(fixture.manager.getWriteBufferLength()).toBe(2);
+	});
+
+	it('rejects thoughts without an id and the direct identity guard at the limit', () => {
+		// Given
+		const fixture = seededFixture(2);
+		const before = sessionState(fixture);
+		const anonymous = createTestThought({ thought_number: 3 });
+
+		// When
+		const addError = thrownBy(() => fixture.manager.addThought(anonymous));
+		const guardError = thrownBy(() => fixture.manager.assertThoughtIdentityAvailable(anonymous));
+
+		// Then
+		expect(addError).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(guardError).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(sessionState(fixture)).toEqual(before);
+	});
+
+	it('keeps the duplicate id error ahead of the backlog check without starting a drain', () => {
+		// Given
+		const fixture = seededFixture(2);
+		const attemptsBefore = fixture.persistence.thoughtAttempts;
+
+		// When
+		const error = thrownBy(() =>
+			fixture.manager.addThought(createTestThought({ id: 'seed-1', thought_number: 3 }))
+		);
+
+		// Then
+		expect(error).toBeInstanceOf(ValidationError);
+		expect(error).not.toBeInstanceOf(PersistenceBacklogFullError);
+		expect(fixture.persistence.thoughtAttempts).toBe(attemptsBefore);
+	});
+
+	it('counts terminal failures and starts an explicit drain on every rejection', async () => {
+		// Given
+		const fixture = await fullTerminalFixture();
+		const attemptsBefore = fixture.persistence.thoughtAttempts;
+
+		// When
+		const error = thrownBy(() => fixture.manager.addThought(blockedThought()));
+		const attemptsStartedByRejection = fixture.persistence.thoughtAttempts;
+		await expect(fixture.manager.drainSession(SESSION_ID)).rejects.toBeInstanceOf(
+			PersistenceDrainError
+		);
+
+		// Then
+		expect(error).toMatchObject({ code: 'PERSISTENCE_BACKLOG_FULL', pending: 2, limit: 2 });
+		expect(attemptsStartedByRejection).toBeGreaterThan(attemptsBefore);
+		expect(fixture.manager.getWriteBufferLength()).toBe(2);
+	});
+
+	it('admits the same thought id on a retry after the backend recovers without a restart', async () => {
+		// Given
+		const fixture = await fullTerminalFixture();
+		const before = sessionState(fixture);
+		expect(thrownBy(() => fixture.manager.addThought(blockedThought()))).toBeInstanceOf(
+			PersistenceBacklogFullError
+		);
+		await expect(fixture.manager.drainSession(SESSION_ID)).rejects.toBeInstanceOf(
+			PersistenceDrainError
+		);
+		fixture.persistence.down = false;
+
+		// When
+		const whileRetained = thrownBy(() => fixture.manager.addThought(blockedThought()));
+		await fixture.manager.drainSession(SESSION_ID);
+		const retried = thrownBy(() => fixture.manager.addThought(blockedThought()));
+		await fixture.manager.drainSession(SESSION_ID);
+
+		// Then
+		expect(whileRetained).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(retried).toBeUndefined();
+		expect(sessionState(fixture)).not.toEqual(before);
+		expect(fixture.manager.getHistoryLength(SESSION_ID)).toBe(3);
+		expect(fixture.manager.getWriteBufferLength()).toBe(0);
+		expect(await fixture.persistence.loadHistoryForSession(SESSION_ID)).toHaveLength(3);
+	});
+
+	it('rejects a backtrack at the limit without retracting its target', async () => {
+		// Given
+		const fixture = seededFixture(2);
+		const backtrack = createTestThought({
+			id: 'backtrack-3',
+			thought_number: 3,
+			thought_type: 'backtrack',
+			backtrack_target: 1,
+		});
+		const before = sessionState(fixture);
+
+		// When
+		const error = thrownBy(() => fixture.manager.addThought(backtrack));
+		const afterRejection = sessionState(fixture);
+		const targetAfterRejection = fixture.manager.getHistory(SESSION_ID)[0]?.retracted;
+		await expect(fixture.manager.drainSession(SESSION_ID)).rejects.toBeInstanceOf(
+			PersistenceDrainError
+		);
+		fixture.persistence.down = false;
+		await fixture.manager.drainSession(SESSION_ID);
+		const retried = thrownBy(() => fixture.manager.addThought(backtrack));
+
+		// Then
+		expect(error).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(afterRejection).toEqual(before);
+		expect(targetAfterRejection).toBeUndefined();
+		expect(retried).toBeUndefined();
+		expect(fixture.manager.getHistoryLength(SESSION_ID)).toBe(3);
+		expect(fixture.manager.getHistory(SESSION_ID)[0]).toMatchObject({
+			id: 'seed-1',
+			retracted: true,
+		});
+	});
+
+	it('does not change admission for other sessions', async () => {
+		// Given
+		const fixture = seededFixture(2);
+		const otherSession = OTHER_SESSION_ID;
+		const otherBefore = sessionState(fixture, otherSession);
+
+		// When
+		const rejected = thrownBy(() => fixture.manager.addThought(blockedThought()));
+		const first = thrownBy(() =>
+			fixture.manager.addThought(
+				createTestThought({ id: 'other-1', session_id: otherSession, thought_number: 1 })
+			)
+		);
+		const second = thrownBy(() =>
+			fixture.manager.addThought(
+				createTestThought({ id: 'other-2', session_id: otherSession, thought_number: 2 })
+			)
+		);
+		const third = thrownBy(() =>
+			fixture.manager.addThought(
+				createTestThought({ id: 'other-3', session_id: otherSession, thought_number: 3 })
+			)
+		);
+
+		// Then
+		expect(rejected).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(otherBefore).toMatchObject({ history: [], queued: 2 });
+		expect(first).toBeUndefined();
+		expect(second).toBeUndefined();
+		expect(third).toBeInstanceOf(PersistenceBacklogFullError);
+		expect(third).toMatchObject({ sessionId: otherSession, pending: 2, limit: 2 });
+		expect(fixture.manager.getHistoryLength(otherSession)).toBe(2);
+	});
+
+	it('admits a replacement once a successful session reset discards the backlog', async () => {
+		// Given
+		const fixture = await fullTerminalFixture();
+
+		// When
+		await fixture.manager.resetSession(SESSION_ID);
+		const replacement = thrownBy(() =>
+			fixture.manager.addThought(createTestThought({ id: 'seed-1', thought_number: 1 }))
+		);
+
+		// Then
+		expect(replacement).toBeUndefined();
+		expect(fixture.manager.getHistoryLength(SESSION_ID)).toBe(1);
+		expect(fixture.manager.getWriteBufferLength()).toBe(1);
+	});
+
+	it('keeps the session closed when the reset delete fails', async () => {
+		// Given
+		const fixture = await fullTerminalFixture();
+		fixture.persistence.failClear = true;
+
+		// When
+		await expect(fixture.manager.resetSession(SESSION_ID)).rejects.toThrow();
+		const error = thrownBy(() =>
+			fixture.manager.addThought(createTestThought({ id: 'after-failed-reset', thought_number: 1 }))
+		);
+
+		// Then
+		expect(error).toBeInstanceOf(Error);
+	});
+
+	it('never rejects when persistence is disabled', () => {
+		// Given
+		const manager = new HistoryManager({ persistenceMaxPendingThoughtsPerSession: 1 });
+
+		// When
+		const errors = [1, 2, 3].map((thoughtNumber) =>
+			thrownBy(() =>
+				manager.addThought(
+					createTestThought({ id: `plain-${thoughtNumber}`, thought_number: thoughtNumber })
+				)
+			)
+		);
+
+		// Then
+		expect(errors).toEqual([undefined, undefined, undefined]);
+		expect(manager.getHistoryLength(SESSION_ID)).toBe(3);
 	});
 });
