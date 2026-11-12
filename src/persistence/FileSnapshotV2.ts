@@ -1,4 +1,8 @@
 import * as v from 'valibot';
+import type {
+	PersistedBranchRecord,
+	PersistedSessionRecord,
+} from '../contracts/PersistenceBackend.js';
 import type { SessionId } from '../contracts/ids.js';
 import { asSessionId } from '../contracts/ids.js';
 import { SummarySchema } from '../core/compression/Summary.js';
@@ -127,6 +131,34 @@ export function sessionsInSnapshot(snapshot: FileSnapshotV2): SessionId[] {
 		for (const record of records) sessions.add(record.sessionId);
 	}
 	return [...sessions].sort(compareCodePoint);
+}
+
+export function restoreRecordsInSnapshot(
+	snapshot: FileSnapshotV2,
+	includeBranches: boolean
+): PersistedSessionRecord[] {
+	const histories = new Map(
+		snapshot.thoughts.map((record) => [record.sessionId, record.thoughts] as const)
+	);
+	const edges = new Map(snapshot.edges.map((record) => [record.sessionId, record.edges] as const));
+	const summaries = new Map(
+		snapshot.summaries.map((record) => [record.sessionId, record.summaries] as const)
+	);
+	const branches = new Map<SessionId, PersistedBranchRecord[]>();
+	for (const record of includeBranches ? snapshot.branches : []) {
+		const siblings = branches.get(record.sessionId) ?? [];
+		siblings.push({ branchId: record.branchId, thoughts: [...record.thoughts] });
+		branches.set(record.sessionId, siblings);
+	}
+	return sessionsInSnapshot(snapshot).map((sessionId) => ({
+		sessionId,
+		history: [...(histories.get(sessionId) ?? [])],
+		branches: (branches.get(sessionId) ?? []).sort((left, right) =>
+			compareCodePoint(left.branchId, right.branchId)
+		),
+		edges: [...(edges.get(sessionId) ?? [])],
+		summaries: [...(summaries.get(sessionId) ?? [])],
+	}));
 }
 
 export function sessionForThought(thought: ThoughtData): SessionId {
