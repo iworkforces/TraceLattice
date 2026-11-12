@@ -500,6 +500,67 @@ describe('ConfigLoader', () => {
 		});
 	});
 
+	describe('persistenceMaxPendingThoughtsPerSession', () => {
+		const ENV_NAME = 'TRACELATTICE_PERSISTENCE_MAX_PENDING_THOUGHTS_PER_SESSION';
+
+		afterEach(() => {
+			delete process.env[ENV_NAME];
+		});
+
+		it('should load the setting from JSON and YAML files', () => {
+			loader = new ConfigLoader();
+			mockExistsSync.mockImplementation((path: string) => path.endsWith('.json'));
+			mockReadFileSync.mockReturnValue(
+				JSON.stringify({ persistenceMaxPendingThoughtsPerSession: 25 })
+			);
+			expect(loader.load()?.persistenceMaxPendingThoughtsPerSession).toBe(25);
+
+			mockExistsSync.mockImplementation((path: string) => path.endsWith('.yaml'));
+			mockReadFileSync.mockReturnValue('persistenceMaxPendingThoughtsPerSession: 30');
+			expect(loader.load()?.persistenceMaxPendingThoughtsPerSession).toBe(30);
+		});
+
+		it('should log a wrong type and continue to the next candidate', () => {
+			loader = new ConfigLoader();
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync
+				.mockReturnValueOnce(JSON.stringify({ persistenceMaxPendingThoughtsPerSession: 'many' }))
+				.mockReturnValueOnce('persistenceMaxPendingThoughtsPerSession: 12');
+
+			const config = loader.load();
+
+			expect(consoleSpy).toHaveBeenCalledOnce();
+			expect(config?.persistenceMaxPendingThoughtsPerSession).toBe(12);
+			consoleSpy.mockRestore();
+		});
+
+		it('should not read an environment variable for the setting', () => {
+			process.env[ENV_NAME] = '5';
+			loader = new ConfigLoader();
+			mockExistsSync.mockReturnValue(false);
+			expect(loader.load()).toEqual({});
+
+			mockExistsSync.mockImplementation((path: string) => path.endsWith('.json'));
+			mockReadFileSync.mockReturnValue(
+				JSON.stringify({ persistenceMaxPendingThoughtsPerSession: 25 })
+			);
+			expect(loader.load()?.persistenceMaxPendingThoughtsPerSession).toBe(25);
+		});
+
+		it('should carry the setting into server options only when present', () => {
+			loader = new ConfigLoader();
+
+			expect(
+				loader.toServerConfigOptions({ persistenceMaxPendingThoughtsPerSession: 40 })
+					.persistenceMaxPendingThoughtsPerSession
+			).toBe(40);
+			expect(
+				loader.toServerConfigOptions({}).persistenceMaxPendingThoughtsPerSession
+			).toBeUndefined();
+		});
+	});
+
 	describe('uncovered branch coverage', () => {
 		it('should reject NaN TRACELATTICE_MAX_BRANCH_SIZE from env', () => {
 			process.env.TRACELATTICE_MAX_BRANCH_SIZE = 'not-a-number';
