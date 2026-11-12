@@ -31,6 +31,16 @@ export interface PersistenceBackend {
 	): Promise<ThoughtData[] | undefined>;
 	listBranchesForSession(sessionId: SessionId): Promise<BranchId[]>;
 	listSessions(): Promise<SessionId[]>;
+	/**
+	 * Read every durable session for startup restore from one consistent view.
+	 *
+	 * The result contains each session once (ascending id), with its history, branches
+	 * (ascending branch id), edges and summaries. Implementations must serve the whole call from a
+	 * single snapshot of storage and must not omit sessions that `listSessions()` reports. This is a
+	 * required contract, including for custom backends: restore does not probe for it or fall back
+	 * to the per-item loads, which remain available to other callers.
+	 */
+	loadAllSessionsForRestore(): Promise<PersistenceRestoreRead>;
 	healthy(): Promise<boolean>;
 	clearSession(sessionId: SessionId): Promise<void>;
 	clearAll(): Promise<void>;

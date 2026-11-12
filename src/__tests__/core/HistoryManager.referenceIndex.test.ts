@@ -74,9 +74,8 @@ describe('HistoryManager reference-index lifecycle', () => {
 
 	it('leaves the live index unchanged when restore staging fails', async () => {
 		class FailingRestorePersistence extends MemoryPersistence {
-			override async loadHistoryForSession(sessionId: SessionId) {
-				if (sessionId === 'broken') throw new Error('controlled restore failure');
-				return await super.loadHistoryForSession(sessionId);
+			override async loadAllSessionsForRestore(): Promise<never> {
+				throw new Error('controlled restore failure');
 			}
 		}
 		const persistence = new FailingRestorePersistence();

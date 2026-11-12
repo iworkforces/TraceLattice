@@ -107,8 +107,8 @@ describe('configuration startup resource safety', () => {
 
 	it('T10-L02 propagates restore reads and closes the backend before becoming ready', async () => {
 		// Given
-		const failure = new Error('injected list failure');
-		vi.spyOn(MemoryPersistence.prototype, 'listSessions').mockRejectedValue(failure);
+		const failure = new Error('injected restore read failure');
+		vi.spyOn(MemoryPersistence.prototype, 'loadAllSessionsForRestore').mockRejectedValue(failure);
 		const close = vi.spyOn(MemoryPersistence.prototype, 'close');
 		const config = new ServerConfig({
 			persistence: { enabled: true, backend: 'memory' },
@@ -141,13 +141,18 @@ describe('configuration startup resource safety', () => {
 		expect(close).toHaveBeenCalledOnce();
 	});
 
-	it('T10-L04 propagates a partition load failure and closes the backend', async () => {
+	it('T10-L04 propagates a staged session rejection and closes the backend', async () => {
 		// Given
-		const failure = new Error('injected partition load failure');
-		vi.spyOn(MemoryPersistence.prototype, 'listSessions').mockResolvedValue([
-			asSessionId('restore-session'),
-		]);
-		vi.spyOn(MemoryPersistence.prototype, 'loadHistoryForSession').mockRejectedValue(failure);
+		const duplicate = {
+			sessionId: asSessionId('restore-session'),
+			history: [],
+			branches: [],
+			edges: [],
+			summaries: [],
+		};
+		vi.spyOn(MemoryPersistence.prototype, 'loadAllSessionsForRestore').mockResolvedValue({
+			sessions: [duplicate, duplicate],
+		});
 		const close = vi.spyOn(MemoryPersistence.prototype, 'close');
 		const config = new ServerConfig({
 			persistence: { enabled: true, backend: 'memory' },
@@ -158,7 +163,7 @@ describe('configuration startup resource safety', () => {
 		const creation = createServer({ config, autoDiscover: false });
 
 		// Then
-		await expect(creation).rejects.toBe(failure);
+		await expect(creation).rejects.toMatchObject({ code: 'PERSISTENCE_COMPATIBILITY' });
 		expect(close).toHaveBeenCalledOnce();
 	});
 	it.each([

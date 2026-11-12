@@ -20,6 +20,7 @@ function createMockBackend(overrides: Partial<PersistenceBackend> = {}): Persist
 		loadBranchForSession: vi.fn().mockResolvedValue(undefined),
 		listBranchesForSession: vi.fn().mockResolvedValue([]),
 		listSessions: vi.fn().mockResolvedValue([]),
+		loadAllSessionsForRestore: vi.fn().mockResolvedValue({ sessions: [] }),
 		clearSession: vi.fn().mockResolvedValue(undefined),
 		clearAll: vi.fn().mockResolvedValue(undefined),
 		close: vi.fn().mockResolvedValue(undefined),
