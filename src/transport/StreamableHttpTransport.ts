@@ -345,29 +345,27 @@ export class StreamableHttpTransport extends BaseTransport implements ITransport
 		return true;
 	}
 
+	private _isProbeRoute(req: IncomingMessage, urlPath: string): boolean {
+		return req.method === 'GET' && (urlPath === '/health' || urlPath === '/ready');
+	}
+
 	/**
 	 * Serve GET /health and GET /ready. These run after Host validation and the shutdown check
 	 * but ahead of the rate limiter; they keep CORS origin validation and headers.
-	 *
-	 * @returns true when the request was a probe and has been answered
 	 */
-	private async _handleProbeRoute(
+	private async _serveProbe(
 		req: IncomingMessage,
 		res: ServerResponse,
 		urlPath: string
-	): Promise<boolean> {
-		if (req.method !== 'GET' || (urlPath !== '/health' && urlPath !== '/ready')) {
-			return false;
-		}
+	): Promise<void> {
 		if (!this._admitCors(req, res)) {
-			return true;
+			return;
 		}
 		if (urlPath === '/health') {
 			this._handleHealthCheck(res);
 		} else {
 			await this._handleReadinessCheck(res);
 		}
-		return true;
 	}
 
 	/**
@@ -392,7 +390,8 @@ export class StreamableHttpTransport extends BaseTransport implements ITransport
 		const urlPath = req.url?.split('?')[0] ?? '/';
 
 		// Probes (/health, /ready) precede rate limiting so polling never spends the client budget
-		if (await this._handleProbeRoute(req, res, urlPath)) {
+		if (this._isProbeRoute(req, urlPath)) {
+			await this._serveProbe(req, res, urlPath);
 			return;
 		}
 
