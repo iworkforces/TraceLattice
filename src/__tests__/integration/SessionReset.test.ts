@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
+import type {
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -118,6 +121,28 @@ class ControlledPersistence implements PersistenceBackend {
 
 	async listSessions(): Promise<SessionId[]> {
 		return Array.from(new Set([...this.histories.keys(), ...this.branches.keys()]));
+	}
+
+	async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		const sessionIds = [
+			...new Set<SessionId>([
+				...this.histories.keys(),
+				...this.branches.keys(),
+				...this.edges.keys(),
+				...this.summaries.keys(),
+			]),
+		].sort();
+		return {
+			sessions: sessionIds.map((sessionId) => ({
+				sessionId,
+				history: structuredClone(this.histories.get(sessionId) ?? []),
+				branches: [...(this.branches.get(sessionId) ?? [])]
+					.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+					.map(([branchId, thoughts]) => ({ branchId, thoughts: structuredClone(thoughts) })),
+				edges: structuredClone([...(this.edges.get(sessionId) ?? [])]),
+				summaries: structuredClone([...(this.summaries.get(sessionId) ?? [])]),
+			})),
+		};
 	}
 
 	async clearAll(): Promise<void> {

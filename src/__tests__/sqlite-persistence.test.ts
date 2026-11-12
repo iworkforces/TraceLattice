@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PersistenceConfig } from '../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
@@ -18,6 +18,7 @@ import type {
 } from '../persistence/SqliteDriver.js';
 import { runSqliteTransaction } from '../persistence/SqliteDriver.js';
 import { decodeEdgeRow, decodeSummaryRow, decodeThoughtRow } from '../persistence/SqlitePayload.js';
+import type * as SqlitePayloadModule from '../persistence/SqlitePayload.js';
 import { SqlitePersistence } from '../persistence/SqlitePersistence.js';
 import {
 	initializeOrValidateSqliteV2,
@@ -27,10 +28,16 @@ import {
 } from '../persistence/SqliteSchemaV2.js';
 import { createTestThought } from './helpers/factories.js';
 import {
+	STATEFUL_SQLITE_SQL,
 	STATEFUL_SQLITE_SUPPORTED_SQL,
 	StatefulSqliteDatabase,
 	UnsupportedStructuralSqlError,
 } from './helpers/StatefulSqliteDatabase.js';
+
+vi.mock('../persistence/SqlitePayload.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof SqlitePayloadModule>();
+	return { ...actual, decodeThoughtRow: vi.fn(actual.decodeThoughtRow) };
+});
 
 type SchemaRow = {
 	readonly type: string;
@@ -1152,5 +1159,285 @@ describe('SqlitePersistence stateful structural behavior', () => {
 		// When / Then
 		await expect(persistence.clearSession(sessionId)).rejects.toThrow(DELETE_EDGES_FOR_SESSION_SQL);
 		expect(database.snapshot()).toEqual(before);
+	});
+});
+
+describe('SqlitePersistence restore read', () => {
+	const sessionA = asSessionId('restore-A');
+	const sessionB = asSessionId('restore-B');
+	const sessionC = asSessionId('restore-C');
+	const seededBranches = ['z', 'a', 'm', 'b'];
+
+	function restoreThought(sessionId: SessionId, id: string, branchId?: BranchId) {
+		return createTestThought({
+			id,
+			session_id: sessionId,
+			thought: id,
+			...(branchId === undefined ? {} : { branch_id: branchId }),
+		});
+	}
+
+	async function seedSession(
+		persistence: SqlitePersistence,
+		sessionId: SessionId
+	): Promise<number> {
+		let stored = 0;
+		for (const number of [1, 2]) {
+			await persistence.saveThoughtForSession(
+				sessionId,
+				restoreThought(sessionId, `${sessionId}-history-${number}`)
+			);
+			stored += 1;
+		}
+		for (const name of seededBranches) {
+			const branchId = asBranchId(name);
+			const thoughts = [1, 2].map((number) =>
+				restoreThought(sessionId, `${sessionId}-${name}-${number}`, branchId)
+			);
+			await persistence.saveBranchForSession(sessionId, branchId, thoughts);
+			stored += thoughts.length;
+		}
+		await persistence.saveEdges(sessionId, [
+			edgeFixture({ id: `${sessionId}-edge-b`, sessionId, createdAt: 2 }),
+			edgeFixture({ id: `${sessionId}-edge-a`, sessionId, createdAt: 2 }),
+			edgeFixture({ id: `${sessionId}-edge-first`, sessionId, createdAt: 1 }),
+		]);
+		await persistence.saveSummaries(sessionId, [
+			summaryFixture({ id: `${sessionId}-summary-b`, sessionId, createdAt: 2 }),
+			summaryFixture({ id: `${sessionId}-summary-a`, sessionId, createdAt: 1 }),
+		]);
+		return stored;
+	}
+
+	async function seedSessions(persistence: SqlitePersistence): Promise<number> {
+		let stored = 0;
+		for (const sessionId of [sessionA, sessionB, sessionC]) {
+			stored += await seedSession(persistence, sessionId);
+		}
+		return stored;
+	}
+
+	function executions(database: StatefulSqliteDatabase, sql: string): number {
+		return database.statementLog.filter((entry) => entry.sql === sql).length;
+	}
+
+	it('serves every session from one read transaction with one query set per session', async () => {
+		// Given
+		const { database, persistence } = createStructuralPersistence();
+		await seedSessions(persistence);
+		database.execLog.length = 0;
+		database.statementLog.length = 0;
+
+		// When
+		const read = await persistence.loadAllSessionsForRestore();
+
+		// Then
+		expect(read.sessions).toHaveLength(3);
+		expect(database.execLog).toEqual(['BEGIN', 'COMMIT']);
+		expect(database.statementLog.every((entry) => entry.inTransaction)).toBe(true);
+		expect(executions(database, STATEFUL_SQLITE_SQL.listSessions)).toBe(1);
+		expect(executions(database, STATEFUL_SQLITE_SQL.selectHistory)).toBe(3);
+		expect(executions(database, STATEFUL_SQLITE_SQL.selectBranchPayloads)).toBe(3);
+		expect(executions(database, STATEFUL_SQLITE_SQL.selectEdges)).toBe(3);
+		expect(executions(database, STATEFUL_SQLITE_SQL.selectSummaries)).toBe(3);
+		expect(database.statementLog).toHaveLength(13);
+	});
+
+	it('decodes every stored thought exactly once however many branches a session has', async () => {
+		// Given
+		const { persistence } = createStructuralPersistence();
+		const stored = await seedSessions(persistence);
+		vi.mocked(decodeThoughtRow).mockClear();
+
+		// When
+		await persistence.loadAllSessionsForRestore();
+
+		// Then
+		expect(vi.mocked(decodeThoughtRow)).toHaveBeenCalledTimes(stored);
+	});
+
+	it('delivers branches ascending by branch id although rows are stored unordered', async () => {
+		// Given
+		const { persistence } = createStructuralPersistence();
+		await seedSession(persistence, sessionA);
+
+		// When
+		const read = await persistence.loadAllSessionsForRestore();
+
+		// Then
+		expect(read.sessions[0]?.branches.map((branch) => branch.branchId)).toEqual([
+			'a',
+			'b',
+			'm',
+			'z',
+		]);
+	});
+
+	it('equals the per-item reads and lists the same sessions as listSessions', async () => {
+		// Given
+		const { persistence } = createStructuralPersistence();
+		await seedSessions(persistence);
+		const edgeOnly = asSessionId('restore-D-edge');
+		const summaryOnly = asSessionId('restore-E-summary');
+		await persistence.saveEdges(edgeOnly, [
+			edgeFixture({ id: 'edge-only', sessionId: edgeOnly, createdAt: 1 }),
+		]);
+		await persistence.saveSummaries(summaryOnly, [
+			summaryFixture({ id: 'summary-only', sessionId: summaryOnly, createdAt: 1 }),
+		]);
+
+		// When
+		const read = await persistence.loadAllSessionsForRestore();
+
+		// Then
+		expect(read.sessions.map((record) => record.sessionId)).toEqual(
+			await persistence.listSessions()
+		);
+		expect(read.sessions.map((record) => record.sessionId)).toEqual([
+			sessionA,
+			sessionB,
+			sessionC,
+			edgeOnly,
+			summaryOnly,
+		]);
+		for (const record of read.sessions) {
+			const branchIds = await persistence.listBranchesForSession(record.sessionId);
+			expect(record).toEqual({
+				sessionId: record.sessionId,
+				history: await persistence.loadHistoryForSession(record.sessionId),
+				branches: await Promise.all(
+					branchIds.map(async (branchId) => ({
+						branchId,
+						thoughts: await persistence.loadBranchForSession(record.sessionId, branchId),
+					}))
+				),
+				edges: await persistence.loadEdges(record.sessionId),
+				summaries: await persistence.loadSummaries(record.sessionId),
+			});
+		}
+		expect(read.sessions[0]?.edges.map(({ id }) => id)).toEqual([
+			'restore-A-edge-first',
+			'restore-A-edge-a',
+			'restore-A-edge-b',
+		]);
+	});
+
+	it('returns an empty read for an empty database', async () => {
+		// Given
+		const { persistence } = createStructuralPersistence();
+
+		// When / Then
+		expect(await persistence.loadAllSessionsForRestore()).toEqual({ sessions: [] });
+	});
+
+	it('returns no branches but the full session set when branch persistence is disabled', async () => {
+		// Given
+		const { database, persistence } = createStructuralPersistence({ persistBranches: false });
+		await persistence.saveThoughtForSession(sessionA, restoreThought(sessionA, 'history-A'));
+		const branchId = asBranchId('stored-elsewhere');
+		database.seedBranchData(
+			sessionB,
+			branchId,
+			JSON.stringify([restoreThought(sessionB, 'branch-B', branchId)])
+		);
+
+		// When
+		const read = await persistence.loadAllSessionsForRestore();
+
+		// Then
+		expect(read.sessions.map((record) => record.sessionId)).toEqual([sessionA, sessionB]);
+		expect(read.sessions.flatMap((record) => record.branches)).toEqual([]);
+		expect(read.sessions.map((record) => record.history.length)).toEqual([1, 0]);
+	});
+
+	const malformedRows = [
+		{
+			name: 'thought row',
+			corrupt: (database: StatefulSqliteDatabase) => database.overwriteThoughtData(sessionA, '{'),
+		},
+		{
+			name: 'branch row',
+			corrupt: (database: StatefulSqliteDatabase) =>
+				database.overwriteBranchData(sessionA, asBranchId('a'), '{}'),
+		},
+		{
+			name: 'edge metadata',
+			corrupt: (database: StatefulSqliteDatabase) =>
+				database.overwriteEdgeMetadata(sessionA, `${sessionA}-edge-a`, '{'),
+		},
+		{
+			name: 'summary topics',
+			corrupt: (database: StatefulSqliteDatabase) =>
+				database.overwriteSummaryTopics(sessionA, `${sessionA}-summary-a`, '{'),
+		},
+	];
+
+	it.each(malformedRows)(
+		'fails closed and rolls back on a malformed $name',
+		async ({ corrupt }) => {
+			// Given
+			const { database, persistence } = createStructuralPersistence();
+			await seedSession(persistence, sessionA);
+			corrupt(database);
+			const before = database.snapshot();
+
+			// When
+			const read = persistence.loadAllSessionsForRestore();
+
+			// Then
+			await expect(read).rejects.toBeInstanceOf(PersistenceCorruptionError);
+			expect(database.snapshot()).toEqual(before);
+			expect(database.execLog.slice(-2)).toEqual(['BEGIN', 'ROLLBACK']);
+		}
+	);
+
+	it('fails closed on a cross-collection payload conflict', async () => {
+		// Given
+		const { database, persistence } = createStructuralPersistence();
+		await persistence.saveThoughtForSession(sessionA, restoreThought(sessionA, 'shared'));
+		const branchId = asBranchId('conflicting');
+		database.seedBranchData(
+			sessionA,
+			branchId,
+			JSON.stringify([createTestThought({ id: 'shared', session_id: sessionA, thought: 'other' })])
+		);
+
+		// When
+		const read = persistence.loadAllSessionsForRestore();
+
+		// Then
+		await expect(read).rejects.toBeInstanceOf(PersistenceCompatibilityError);
+		expect(database.execLog.slice(-2)).toEqual(['BEGIN', 'ROLLBACK']);
+	});
+
+	it('returns the pre-write state when another connection commits between statements', async () => {
+		// Given
+		const { database, persistence } = createStructuralPersistence();
+		await seedSessions(persistence);
+		const expected = await persistence.loadAllSessionsForRestore();
+		const lateBranch = asBranchId('late');
+		database.afterNextStatement(STATEFUL_SQLITE_SQL.listSessions, () => {
+			database.removeBranchData(sessionA, asBranchId('b'));
+			database.seedBranchData(
+				sessionA,
+				lateBranch,
+				JSON.stringify([restoreThought(sessionA, 'late-1', lateBranch)])
+			);
+			database.seedThoughtData(sessionB, JSON.stringify(restoreThought(sessionB, 'late-history')));
+		});
+
+		// When
+		const during = await persistence.loadAllSessionsForRestore();
+		const after = await persistence.loadAllSessionsForRestore();
+
+		// Then
+		expect(during).toEqual(expected);
+		expect(after.sessions[0]?.branches.map((branch) => branch.branchId)).toEqual([
+			'a',
+			'late',
+			'm',
+			'z',
+		]);
+		expect(after.sessions[1]?.history).toHaveLength(3);
 	});
 });

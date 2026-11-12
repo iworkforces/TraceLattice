@@ -2,7 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
+import type {
+	PersistedBranchRecord,
+	PersistedSessionRecord,
+	PersistenceBackend,
+} from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -45,6 +49,38 @@ function thought(id: string, sessionId: SessionId, number: number, branch = fals
 		total_thoughts: 3,
 		...(branch ? { branch_id: sharedBranch } : {}),
 	});
+}
+
+function branchThought(id: string, sessionId: SessionId, number: number, branchName: string) {
+	return createTestThought({
+		id,
+		session_id: sessionId,
+		thought: id,
+		thought_number: number,
+		total_thoughts: 3,
+		branch_id: asBranchId(branchName),
+	});
+}
+
+async function perItemRestoreRecords(
+	backend: PersistenceBackend
+): Promise<PersistedSessionRecord[]> {
+	const records: PersistedSessionRecord[] = [];
+	for (const sessionId of await backend.listSessions()) {
+		const branches: PersistedBranchRecord[] = [];
+		for (const branchId of await backend.listBranchesForSession(sessionId)) {
+			const thoughts = await backend.loadBranchForSession(sessionId, branchId);
+			branches.push({ branchId, thoughts: thoughts ?? [] });
+		}
+		records.push({
+			sessionId,
+			history: await backend.loadHistoryForSession(sessionId),
+			branches,
+			edges: await backend.loadEdges(sessionId),
+			summaries: await backend.loadSummaries(sessionId),
+		});
+	}
+	return records;
 }
 
 function edge(id: string, sessionId: SessionId): Edge {
@@ -326,6 +362,91 @@ describe.each(fixtures)('$name session-scoped persistence conformance', ({ creat
 		}
 	});
 
+	it('serves the restore read equal to the per-item reads for every session', async () => {
+		const backend = await create();
+		const edgeOnly = asSessionId('C-edge');
+		const summaryOnly = asSessionId('D-summary');
+		const emptyBranch = asSessionId('E-empty');
+		try {
+			// Given
+			await backend.saveThoughtForSession(sessionA, thought('A-1', sessionA, 1));
+			await backend.saveThoughtForSession(sessionA, thought('A-2', sessionA, 2));
+			await backend.saveBranchForSession(sessionA, asBranchId('zeta'), [
+				branchThought('A-zeta', sessionA, 3, 'zeta'),
+			]);
+			await backend.saveBranchForSession(sessionA, asBranchId('alpha'), [
+				branchThought('A-alpha', sessionA, 3, 'alpha'),
+			]);
+			await backend.saveBranchForSession(sessionA, sharedBranch, [
+				thought('A-shared', sessionA, 3, true),
+			]);
+			await backend.saveEdges(sessionA, [edge('A-edge', sessionA)]);
+			await backend.saveSummaries(sessionA, [summary('A-summary', sessionA)]);
+			await backend.saveThoughtForSession(sessionB, thought('B-1', sessionB, 1));
+			await backend.saveBranchForSession(sessionB, sharedBranch, [
+				thought('B-shared', sessionB, 2, true),
+			]);
+			await backend.saveEdges(edgeOnly, [edge('C-edge', edgeOnly)]);
+			await backend.saveSummaries(summaryOnly, [summary('D-summary', summaryOnly)]);
+			await backend.saveBranchForSession(emptyBranch, sharedBranch, []);
+
+			// When
+			const read = await backend.loadAllSessionsForRestore();
+
+			// Then
+			expect(read.sessions.map((record) => record.sessionId)).toEqual([
+				edgeOnly,
+				summaryOnly,
+				emptyBranch,
+				sessionA,
+				sessionB,
+			]);
+			expect(read.sessions).toEqual(await perItemRestoreRecords(backend));
+			expect(
+				read.sessions
+					.find((record) => record.sessionId === sessionA)
+					?.branches.map((b) => b.branchId)
+			).toEqual([asBranchId('alpha'), sharedBranch, asBranchId('zeta')]);
+		} finally {
+			await cleanup(backend);
+		}
+	});
+
+	it('serves an empty restore read for an empty store', async () => {
+		const backend = await create();
+		try {
+			expect(await backend.loadAllSessionsForRestore()).toEqual({ sessions: [] });
+		} finally {
+			await cleanup(backend);
+		}
+	});
+
+	it('returns a restore read that later writes and clears do not change', async () => {
+		const backend = await create();
+		try {
+			// Given
+			await backend.saveThoughtForSession(sessionA, thought('A-1', sessionA, 1));
+			await backend.saveBranchForSession(sessionA, sharedBranch, [
+				thought('A-shared', sessionA, 2, true),
+			]);
+			await backend.saveEdges(sessionA, [edge('A-edge', sessionA)]);
+			const read = await backend.loadAllSessionsForRestore();
+			const before = structuredClone(read);
+
+			// When
+			await backend.saveThoughtForSession(sessionA, thought('A-2', sessionA, 2));
+			await backend.saveBranchForSession(sessionA, sharedBranch, []);
+			await backend.saveEdges(sessionA, []);
+			await backend.clearSession(sessionA);
+
+			// Then
+			expect(read).toEqual(before);
+			expect(await backend.loadAllSessionsForRestore()).toEqual({ sessions: [] });
+		} finally {
+			await cleanup(backend);
+		}
+	});
+
 	it('clears one session across every namespace while preserving another', async () => {
 		const backend = await create();
 		try {
@@ -490,6 +611,37 @@ describe.each(disabledBranchFixtures)(
 				}
 			}
 		);
+
+		it('serves a restore read without branches for exactly the listed sessions', async () => {
+			const { backend, cleanup } = await create();
+			const edgeOnly = asSessionId('C-edge');
+			try {
+				// Given
+				await backend.saveThoughtForSession(sessionA, thought('disabled-A', sessionA, 1));
+				await backend.saveBranchForSession(sessionA, sharedBranch, [
+					thought('disabled-A-branch', sessionA, 2, true),
+				]);
+				await backend.saveBranchForSession(sessionB, sharedBranch, [
+					thought('disabled-B-branch', sessionB, 1, true),
+				]);
+				await backend.saveEdges(edgeOnly, [edge('disabled-edge', edgeOnly)]);
+
+				// When
+				const read = await backend.loadAllSessionsForRestore();
+
+				// Then
+				expect(read.sessions.map((record) => record.sessionId)).toEqual(
+					await backend.listSessions()
+				);
+				expect(read.sessions.map((record) => record.sessionId)).toEqual([edgeOnly, sessionA]);
+				expect(read.sessions.flatMap((record) => record.branches)).toEqual([]);
+				expect(read.sessions.find((record) => record.sessionId === sessionA)?.history).toEqual([
+					thought('disabled-A', sessionA, 1),
+				]);
+			} finally {
+				await cleanup();
+			}
+		});
 
 		it('keeps valid input as a no-op without creating branch or session material', async () => {
 			const { backend, cleanup } = await create();

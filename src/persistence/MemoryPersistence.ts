@@ -1,7 +1,11 @@
 import type { ThoughtData } from '../core/thought.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { Summary } from '../core/compression/Summary.js';
-import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import type {
+	PersistedBranchRecord,
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from '../contracts/PersistenceBackend.js';
 import { asSessionId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
 import { stageBacktrackPersistence } from './BacktrackPersistence.js';
 import {
@@ -137,11 +141,33 @@ export class MemoryPersistence implements PersistenceBackend {
 	}
 
 	public async listSessions(): Promise<SessionId[]> {
+		return this._sessionIds();
+	}
+
+	public async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		return {
+			sessions: this._sessionIds().map((sessionId) => ({
+				sessionId,
+				history: [...(this._histories.get(sessionId) ?? [])],
+				branches: this._persistBranches ? this._branchRecords(sessionId) : [],
+				edges: [...(this._edges.get(sessionId) ?? [])].sort(compareCreatedThenId),
+				summaries: [...(this._summaries.get(sessionId) ?? [])].sort(compareCreatedThenId),
+			})),
+		};
+	}
+
+	private _sessionIds(): SessionId[] {
 		const sessions = new Set<SessionId>();
 		for (const namespace of [this._histories, this._branches, this._edges, this._summaries]) {
 			for (const sessionId of namespace.keys()) sessions.add(sessionId);
 		}
 		return [...sessions].sort(compareCodePoint);
+	}
+
+	private _branchRecords(sessionId: SessionId): PersistedBranchRecord[] {
+		return [...(this._branches.get(sessionId) ?? [])]
+			.sort(([left], [right]) => compareCodePoint(left, right))
+			.map(([branchId, thoughts]) => ({ branchId, thoughts: [...thoughts] }));
 	}
 
 	public async healthy(): Promise<boolean> {

@@ -16,6 +16,8 @@ import type { Summary } from '../../core/compression/Summary.js';
 import type { Edge } from '../../core/graph/Edge.js';
 import type { ThoughtData } from '../../core/thought.js';
 import { createPersistenceBackend } from '../../persistence/PersistenceFactory.js';
+import type { SqliteDatabase, SqliteStatement } from '../../persistence/SqliteDriver.js';
+import { SqlitePersistence } from '../../persistence/SqlitePersistence.js';
 import { createTestThought } from '../helpers/factories.js';
 
 type NamespaceState = {
@@ -45,6 +47,45 @@ async function openBackend(dbPath: string, maxHistorySize = 10000): Promise<Pers
 async function closeBackend(): Promise<void> {
 	await backend?.close();
 	backend = undefined;
+}
+
+const SESSION_LIST_PREFIX = 'SELECT session_id FROM thoughts UNION';
+
+class ObservedDatabase implements SqliteDatabase {
+	public readonly commands: string[] = [];
+	private readonly _inner: SqliteDatabase;
+	private readonly _afterAll: (sql: string) => void;
+
+	constructor(inner: SqliteDatabase, afterAll: (sql: string) => void) {
+		this._inner = inner;
+		this._afterAll = afterAll;
+	}
+
+	public exec(sql: string): void {
+		this.commands.push(sql);
+		this._inner.exec(sql);
+	}
+
+	public prepare(sql: string): SqliteStatement {
+		const statement = this._inner.prepare(sql);
+		return {
+			run: (...params) => statement.run(...params),
+			get: (...params) => statement.get(...params),
+			all: (...params) => {
+				const rows = statement.all(...params);
+				this._afterAll(sql);
+				return rows;
+			},
+		};
+	}
+
+	public close(): void {
+		this._inner.close();
+	}
+
+	public pragma(pragma: string): unknown {
+		return this._inner.pragma(pragma);
+	}
 }
 
 function namespaceState(prefix: string, sessionId: SessionId): NamespaceState {
@@ -271,6 +312,63 @@ describe('native SQLite conformance', () => {
 			expect(inspection.pragma('journal_mode')).toEqual([{ journal_mode: 'wal' }]);
 		} finally {
 			inspection.close();
+		}
+	});
+
+	it('reads one consistent snapshot while a second connection commits between statements', async () => {
+		// Given
+		const dbPath = join(root, 'history.db');
+		const stateA = namespaceState('A', sessionA);
+		const stateB = namespaceState('B', sessionB);
+		const writerBranch = asBranchId('native-late');
+		let afterSessionList: (() => void) | undefined;
+		const readerConnection = new Database(dbPath);
+		readerConnection.pragma('journal_mode = WAL');
+		const observed = new ObservedDatabase(readerConnection, (sql) => {
+			if (!sql.startsWith(SESSION_LIST_PREFIX)) return;
+			const hook = afterSessionList;
+			afterSessionList = undefined;
+			hook?.();
+		});
+		const reader = SqlitePersistence.createWithDatabase(observed, {}, dbPath);
+		const writerConnection = new Database(dbPath);
+		try {
+			await saveState(reader, stateA);
+			await saveState(reader, stateB);
+			const expected = await reader.loadAllSessionsForRestore();
+			observed.commands.length = 0;
+			afterSessionList = () => {
+				writerConnection
+					.prepare('DELETE FROM branches WHERE session_id = ? AND branch_id = ?')
+					.run(sessionA, branchId);
+				writerConnection
+					.prepare('INSERT INTO branches (session_id, branch_id, data) VALUES (?, ?, ?)')
+					.run(
+						sessionA,
+						writerBranch,
+						JSON.stringify([{ ...stateA.branch, id: 'native-late-1', branch_id: writerBranch }])
+					);
+				writerConnection
+					.prepare('INSERT INTO thoughts (session_id, data) VALUES (?, ?)')
+					.run(sessionB, JSON.stringify({ ...stateB.history, id: 'native-late-history' }));
+			};
+
+			// When
+			const during = await reader.loadAllSessionsForRestore();
+			const commandsDuringRead = [...observed.commands];
+			const after = await reader.loadAllSessionsForRestore();
+
+			// Then
+			expect(commandsDuringRead).toEqual(['BEGIN', 'COMMIT']);
+			expect(during).toEqual(expected);
+			expect(after.sessions[0]?.branches.map((branch) => branch.branchId)).toEqual([writerBranch]);
+			expect(after.sessions[1]?.history.map(({ id }) => id)).toEqual([
+				'B-history',
+				'native-late-history',
+			]);
+		} finally {
+			writerConnection.close();
+			await reader.close();
 		}
 	});
 });

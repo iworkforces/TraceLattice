@@ -1,7 +1,12 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { PersistenceConfig, PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import type {
+	PersistedSessionRecord,
+	PersistenceConfig,
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from '../contracts/PersistenceBackend.js';
 import { asSessionId, type BranchId, type SessionId, type ThoughtId } from '../contracts/ids.js';
 import type { Summary } from '../core/compression/Summary.js';
 import type { Edge } from '../core/graph/Edge.js';
@@ -220,6 +225,16 @@ export class SqlitePersistence implements PersistenceBackend {
 	}
 
 	public async listSessions(): Promise<SessionId[]> {
+		return this._selectSessionIds();
+	}
+
+	public async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		return runSqliteReadTransaction(this._db, () => ({
+			sessions: this._selectSessionIds().map((sessionId) => this._restoreRecord(sessionId)),
+		}));
+	}
+
+	private _selectSessionIds(): SessionId[] {
 		return this._db
 			.prepare(
 				'SELECT session_id FROM thoughts UNION SELECT session_id FROM branches UNION SELECT session_id FROM edges UNION SELECT session_id FROM summaries'
@@ -227,6 +242,21 @@ export class SqlitePersistence implements PersistenceBackend {
 			.all()
 			.map((row) => asSessionId(stringField(row, 'session_id', this._sourcePath)))
 			.sort(compareCodePoint);
+	}
+
+	private _restoreRecord(sessionId: SessionId): PersistedSessionRecord {
+		const state = this._loadValidatedThoughtState(sessionId);
+		return {
+			sessionId,
+			history: state.history,
+			branches: this._persistBranches
+				? [...state.branches]
+						.map(([branchId, thoughts]) => ({ branchId, thoughts }))
+						.sort((left, right) => compareCodePoint(left.branchId, right.branchId))
+				: [],
+			edges: this._selectEdges(sessionId),
+			summaries: this._selectSummaries(sessionId),
+		};
 	}
 
 	public async clearAll(): Promise<void> {
@@ -267,12 +297,15 @@ export class SqlitePersistence implements PersistenceBackend {
 	}
 
 	public async loadEdges(sessionId: SessionId): Promise<Edge[]> {
-		const validatedSessionId = asSessionId(sessionId);
+		return this._selectEdges(asSessionId(sessionId));
+	}
+
+	private _selectEdges(sessionId: SessionId): Edge[] {
 		return this._db
 			.prepare(
 				'SELECT id, session_id, from_id, to_id, kind, created_at, metadata FROM edges WHERE session_id = ? ORDER BY created_at ASC, id ASC'
 			)
-			.all(validatedSessionId)
+			.all(sessionId)
 			.map((row, index) => decodeEdgeRow(row, `${this._sourcePath}:edges:${index}`));
 	}
 
@@ -302,12 +335,15 @@ export class SqlitePersistence implements PersistenceBackend {
 	}
 
 	public async loadSummaries(sessionId: SessionId): Promise<Summary[]> {
-		const validatedSessionId = asSessionId(sessionId);
+		return this._selectSummaries(asSessionId(sessionId));
+	}
+
+	private _selectSummaries(sessionId: SessionId): Summary[] {
 		return this._db
 			.prepare(
 				'SELECT id, session_id, branch_id, root_thought_id, covered_ids, covered_range_start, covered_range_end, topics, aggregate_confidence, created_at, meta FROM summaries WHERE session_id = ? ORDER BY created_at ASC, id ASC'
 			)
-			.all(validatedSessionId)
+			.all(sessionId)
 			.map((row, index) => decodeSummaryRow(row, `${this._sourcePath}:summaries:${index}`));
 	}
 

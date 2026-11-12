@@ -3,7 +3,10 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { ABSOLUTE_MAX_HISTORY_SIZE, HistoryManager } from '../core/HistoryManager.js';
 import { EdgeStore } from '../core/graph/EdgeStore.js';
 import { SessionLock } from '../core/SessionLock.js';
-import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import type {
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from '../contracts/PersistenceBackend.js';
 import { createTestThought } from './helpers/factories.js';
 import { useFakeTimers, useRealTimers } from './helpers/timers.js';
 import type { Logger } from '../logger/StructuredLogger.js';
@@ -103,6 +106,23 @@ class MockPersistence implements PersistenceBackend {
 			...this._sessionBranches.keys(),
 		]);
 		return Array.from(sessions);
+	}
+
+	async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		const sessionIds = [
+			...new Set<SessionId>([...this._sessionHistory.keys(), ...this._sessionBranches.keys()]),
+		].sort();
+		return {
+			sessions: sessionIds.map((sessionId) => ({
+				sessionId,
+				history: [...(this._sessionHistory.get(sessionId) ?? [])],
+				branches: [...(this._sessionBranches.get(sessionId) ?? [])]
+					.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+					.map(([branchId, thoughts]) => ({ branchId, thoughts: [...thoughts] })),
+				edges: [],
+				summaries: [],
+			})),
+		};
 	}
 
 	async clearAll(): Promise<void> {
@@ -1174,9 +1194,8 @@ describe('HistoryManager — uncovered branches', () => {
 	describe('loadFromPersistence failure propagation', () => {
 		it('T10-I05 should propagate Error failures during scoped load', async () => {
 			const persistence = new MockPersistence();
-			// healthy returns true, but loadHistory throws
-			persistence.listSessions = async () => [SESSION_ID];
-			persistence.loadHistoryForSession = async () => {
+			// healthy returns true, but the restore read throws
+			persistence.loadAllSessionsForRestore = async () => {
 				throw new Error('Disk I/O error');
 			};
 			const mockLogger = {
@@ -1196,8 +1215,7 @@ describe('HistoryManager — uncovered branches', () => {
 
 		it('T10-I06 should propagate non-Error failures during scoped load', async () => {
 			const persistence = new MockPersistence();
-			persistence.listSessions = async () => [SESSION_ID];
-			persistence.loadHistoryForSession = async () => {
+			persistence.loadAllSessionsForRestore = async () => {
 				throw 'string error';
 			};
 			const mockLogger = {

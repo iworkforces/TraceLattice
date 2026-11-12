@@ -1,7 +1,10 @@
 // allow: SIZE_OK - Task 8's contract matrix is intentionally colocated in its one authorized test file.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PersistenceBackend } from '../../contracts/PersistenceBackend.js';
+import type {
+	PersistenceBackend,
+	PersistenceRestoreRead,
+} from '../../contracts/PersistenceBackend.js';
 import {
 	asBranchId,
 	asEdgeId,
@@ -139,6 +142,10 @@ class RecordingPersistence implements PersistenceBackend {
 
 	public async listSessions(): Promise<SessionId[]> {
 		return [];
+	}
+
+	public async loadAllSessionsForRestore(): Promise<PersistenceRestoreRead> {
+		return { sessions: [] };
 	}
 
 	public async healthy(): Promise<boolean> {

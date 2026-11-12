@@ -128,6 +128,9 @@ function createCloseOnlyPersistence(close = vi.fn().mockResolvedValue(undefined)
 		async listSessions() {
 			return [];
 		},
+		async loadAllSessionsForRestore() {
+			return { sessions: [] };
+		},
 		async healthy() {
 			return true;
 		},

@@ -42,6 +42,7 @@ describe('mandatory session-scoped persistence contract', () => {
 			for (const backend of [new MemoryPersistence(), file]) {
 				expect(typeof backend.saveThoughtForSession).toBe('function');
 				expect(typeof backend.saveBacktrackForSession).toBe('function');
+				expect(typeof backend.loadAllSessionsForRestore).toBe('function');
 				expect(typeof backend.clearAll).toBe('function');
 				expect('saveThought' in backend).toBe(false);
 				expect('loadHistory' in backend).toBe(false);

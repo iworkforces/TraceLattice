@@ -31,6 +31,16 @@ export interface PersistenceBackend {
 	): Promise<ThoughtData[] | undefined>;
 	listBranchesForSession(sessionId: SessionId): Promise<BranchId[]>;
 	listSessions(): Promise<SessionId[]>;
+	/**
+	 * Read every durable session for startup restore from one consistent view.
+	 *
+	 * The result contains each session once (ascending id), with its history, branches
+	 * (ascending branch id), edges and summaries. Implementations must serve the whole call from a
+	 * single snapshot of storage and must not omit sessions that `listSessions()` reports. This is a
+	 * required contract, including for custom backends: restore does not probe for it or fall back
+	 * to the per-item loads, which remain available to other callers.
+	 */
+	loadAllSessionsForRestore(): Promise<PersistenceRestoreRead>;
 	healthy(): Promise<boolean>;
 	clearSession(sessionId: SessionId): Promise<void>;
 	clearAll(): Promise<void>;
@@ -39,6 +49,25 @@ export interface PersistenceBackend {
 	saveSummaries(sessionId: SessionId, summaries: readonly Summary[]): Promise<void>;
 	loadSummaries(sessionId: SessionId): Promise<Summary[]>;
 	close(): Promise<void>;
+}
+
+export interface PersistedBranchRecord {
+	readonly branchId: BranchId;
+	readonly thoughts: readonly ThoughtData[];
+}
+
+export interface PersistedSessionRecord {
+	readonly sessionId: SessionId;
+	readonly history: readonly ThoughtData[];
+	/** Ascending by branch id (code-point order). Empty when branch persistence is disabled. */
+	readonly branches: readonly PersistedBranchRecord[];
+	readonly edges: readonly Edge[];
+	readonly summaries: readonly Summary[];
+}
+
+export interface PersistenceRestoreRead {
+	/** Unique sessions in ascending id order: the union of history, branch, edge and summary sessions. */
+	readonly sessions: readonly PersistedSessionRecord[];
 }
 
 export interface PersistenceConfig {

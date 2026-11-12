@@ -101,6 +101,7 @@ function createMockPersistence(healthy: boolean): PersistenceBackend {
 		loadBranchForSession: vi.fn().mockResolvedValue(undefined),
 		listBranchesForSession: vi.fn().mockResolvedValue([]),
 		listSessions: vi.fn().mockResolvedValue([]),
+		loadAllSessionsForRestore: vi.fn().mockResolvedValue({ sessions: [] }),
 		clearSession: vi.fn(),
 		clearAll: vi.fn(),
 		close: vi.fn(),

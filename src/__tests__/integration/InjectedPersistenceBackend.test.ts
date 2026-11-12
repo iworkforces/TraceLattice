@@ -3,7 +3,10 @@ import {
 	createServer,
 	type ServerOptions,
 	type ToolAwareSequentialThinkingServer,
+	type PersistedBranchRecord,
+	type PersistedSessionRecord,
 	type PersistenceBackend,
+	type PersistenceRestoreRead,
 	type ThoughtData,
 	type Edge,
 	type Summary,
@@ -72,6 +75,16 @@ describe('injected persistence admission and draining', () => {
 		expectTypeOf<Parameters<PersistenceBackend['saveBranchForSession']>>().toEqualTypeOf<
 			[SessionId, BranchId, readonly ThoughtData[]]
 		>();
+		expectTypeOf<Parameters<PersistenceBackend['loadAllSessionsForRestore']>>().toEqualTypeOf<[]>();
+		expectTypeOf<ReturnType<PersistenceBackend['loadAllSessionsForRestore']>>().toEqualTypeOf<
+			Promise<PersistenceRestoreRead>
+		>();
+		expectTypeOf<
+			PersistenceRestoreRead['sessions'][number]
+		>().toEqualTypeOf<PersistedSessionRecord>();
+		expectTypeOf<
+			PersistedSessionRecord['branches'][number]
+		>().toEqualTypeOf<PersistedBranchRecord>();
 		expectTypeOf<Parameters<PersistenceBackend['saveEdges']>>().toEqualTypeOf<
 			[SessionId, readonly Edge[]]
 		>();
@@ -152,11 +165,20 @@ describe('injected persistence restore', () => {
 		const { persistence } = backend();
 		const thought = createTestThought({ id: 'restored', session_id: sessionId });
 		await persistence.saveThoughtForSession(sessionId, thought);
-		const read = vi.spyOn(persistence, 'loadHistoryForSession');
+		const read = vi.spyOn(persistence, 'loadAllSessionsForRestore');
+		const perItemReads = [
+			vi.spyOn(persistence, 'listSessions'),
+			vi.spyOn(persistence, 'loadHistoryForSession'),
+			vi.spyOn(persistence, 'listBranchesForSession'),
+			vi.spyOn(persistence, 'loadBranchForSession'),
+			vi.spyOn(persistence, 'loadEdges'),
+			vi.spyOn(persistence, 'loadSummaries'),
+		];
 		// When
 		const server = await start(options(persistence));
 		// Then
-		expect(read).toHaveBeenCalledExactlyOnceWith(sessionId);
+		expect(read).toHaveBeenCalledExactlyOnceWith();
+		for (const perItemRead of perItemReads) expect(perItemRead).not.toHaveBeenCalled();
 		expect(server.history.getHistory(sessionId)).toEqual([thought]);
 		expect(() =>
 			runWithContext({ requestId: 'read', owner: 'network-owner' }, () =>
@@ -170,12 +192,14 @@ describe('injected persistence restore', () => {
 		const { persistence } = backend();
 		const healthy = vi.spyOn(persistence, 'healthy');
 		const sessions = vi.spyOn(persistence, 'listSessions');
+		const restoreRead = vi.spyOn(persistence, 'loadAllSessionsForRestore');
 		const read = vi.spyOn(persistence, 'loadHistoryForSession');
 		// When
 		await start({ ...options(persistence), loadFromPersistence: false });
 		// Then
 		expect(healthy).not.toHaveBeenCalled();
 		expect(sessions).not.toHaveBeenCalled();
+		expect(restoreRead).not.toHaveBeenCalled();
 		expect(read).not.toHaveBeenCalled();
 	});
 
@@ -194,7 +218,7 @@ describe('injected persistence restore', () => {
 		// Given
 		const { persistence, close } = backend();
 		const failure = new Error('restore failed');
-		vi.spyOn(persistence, 'listSessions').mockRejectedValue(failure);
+		vi.spyOn(persistence, 'loadAllSessionsForRestore').mockRejectedValue(failure);
 		// When / Then
 		await expect(createServer(options(persistence))).rejects.toBe(failure);
 		expect(close).not.toHaveBeenCalled();

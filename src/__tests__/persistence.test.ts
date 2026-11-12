@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdirSync, rmSync, existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -11,9 +11,21 @@ import { createPersistenceBackend } from '../persistence/PersistenceFactory.js';
 import type { PersistenceConfig } from '../contracts/PersistenceBackend.js';
 import type { IMetrics } from '../contracts/interfaces.js';
 import type { Edge } from '../core/graph/Edge.js';
-import { asSessionId, asThoughtId, type EdgeId } from '../contracts/ids.js';
+import {
+	asEdgeId,
+	asSessionId,
+	asThoughtId,
+	type EdgeId,
+	type SessionId,
+} from '../contracts/ids.js';
 import { PersistenceCompatibilityError, PersistenceCorruptionError } from '../errors.js';
 import { parseFileSnapshotV2 } from '../persistence/FileSnapshotV2.js';
+import type * as FileSnapshotModule from '../persistence/FileSnapshotV2.js';
+
+vi.mock('../persistence/FileSnapshotV2.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof FileSnapshotModule>();
+	return { ...actual, parseFileSnapshotV2: vi.fn(actual.parseFileSnapshotV2) };
+});
 
 let persistentThoughtSequence = 0;
 function createTestThought(overrides: Parameters<typeof createBaseTestThought>[0] = {}) {
@@ -564,6 +576,144 @@ describe('FilePersistence', () => {
 			const loaded = await backend2.loadBranchForSession(TEST_SESSION_ID, asBranchId('branch-1'));
 
 			expect(loaded).toBeUndefined();
+		});
+	});
+
+	describe('loadAllSessionsForRestore', () => {
+		const restoreSessions = ['restore-A', 'restore-B', 'restore-C'].map(asSessionId);
+		const edgeOnlySession = asSessionId('restore-D-edge');
+		const summaryOnlySession = asSessionId('restore-E-summary');
+
+		function restoreEdge(sessionId: SessionId, id: string): Edge {
+			return {
+				id: asEdgeId(id),
+				from: asThoughtId(`${id}-from`),
+				to: asThoughtId(`${id}-to`),
+				kind: 'sequence',
+				sessionId,
+				createdAt: 1,
+			};
+		}
+
+		async function seedRestoreNamespaces(target: FilePersistence): Promise<void> {
+			for (const sessionId of restoreSessions) {
+				await target.saveThoughtForSession(
+					sessionId,
+					createTestThought({ id: `history-${sessionId}`, session_id: sessionId })
+				);
+				for (const name of ['z', 'a', 'm', 'b']) {
+					const branchId = asBranchId(name);
+					await target.saveBranchForSession(sessionId, branchId, [
+						createTestThought({
+							id: `branch-${sessionId}-${name}`,
+							session_id: sessionId,
+							branch_id: branchId,
+						}),
+					]);
+				}
+			}
+			await target.saveEdges(edgeOnlySession, [restoreEdge(edgeOnlySession, 'edge-only')]);
+			await target.saveSummaries(summaryOnlySession, [
+				{
+					id: 'summary-only',
+					sessionId: summaryOnlySession,
+					rootThoughtId: asThoughtId('summary-only-root'),
+					coveredIds: [asThoughtId('summary-only-root')],
+					coveredRange: [1, 1],
+					topics: ['restore'],
+					aggregateConfidence: 0.5,
+					createdAt: 1,
+				},
+			]);
+		}
+
+		it('reads, parses and validates the snapshot once however many sessions and branches it holds', async () => {
+			await seedRestoreNamespaces(backend);
+			vi.mocked(parseFileSnapshotV2).mockClear();
+
+			const read = await backend.loadAllSessionsForRestore();
+
+			expect(read.sessions).toHaveLength(5);
+			expect(parseFileSnapshotV2).toHaveBeenCalledTimes(1);
+		});
+
+		it('returns the union of all four namespaces ascending and equal to the per-item reads', async () => {
+			await seedRestoreNamespaces(backend);
+
+			const read = await backend.loadAllSessionsForRestore();
+
+			expect(read.sessions.map((record) => record.sessionId)).toEqual(await backend.listSessions());
+			expect(read.sessions.map((record) => record.sessionId)).toEqual([
+				...restoreSessions,
+				edgeOnlySession,
+				summaryOnlySession,
+			]);
+			for (const record of read.sessions) {
+				const branchIds = await backend.listBranchesForSession(record.sessionId);
+				expect(record).toEqual({
+					sessionId: record.sessionId,
+					history: await backend.loadHistoryForSession(record.sessionId),
+					branches: await Promise.all(
+						branchIds.map(async (branchId) => ({
+							branchId,
+							thoughts: await backend.loadBranchForSession(record.sessionId, branchId),
+						}))
+					),
+					edges: await backend.loadEdges(record.sessionId),
+					summaries: await backend.loadSummaries(record.sessionId),
+				});
+			}
+		});
+
+		it('delivers branches ascending by branch id', async () => {
+			await seedRestoreNamespaces(backend);
+
+			const read = await backend.loadAllSessionsForRestore();
+
+			expect(read.sessions[0]?.branches.map((branch) => branch.branchId)).toEqual([
+				'a',
+				'b',
+				'm',
+				'z',
+			]);
+		});
+
+		it('returns no branches but the same session set when branch persistence is disabled', async () => {
+			await seedRestoreNamespaces(backend);
+			await backend.close();
+			const withoutBranches = new FilePersistence({ dataDir: testDir, persistBranches: false });
+
+			const read = await withoutBranches.loadAllSessionsForRestore();
+
+			expect(read.sessions.map((record) => record.sessionId)).toEqual(
+				await withoutBranches.listSessions()
+			);
+			expect(read.sessions.flatMap((record) => record.branches)).toEqual([]);
+			expect(read.sessions.map((record) => record.history.length)).toEqual([1, 1, 1, 0, 0]);
+			await withoutBranches.close();
+		});
+
+		it('queues behind in-flight writers and returns the state they published', async () => {
+			const pending = backend.saveThoughtForSession(
+				TEST_SESSION_ID,
+				createTestThought({ id: 'queued-write' })
+			);
+
+			const read = await backend.loadAllSessionsForRestore();
+			await pending;
+
+			expect(read.sessions.map((record) => record.history.map(({ id }) => id))).toEqual([
+				['queued-write'],
+			]);
+		});
+
+		it('fails closed with a typed error on a corrupt snapshot', async () => {
+			await seedRestoreNamespaces(backend);
+			writeFileSync(join(testDir, 'snapshot.json'), '{"version":2,"thoughts":[');
+
+			await expect(backend.loadAllSessionsForRestore()).rejects.toBeInstanceOf(
+				PersistenceCorruptionError
+			);
 		});
 	});
 
