@@ -66,6 +66,7 @@ type Acceptance = {
 export class PersistenceWorkQueue {
 	private readonly _thoughts: Array<ThoughtEntry | BacktrackEntry> = [];
 	private readonly _thoughtIdentities = new Map<SessionId, Map<ThoughtId, number>>();
+	private readonly _pendingThoughtsBySession = new Map<SessionId, number>();
 	private readonly _durableThoughtIdentities: DurableThoughtIdentityIndex;
 	private readonly _persistBranches: boolean;
 	private readonly _branches = new Map<SessionId, Map<BranchId, BranchEntry>>();
@@ -104,6 +105,7 @@ export class PersistenceWorkQueue {
 			work,
 			terminalFailure: undefined,
 		});
+		this._incrementPendingThoughts(sessionId);
 		if (thought.id !== undefined) this._addThoughtIdentity(sessionId, thought.id);
 		return work;
 	}
@@ -126,6 +128,7 @@ export class PersistenceWorkQueue {
 			work,
 			terminalFailure: undefined,
 		});
+		this._incrementPendingThoughts(sessionId);
 		if (thought.id !== undefined) this._addThoughtIdentity(sessionId, thought.id);
 		return work;
 	}
@@ -311,6 +314,7 @@ export class PersistenceWorkQueue {
 				const index = this._thoughts.findIndex((candidate) => candidate === entry);
 				if (index >= 0) {
 					this._thoughts.splice(index, 1);
+					this._decrementPendingThoughts(work.sessionId);
 					if (work.thought.id !== undefined) {
 						this._removeThoughtIdentity(work.sessionId, work.thought.id);
 					}
@@ -322,6 +326,7 @@ export class PersistenceWorkQueue {
 				const index = this._thoughts.findIndex((candidate) => candidate === entry);
 				if (index >= 0) {
 					this._thoughts.splice(index, 1);
+					this._decrementPendingThoughts(work.sessionId);
 					if (work.thought.id !== undefined) {
 						this._removeThoughtIdentity(work.sessionId, work.thought.id);
 					}
@@ -403,6 +408,15 @@ export class PersistenceWorkQueue {
 		return this._thoughts.length;
 	}
 
+	/**
+	 * @param sessionId - Session whose unacknowledged writes are counted.
+	 * @returns Unacknowledged thought and backtrack entries for the session, terminal failures
+	 * included. Coalesced branch, edge and summary entries are not counted.
+	 */
+	public pendingThoughtCountForSession(sessionId: SessionId): number {
+		return this._pendingThoughtsBySession.get(sessionId) ?? 0;
+	}
+
 	/** @returns Number of all current thought and coalesced auxiliary entries. */
 	public get pendingWorkCount(): number {
 		let branchCount = 0;
@@ -439,6 +453,7 @@ export class PersistenceWorkQueue {
 		for (let index = this._thoughts.length - 1; index >= 0; index -= 1) {
 			if (this._thoughts[index]?.work.sessionId === sessionId) this._thoughts.splice(index, 1);
 		}
+		this._pendingThoughtsBySession.delete(sessionId);
 		this._thoughtIdentities.delete(sessionId);
 		this._durableThoughtIdentities.clearSession(sessionId);
 		this._branches.delete(sessionId);
@@ -452,6 +467,7 @@ export class PersistenceWorkQueue {
 	/** Discards all retained work after a successful durable global reset. */
 	public discardAll(): void {
 		this._thoughts.length = 0;
+		this._pendingThoughtsBySession.clear();
 		this._thoughtIdentities.clear();
 		this._durableThoughtIdentities.clearAll();
 		this._branches.clear();
@@ -479,6 +495,19 @@ export class PersistenceWorkQueue {
 			Object.freeze(value);
 		}
 		return value;
+	}
+
+	private _incrementPendingThoughts(sessionId: SessionId): void {
+		this._pendingThoughtsBySession.set(
+			sessionId,
+			this.pendingThoughtCountForSession(sessionId) + 1
+		);
+	}
+
+	private _decrementPendingThoughts(sessionId: SessionId): void {
+		const remaining = this.pendingThoughtCountForSession(sessionId) - 1;
+		if (remaining > 0) this._pendingThoughtsBySession.set(sessionId, remaining);
+		else this._pendingThoughtsBySession.delete(sessionId);
 	}
 
 	private _addThoughtIdentity(sessionId: SessionId, thoughtId: ThoughtId): void {

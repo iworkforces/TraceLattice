@@ -1728,3 +1728,91 @@ describe('PersistenceBuffer eviction state and barrier', () => {
 		]);
 	});
 });
+
+describe('PersistenceWorkQueue per-session pending thought counts', () => {
+	function queuedThought(sessionId: SessionId, thoughtNumber: number): ThoughtData {
+		return createTestThought({
+			id: `${sessionId}-thought-${thoughtNumber}`,
+			session_id: sessionId,
+			thought_number: thoughtNumber,
+		});
+	}
+
+	it('counts thought and backtrack entries per session and ignores coalesced entries', () => {
+		// Given
+		const sessionA = asSessionId('count-a');
+		const sessionB = asSessionId('count-b');
+		const queue = new PersistenceWorkQueue();
+
+		// When
+		queue.enqueueThought(sessionA, queuedThought(sessionA, 1));
+		queue.enqueueBacktrack(sessionA, queuedThought(sessionA, 2), asThoughtId('count-a-thought-1'));
+		queue.enqueueThought(sessionB, queuedThought(sessionB, 1));
+		queue.replaceBranch(sessionA, asBranchId('count-branch'), []);
+		queue.deleteBranch(sessionA, asBranchId('count-deleted'));
+		queue.replaceEdges(sessionA, [edge(sessionA, 'count', 1)]);
+		queue.replaceSummaries(sessionA, [summary(sessionA, 'count')]);
+
+		// Then
+		expect(queue.pendingThoughtCountForSession(sessionA)).toBe(2);
+		expect(queue.pendingThoughtCountForSession(sessionB)).toBe(1);
+		expect(queue.pendingThoughtCountForSession(asSessionId('count-unknown'))).toBe(0);
+		expect(queue.pendingThoughtCount).toBe(3);
+	});
+
+	it('keeps terminal failures counted and releases entries only on acknowledged success', () => {
+		// Given
+		const sessionId = asSessionId('count-ack');
+		const queue = new PersistenceWorkQueue();
+		const first = queue.enqueueThought(sessionId, queuedThought(sessionId, 1));
+		const second = queue.enqueueBacktrack(
+			sessionId,
+			queuedThought(sessionId, 2),
+			asThoughtId('count-ack-thought-1')
+		);
+
+		// When
+		queue.acknowledgeFailure(first, {
+			kind: 'thought',
+			token: first.token,
+			sessionId,
+			attempts: 1,
+			cause: new ExpectedWriteError('terminal'),
+		});
+		const afterFailure = queue.pendingThoughtCountForSession(sessionId);
+		queue.acknowledgeSuccess(second);
+		const afterBacktrackAck = queue.pendingThoughtCountForSession(sessionId);
+		queue.acknowledgeSuccess(second);
+		const afterDuplicateAck = queue.pendingThoughtCountForSession(sessionId);
+		queue.acknowledgeSuccess(first);
+
+		// Then
+		expect(afterFailure).toBe(2);
+		expect(afterBacktrackAck).toBe(1);
+		expect(afterDuplicateAck).toBe(1);
+		expect(queue.pendingThoughtCountForSession(sessionId)).toBe(0);
+		expect(queue.pendingThoughtCount).toBe(0);
+	});
+
+	it('forgets one session on discardSession and every session on discardAll', () => {
+		// Given
+		const sessionA = asSessionId('count-discard-a');
+		const sessionB = asSessionId('count-discard-b');
+		const queue = new PersistenceWorkQueue();
+		const stale = queue.enqueueThought(sessionA, queuedThought(sessionA, 1));
+		queue.enqueueThought(sessionB, queuedThought(sessionB, 1));
+
+		// When
+		queue.discardSession(sessionA);
+		const replacement = queue.enqueueThought(sessionA, queuedThought(sessionA, 1));
+		queue.acknowledgeSuccess(stale);
+		const afterStaleAck = queue.pendingThoughtCountForSession(sessionA);
+		queue.discardAll();
+
+		// Then
+		expect(replacement.token).not.toBe(stale.token);
+		expect(afterStaleAck).toBe(1);
+		expect(queue.pendingThoughtCountForSession(sessionA)).toBe(0);
+		expect(queue.pendingThoughtCountForSession(sessionB)).toBe(0);
+	});
+});
