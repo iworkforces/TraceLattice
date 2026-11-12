@@ -2149,3 +2149,118 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 		expect(atDefault).toMatchObject({ sessionId, pending: 10_000, limit: 10_000 });
 	});
 });
+
+describe('PersistenceBuffer backlog view', () => {
+	const EMPTY_VIEW = {
+		globalQuarantined: false,
+		quarantinedSessionCount: 0,
+		retainedFailureCount: 0,
+		pendingThoughtCount: 0,
+	};
+
+	it('reports an empty backlog before any work is accepted', () => {
+		// Given
+		const harness = createHarness({ persistence: new RecordingPersistence() });
+
+		// When
+		const view = harness.buffer.getBacklogView();
+
+		// Then
+		expect(view).toEqual(EMPTY_VIEW);
+	});
+
+	it('counts accepted thoughts as pending until they are acknowledged', async () => {
+		// Given
+		const sessionId = asSessionId('view-pending');
+		const harness = createHarness({ persistence: new RecordingPersistence() });
+		acceptThought(harness, sessionId, 1);
+		acceptThought(harness, sessionId, 2);
+
+		// When
+		const beforeDrain = harness.buffer.getBacklogView();
+		await drain(harness.buffer);
+		const afterDrain = harness.buffer.getBacklogView();
+
+		// Then
+		expect(beforeDrain).toEqual({ ...EMPTY_VIEW, pendingThoughtCount: 2 });
+		expect(afterDrain).toEqual(EMPTY_VIEW);
+	});
+
+	it('counts a retained terminal failure without quarantining anything', async () => {
+		// Given
+		const sessionId = asSessionId('view-failure');
+		const persistence = new RecordingPersistence({
+			thought: async ({ thought }) => {
+				if (thought.thought_number === 1) throw new ExpectedWriteError('terminal');
+			},
+		});
+		const harness = createHarness({ persistence, maxRetries: 0 });
+		acceptThought(harness, sessionId, 1);
+		acceptThought(harness, sessionId, 2);
+
+		// When
+		const outcome = await settle(drain(harness.buffer));
+
+		// Then
+		expect(outcome.status).toBe('rejected');
+		expect(harness.buffer.getBacklogView()).toEqual({
+			...EMPTY_VIEW,
+			retainedFailureCount: 1,
+			pendingThoughtCount: 1,
+		});
+	});
+
+	it('counts a session once when both a reset and an eviction barrier quarantined it', async () => {
+		// Given
+		const resetOnly = asSessionId('view-reset-only');
+		const both = asSessionId('view-both');
+		const harness = createHarness({ persistence: new RecordingPersistence() });
+		const fail = async (): Promise<void> => {
+			throw new ExpectedWriteError('barrier failed');
+		};
+
+		// When
+		await settle(harness.buffer.withSessionResetBarrier(resetOnly, fail));
+		const afterOne = harness.buffer.getBacklogView();
+		await settle(harness.buffer.withSessionEvictionBarrier(both, fail));
+		await settle(harness.buffer.withSessionResetBarrier(both, fail));
+
+		// Then
+		expect(afterOne).toEqual({ ...EMPTY_VIEW, quarantinedSessionCount: 1 });
+		expect(harness.buffer.getBacklogView()).toEqual({ ...EMPTY_VIEW, quarantinedSessionCount: 2 });
+	});
+
+	it('reports global quarantine after a failed global reset until a reset succeeds', async () => {
+		// Given
+		const harness = createHarness({ persistence: new RecordingPersistence() });
+		const failed = await settle(
+			harness.buffer.withGlobalResetBarrier(async () => {
+				throw new ExpectedWriteError('global reset failed');
+			})
+		);
+
+		// When
+		const quarantined = harness.buffer.getBacklogView();
+		await harness.buffer.withGlobalResetBarrier(async () => undefined);
+		const recovered = harness.buffer.getBacklogView();
+
+		// Then
+		expect(failed.status).toBe('rejected');
+		expect(quarantined).toEqual({ ...EMPTY_VIEW, globalQuarantined: true });
+		expect(recovered).toEqual(EMPTY_VIEW);
+	});
+
+	it('returns a frozen snapshot that later work does not change', () => {
+		// Given
+		const harness = createHarness({ persistence: new RecordingPersistence() });
+		const view = harness.buffer.getBacklogView();
+
+		// When
+		acceptThought(harness, asSessionId('view-snapshot'), 1);
+
+		// Then
+		expect(Object.isFrozen(view)).toBe(true);
+		expect(view.pendingThoughtCount).toBe(0);
+		expect(harness.buffer.getBacklogView().pendingThoughtCount).toBe(1);
+	});
+});

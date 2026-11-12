@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { HealthChecker } from '../health/HealthChecker.js';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
+import type {
+	PersistenceBacklogSource,
+	PersistenceBacklogView,
+} from '../contracts/persistence-backlog.js';
 
 /**
  * Supplementary coverage tests for HealthChecker.
@@ -191,5 +195,98 @@ describe('HealthChecker — coverage gaps', () => {
 			expect(infoResult).toBeUndefined();
 			expect(debugResult).toBeUndefined();
 		});
+	});
+});
+
+describe('HealthChecker — persistence backlog component', () => {
+	const IDLE_VIEW: PersistenceBacklogView = {
+		globalQuarantined: false,
+		quarantinedSessionCount: 0,
+		retainedFailureCount: 0,
+		pendingThoughtCount: 0,
+	};
+
+	function sourceOf(read: () => PersistenceBacklogView | null): PersistenceBacklogSource {
+		return { getPersistenceBacklogView: vi.fn(read) };
+	}
+
+	it('adds no component while the source reports persistence disabled', async () => {
+		// Given
+		const checker = new HealthChecker({ persistenceBacklog: sourceOf(() => null) });
+
+		// When
+		const result = await checker.checkReadiness();
+
+		// Then
+		expect(result.status).toBe('ok');
+		expect(result.components).toEqual({});
+	});
+
+	it('stays ready and reports the counts when only sessions or writes are stuck', async () => {
+		// Given
+		const view: PersistenceBacklogView = {
+			globalQuarantined: false,
+			quarantinedSessionCount: 2,
+			retainedFailureCount: 3,
+			pendingThoughtCount: 5,
+		};
+		const checker = new HealthChecker({
+			persistence: createMockBackend(),
+			persistenceBacklog: sourceOf(() => view),
+		});
+
+		// When
+		const result = await checker.checkReadiness();
+
+		// Then
+		expect(result.status).toBe('ok');
+		expect(result.components['persistenceBacklog']).toEqual({
+			name: 'persistenceBacklog',
+			healthy: true,
+			details: 'quarantined sessions: 2, retained failures: 3, pending thoughts: 5',
+		});
+	});
+
+	it('is not ready while persistence is globally quarantined', async () => {
+		// Given
+		const view: PersistenceBacklogView = { ...IDLE_VIEW, globalQuarantined: true };
+		const checker = new HealthChecker({
+			persistence: createMockBackend(),
+			persistenceBacklog: sourceOf(() => view),
+		});
+
+		// When
+		const result = await checker.checkReadiness();
+
+		// Then
+		expect(result.status).toBe('degraded');
+		expect(result.components['persistence']!.healthy).toBe(true);
+		expect(result.components['persistenceBacklog']).toEqual({
+			name: 'persistenceBacklog',
+			healthy: false,
+			details:
+				'Persistence is globally quarantined; quarantined sessions: 0, retained failures: 0, pending thoughts: 0',
+		});
+	});
+
+	it('reads the backlog on every call even while the probe result is reused', async () => {
+		// Given
+		let view = IDLE_VIEW;
+		const healthy = vi.fn().mockResolvedValue(true);
+		const checker = new HealthChecker({
+			persistence: createMockBackend({ healthy }),
+			persistenceBacklog: sourceOf(() => view),
+			probeFreshnessMs: Number.MAX_SAFE_INTEGER,
+		});
+		const before = await checker.checkReadiness();
+
+		// When
+		view = { ...IDLE_VIEW, globalQuarantined: true };
+		const after = await checker.checkReadiness();
+
+		// Then
+		expect(before.status).toBe('ok');
+		expect(after.status).toBe('degraded');
+		expect(healthy).toHaveBeenCalledTimes(1);
 	});
 });

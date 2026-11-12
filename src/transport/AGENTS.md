@@ -1,6 +1,6 @@
 # TRANSPORT MODULE
 
-**Updated:** 2026-09-22
+**Updated:** 2026-11-12
 **Parent:** ../AGENTS.md
 
 ## OVERVIEW
@@ -27,6 +27,8 @@ transport/
 
 Shared GET: `/health`, `/ready`, `/metrics`.
 
+`StreamableHttpTransport` order: metrics → Host check → shutdown 503 → **`/health` + `/ready`** → rate limit → CORS → `/metrics` → `/mcp`. Probes sit ahead of the limiter so orchestrator polling neither spends nor is rejected by the client budget; they still get CORS validation and headers. The library `HttpTransport` order is unchanged (probes stay behind its limiter).
+
 ## SHARED BASE
 
 - Host allowlist (`TRACELATTICE_ALLOWED_HOSTS`)
@@ -43,7 +45,7 @@ Shared GET: `/health`, `/ready`, `/metrics`.
 - Idle reaper is **opt-in**: `maxSessions` + `sessionIdleTimeoutMs` + `sessionSweepIntervalMs` must all be set together. CLI passes all three when `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS`, `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS`, and `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` are set. `src/config/CliTransportConfig.ts` parses them and rejects partial sets or stateless retention. With none set, sessions live until `stop()`.
 - `stop()` closes `PreDispatchTracker` then joins `_acceptedWork`. Do not drop in-flight POSTs. Cancel reasons: `peer` | `shutdown` | `timeout`.
 - `ConnectionPool` is unused here. Do not wire it in.
-- `HealthChecker` feeds `/health` + `/ready`.
+- `HealthChecker` feeds `/health` + `/ready`. Readiness is 200 only for `ok`; any other status is 503. The CLI injects one. Keep probe routing in the `_isProbeRoute`/`_serveProbe` helpers and keep non-probe requests synchronous up to the body read.
 - ALS owner: stateful Streamable = `Mcp-Session-Id`; stateless Streamable and `HttpTransport` = fresh UUID per request. Stdio never wraps ALS.
 
 ## FORBIDDEN

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HealthChecker } from '../health/HealthChecker.js';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
 import type { Logger } from '../logger/StructuredLogger.js';
@@ -376,5 +376,275 @@ describe('HealthChecker', () => {
 
 			expect(healthyFn).toHaveBeenCalledTimes(3);
 		});
+	});
+});
+
+interface Deferred<T> {
+	readonly promise: Promise<T>;
+	readonly resolve: (value: T) => void;
+	readonly reject: (reason: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+	let resolve: (value: T) => void = () => undefined;
+	let reject: (reason: unknown) => void = () => undefined;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+const TIMED_OUT_DETAILS = 'Health check timed out after 1000ms';
+
+describe('HealthChecker bounded shared probe', () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('reports persistence unhealthy when healthy() outlives the default deadline', async () => {
+		// Given
+		const probe = createDeferred<boolean>();
+		const persistence = createMockBackend({ healthy: vi.fn(() => probe.promise) });
+		const checker = new HealthChecker({ persistence });
+		let settled = false;
+		const pending = checker.checkReadiness().then((result) => {
+			settled = true;
+			return result;
+		});
+
+		// When
+		await vi.advanceTimersByTimeAsync(999);
+		const settledBeforeDeadline = settled;
+		await vi.advanceTimersByTimeAsync(1);
+		const result = await pending;
+
+		// Then
+		expect(settledBeforeDeadline).toBe(false);
+		expect(result.status).toBe('unhealthy');
+		expect(result.components['persistence']).toEqual({
+			name: 'persistence',
+			healthy: false,
+			latencyMs: 1000,
+			details: TIMED_OUT_DETAILS,
+		});
+	});
+
+	it('honours a configured probeTimeoutMs', async () => {
+		// Given
+		const probe = createDeferred<boolean>();
+		const persistence = createMockBackend({ healthy: vi.fn(() => probe.promise) });
+		const checker = new HealthChecker({ persistence, probeTimeoutMs: 250 });
+		const pending = checker.checkReadiness();
+
+		// When
+		await vi.advanceTimersByTimeAsync(250);
+		const result = await pending;
+
+		// Then
+		expect(result.components['persistence']!.details).toBe('Health check timed out after 250ms');
+	});
+
+	it('converts a synchronous healthy() throw into an unhealthy component', async () => {
+		// Given
+		const persistence = createMockBackend({
+			healthy: vi.fn(() => {
+				throw new Error('sync boom');
+			}),
+		});
+		const checker = new HealthChecker({ persistence });
+
+		// When
+		const result = await checker.checkReadiness();
+
+		// Then
+		expect(result.components['persistence']!.healthy).toBe(false);
+		expect(result.components['persistence']!.details).toBe('Health check error: sync boom');
+	});
+
+	it('shares one backend probe between concurrent readiness checks', async () => {
+		// Given
+		const probe = createDeferred<boolean>();
+		const healthy = vi.fn(() => probe.promise);
+		const checker = new HealthChecker({ persistence: createMockBackend({ healthy }) });
+		const calls = [checker.checkReadiness(), checker.checkReadiness(), checker.checkReadiness()];
+
+		// When
+		probe.resolve(true);
+		const results = await Promise.all(calls);
+
+		// Then
+		expect(healthy).toHaveBeenCalledTimes(1);
+		expect(results.map((result) => result.status)).toEqual(['ok', 'ok', 'ok']);
+	});
+
+	it('joins a timed-out probe instead of starting another one', async () => {
+		// Given
+		const stuck = createDeferred<boolean>();
+		const healthy = vi
+			.fn<() => Promise<boolean>>()
+			.mockReturnValueOnce(stuck.promise)
+			.mockResolvedValue(true);
+		const checker = new HealthChecker({ persistence: createMockBackend({ healthy }) });
+		const first = checker.checkReadiness();
+		await vi.advanceTimersByTimeAsync(1000);
+		await first;
+
+		// When
+		const polls = [];
+		for (let index = 0; index < 3; index += 1) polls.push(await checker.checkReadiness());
+
+		// Then
+		expect(healthy).toHaveBeenCalledTimes(1);
+		expect(polls.map((poll) => poll.components['persistence']!.details)).toEqual([
+			TIMED_OUT_DETAILS,
+			TIMED_OUT_DETAILS,
+			TIMED_OUT_DETAILS,
+		]);
+
+		// When the stuck probe finally settles
+		stuck.resolve(true);
+		await vi.advanceTimersByTimeAsync(0);
+		const recovered = await checker.checkReadiness();
+
+		// Then a fresh probe runs and the instance is ready again
+		expect(healthy).toHaveBeenCalledTimes(2);
+		expect(recovered.status).toBe('ok');
+	});
+
+	it('handles a late rejection of a timed-out probe without an unhandled rejection', async () => {
+		// Given
+		const logger = createMockLogger();
+		const stuck = createDeferred<boolean>();
+		const persistence = createMockBackend({ healthy: vi.fn(() => stuck.promise) });
+		const checker = new HealthChecker({ persistence, logger });
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown): void => {
+			unhandled.push(reason);
+		};
+		process.on('unhandledRejection', onUnhandled);
+
+		try {
+			const pending = checker.checkReadiness();
+			await vi.advanceTimersByTimeAsync(1000);
+			await pending;
+
+			// When
+			stuck.reject(new Error('late failure'));
+			await vi.advanceTimersByTimeAsync(0);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			// Then
+			expect(unhandled).toEqual([]);
+			expect(logger.error).toHaveBeenCalledTimes(1);
+			expect(logger.error).toHaveBeenCalledWith(
+				'Persistence health check failed',
+				expect.objectContaining({ error: 'late failure' })
+			);
+		} finally {
+			process.off('unhandledRejection', onUnhandled);
+		}
+	});
+
+	it('reuses a settled result inside probeFreshnessMs and probes again after it', async () => {
+		// Given
+		const healthy = vi.fn().mockResolvedValue(true);
+		const checker = new HealthChecker({
+			persistence: createMockBackend({ healthy }),
+			probeFreshnessMs: 1000,
+		});
+		const first = await checker.checkReadiness();
+
+		// When
+		await vi.advanceTimersByTimeAsync(999);
+		const reused = await checker.checkReadiness();
+		const callsInsideWindow = healthy.mock.calls.length;
+		await vi.advanceTimersByTimeAsync(1);
+		await checker.checkReadiness();
+
+		// Then
+		expect(callsInsideWindow).toBe(1);
+		expect(healthy).toHaveBeenCalledTimes(2);
+		expect(reused.components['persistence']).toEqual(first.components['persistence']);
+	});
+
+	it('reuses a failed result inside the freshness window and logs the failure once', async () => {
+		// Given
+		const logger = createMockLogger();
+		const healthy = vi.fn().mockRejectedValue(new Error('disk gone'));
+		const checker = new HealthChecker({
+			persistence: createMockBackend({ healthy }),
+			probeFreshnessMs: 1000,
+			logger,
+		});
+
+		// When
+		const first = await checker.checkReadiness();
+		const second = await checker.checkReadiness();
+
+		// Then
+		expect(healthy).toHaveBeenCalledTimes(1);
+		expect(logger.error).toHaveBeenCalledTimes(1);
+		expect(second.components['persistence']).toEqual(first.components['persistence']);
+		expect(second.status).toBe('unhealthy');
+	});
+
+	it('clears the deadline timer when the probe settles first', async () => {
+		// Given
+		const checker = new HealthChecker({ persistence: createMockBackend() });
+
+		// When
+		await checker.checkReadiness();
+
+		// Then
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('does not let a pending deadline timer keep the process alive', async () => {
+		// Given
+		const probe = createDeferred<boolean>();
+		const startedTimers: { hasRef(): boolean }[] = [];
+		const fakeSetTimeout = globalThis.setTimeout;
+		vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+			...args: Parameters<typeof setTimeout>
+		) => {
+			const timer = fakeSetTimeout(...args);
+			startedTimers.push(timer);
+			return timer;
+		}) as typeof setTimeout);
+		const checker = new HealthChecker({
+			persistence: createMockBackend({ healthy: vi.fn(() => probe.promise) }),
+		});
+
+		// When
+		const pending = checker.checkReadiness();
+
+		// Then
+		expect(startedTimers).toHaveLength(1);
+		expect(startedTimers[0]!.hasRef()).toBe(false);
+
+		probe.resolve(true);
+		await pending;
+	});
+
+	it('keeps the persistence component shape for a checker built with only persistence', async () => {
+		// Given
+		const checker = new HealthChecker({ persistence: createMockBackend() });
+
+		// When
+		const result = await checker.checkReadiness();
+
+		// Then
+		expect(Object.keys(result.components)).toEqual(['persistence']);
+		expect(Object.keys(result.components['persistence']!).sort()).toEqual([
+			'details',
+			'healthy',
+			'latencyMs',
+			'name',
+		]);
 	});
 });
