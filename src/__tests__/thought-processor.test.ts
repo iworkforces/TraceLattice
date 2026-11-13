@@ -2314,7 +2314,7 @@ describe('ThoughtProcessor persistence backlog limit', () => {
 		expect(harness.history.getHistoryLength(BACKLOG_SESSION)).toBe(2);
 	});
 
-	it('keeps timer drains from retrying terminal failures while each rejection retries them', async () => {
+	it('retries terminal failures from timer drains on a backoff while each rejection retries them at once', async () => {
 		// Given
 		useFakeTimers();
 		const harness = createBacklogHarness(1, 100);
@@ -2337,9 +2337,9 @@ describe('ThoughtProcessor persistence backlog limit', () => {
 		// Then
 		expect(first.isError).toBeUndefined();
 		expect(attemptsAfterFirstTimerDrain).toBe(1);
-		expect(attemptsAfterIdleTimers).toBe(1);
+		expect(attemptsAfterIdleTimers).toBe(3);
 		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
-		expect(attemptsAfterRejection).toBe(2);
+		expect(attemptsAfterRejection).toBe(4);
 		expect(payloadOf(stillRetained).code).toBe('PERSISTENCE_BACKLOG_FULL');
 		expect(admitted.isError).toBeUndefined();
 	});

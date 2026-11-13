@@ -15,7 +15,11 @@ import {
 } from '../../contracts/ids.js';
 import type { Summary } from '../../core/compression/Summary.js';
 import type { Edge } from '../../core/graph/Edge.js';
-import { PersistenceBuffer, type PersistenceEventEmitter } from '../../core/PersistenceBuffer.js';
+import {
+	PersistenceBuffer,
+	type PersistenceClock,
+	type PersistenceEventEmitter,
+} from '../../core/PersistenceBuffer.js';
 import { PersistenceWorkQueue } from '../../core/PersistenceWorkQueue.js';
 import { PersistenceWriter, type PersistenceDelay } from '../../core/PersistenceWriter.js';
 import type { ThoughtData } from '../../core/thought.js';
@@ -199,6 +203,7 @@ interface HarnessOptions {
 	readonly delay?: PersistenceDelay;
 	readonly maxPendingThoughtsPerSession?: number;
 	readonly logger?: Logger;
+	readonly clock?: PersistenceClock;
 }
 
 const activeBuffers: PersistenceBuffer[] = [];
@@ -224,6 +229,7 @@ function createHarness(options: HarnessOptions): Harness {
 		delay: options.delay,
 		maxPendingThoughtsPerSession: options.maxPendingThoughtsPerSession,
 		logger: options.logger,
+		clock: options.clock,
 	});
 	activeBuffers.push(buffer);
 	return { buffer };
@@ -552,7 +558,7 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 		});
 	});
 
-	it('does not let timer generations reattempt exhausted work until an explicit drain rearms it', async () => {
+	it('lets timer generations retry exhausted work only after its backoff while explicit drains retry at once', async () => {
 		// Given
 		const sessionId = asSessionId('timer-exhaustion');
 		const persistence = new RecordingPersistence({
@@ -566,36 +572,79 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 
 		// When
 		const first = await settle(drain(harness.buffer));
-		await vi.advanceTimersByTimeAsync(500);
-		const attemptsBeforeRearm = persistence.thoughtWrites.length;
-		harness.buffer.stopFlushTimer();
 		const second = await settle(drain(harness.buffer));
+		await vi.advanceTimersByTimeAsync(100);
+		const attemptsBeforeBackoff = persistence.thoughtWrites.length;
+		await vi.advanceTimersByTimeAsync(100);
+		const attemptsAfterBackoff = persistence.thoughtWrites.length;
 
 		// Then
 		expect(first.status).toBe('rejected');
-		expect(attemptsBeforeRearm).toBe(1);
 		expect(second.status).toBe('rejected');
-		expect(persistence.thoughtWrites).toHaveLength(2);
+		expect(attemptsBeforeBackoff).toBe(2);
+		expect(attemptsAfterBackoff).toBe(3);
 	});
 
-	it('holds later writes behind a failed thought that a capacity trigger does not reattempt', async () => {
+	it('doubles the background retry backoff per failure and caps it at one minute', async () => {
 		// Given
-		const sessionId = asSessionId('capacity-exhaustion');
+		const attemptTimes: number[] = [];
 		const persistence = new RecordingPersistence({
-			thought: async ({ thought }) => {
-				if (thought.thought_number === 1) throw new ExpectedWriteError('terminal');
+			thought: async () => {
+				attemptTimes.push(Date.now());
+				throw new ExpectedWriteError('terminal');
 			},
 		});
-		const harness = createHarness({ persistence, maxRetries: 0, bufferSize: 1 });
+		const harness = createHarness({ persistence, maxRetries: 0, flushInterval: 10_000 });
+		acceptThought(harness, asSessionId('backoff-cap'), 1);
+		const startedAt = Date.now();
+		await settle(drain(harness.buffer));
+		harness.buffer.startFlushTimer();
+
+		// When
+		await vi.advanceTimersByTimeAsync(200_000);
+		const explicit = await settle(drain(harness.buffer));
+
+		// Then
+		expect(explicit.status).toBe('rejected');
+		expect(attemptTimes.map((time) => time - startedAt)).toEqual([
+			0, 10_000, 30_000, 70_000, 130_000, 190_000, 200_000,
+		]);
+	});
+
+	it('holds later writes behind a failed thought until a capacity trigger retries it after its backoff', async () => {
+		// Given
+		const sessionId = asSessionId('capacity-exhaustion');
+		let failFirst = true;
+		const persistence = new RecordingPersistence({
+			thought: async ({ thought }) => {
+				if (thought.thought_number === 1 && failFirst) throw new ExpectedWriteError('terminal');
+			},
+		});
+		const harness = createHarness({
+			persistence,
+			maxRetries: 0,
+			bufferSize: 1,
+			flushInterval: 100,
+		});
 		acceptThought(harness, sessionId, 1);
 		await flushMicrotasks();
 
 		// When
 		acceptThought(harness, sessionId, 2);
 		await flushMicrotasks();
+		const writesBeforeBackoff = persistence.thoughtWrites.map(
+			(write) => write.thought.thought_number
+		);
+		failFirst = false;
+		await vi.advanceTimersByTimeAsync(100);
+		acceptThought(harness, sessionId, 3);
+		await vi.advanceTimersByTimeAsync(0);
 
 		// Then
-		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([1]);
+		expect(writesBeforeBackoff).toEqual([1]);
+		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([
+			1, 1, 2, 3,
+		]);
 	});
 });
 
@@ -1902,7 +1951,7 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 		expect(() => harness.buffer.assertThoughtBacklogAvailable(sessionId)).not.toThrow();
 	});
 
-	it('counts terminal failures, skips them in timer drains, and retries them when it rejects', async () => {
+	it('counts terminal failures, retries them in timer drains on a backoff, and at once when it rejects', async () => {
 		// Given
 		const sessionId = asSessionId('limit-terminal');
 		const persistence = failingBackend(() => true);
@@ -1926,11 +1975,11 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 
 		// Then
 		expect(first.status).toBe('rejected');
-		expect(attemptsAfterTimerDrains).toBe(1);
+		expect(attemptsAfterTimerDrains).toBe(3);
 		expect(rejection).toBeInstanceOf(PersistenceBacklogFullError);
-		expect(attemptsStartedByRejection).toBe(2);
+		expect(attemptsStartedByRejection).toBe(4);
 		expect(joined.status).toBe('rejected');
-		expect(persistence.thoughtWrites).toHaveLength(2);
+		expect(persistence.thoughtWrites).toHaveLength(4);
 		expect(harness.buffer.pendingThoughtCount).toBe(1);
 	});
 
@@ -1990,7 +2039,7 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 		expect(harness.buffer.pendingThoughtCount).toBe(0);
 	});
 
-	it('upgrades a background generation so retained failures are retried in the same pass', async () => {
+	it('upgrades a background generation so a retained failure not yet due is retried in the same pass', async () => {
 		// Given
 		const sessionId = asSessionId('limit-upgrade');
 		const other = asSessionId('limit-upgrade-other');
@@ -2007,6 +2056,7 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 			maxRetries: 0,
 			flushInterval: 100,
 			maxPendingThoughtsPerSession: 1,
+			clock: { now: () => 0 },
 		});
 		acceptThought(harness, sessionId, 1);
 		await settle(drain(harness.buffer));
@@ -2294,6 +2344,47 @@ describe('PersistenceBuffer ordered durable writes', () => {
 		});
 	}
 
+	function eventsOf(events: readonly string[], sessionId: SessionId): string[] {
+		return events.filter((event) => event.includes(`:${sessionId}`));
+	}
+
+	it('keeps other sessions draining in accepted order while timer drains hold a failed session', async () => {
+		// Given
+		const events: string[] = [];
+		let down = true;
+		const persistence = loggingBackend(events, (event) => down && event === `thought:${ORDER_A}:2`);
+		const harness = createHarness({ persistence, flushInterval: 100 });
+		for (const thoughtNumber of [1, 2, 3]) {
+			acceptThought(harness, ORDER_A, thoughtNumber);
+			acceptThought(harness, ORDER_B, thoughtNumber);
+		}
+		harness.buffer.startFlushTimer();
+
+		// When
+		await vi.advanceTimersByTimeAsync(100);
+		const duringOutage = [...events];
+		const viewDuringOutage = harness.buffer.getBacklogView();
+		down = false;
+		await vi.advanceTimersByTimeAsync(100);
+
+		// Then
+		expect(duringOutage).toEqual([
+			`thought:${ORDER_A}:1`,
+			`thought:${ORDER_B}:1`,
+			`thought:${ORDER_A}:2`,
+			`thought:${ORDER_B}:2`,
+			`thought:${ORDER_B}:3`,
+		]);
+		expect(viewDuringOutage).toMatchObject({ pendingThoughtCount: 2 });
+		expect(eventsOf(events, ORDER_A)).toEqual([
+			`thought:${ORDER_A}:1`,
+			`thought:${ORDER_A}:2`,
+			`thought:${ORDER_A}:2`,
+			`thought:${ORDER_A}:3`,
+		]);
+		expect(harness.buffer.getBacklogView()).toMatchObject({ pendingThoughtCount: 0 });
+	});
+
 	it('holds snapshots accepted after a failed thought and writes only their latest versions', async () => {
 		// Given
 		const events: string[] = [];
@@ -2418,5 +2509,121 @@ describe('PersistenceBuffer ordered durable writes', () => {
 			`edges:${ORDER_A}:1`,
 			'callback',
 		]);
+	});
+
+	it('keeps eviction quarantine sticky while background drains recover the session', async () => {
+		// Given
+		const events: string[] = [];
+		let down = true;
+		const persistence = loggingBackend(events, (event) => down && event === `thought:${ORDER_A}:1`);
+		const harness = createHarness({ persistence, flushInterval: 100 });
+		acceptThought(harness, ORDER_A, 1);
+		acceptThought(harness, ORDER_A, 2);
+		const evicted = await settle(
+			harness.buffer.withSessionEvictionBarrier(ORDER_A, async () => {})
+		);
+		harness.buffer.startFlushTimer();
+		down = false;
+
+		// When
+		await vi.advanceTimersByTimeAsync(100);
+		const recoveredView = harness.buffer.getBacklogView();
+		const stateAfterRecovery = harness.buffer.sessionEvictionState(ORDER_A);
+		const admission = (): void => acceptThought(harness, ORDER_A, 3);
+		const admissionError = (() => {
+			try {
+				admission();
+			} catch (error) {
+				return error;
+			}
+			return undefined;
+		})();
+		await harness.buffer.withSessionEvictionBarrier(ORDER_A, async () => {});
+
+		// Then
+		expect(evicted.status).toBe('rejected');
+		expect(events).toEqual([
+			`thought:${ORDER_A}:1`,
+			`thought:${ORDER_A}:1`,
+			`thought:${ORDER_A}:2`,
+		]);
+		expect(recoveredView).toEqual({
+			globalQuarantined: false,
+			quarantinedSessionCount: 1,
+			retainedFailureCount: 0,
+			pendingThoughtCount: 0,
+		});
+		expect(stateAfterRecovery).toBe('failed');
+		expect(admissionError).toMatchObject({ name: 'PersistenceSessionAdmissionClosedError' });
+		expect(harness.buffer.sessionEvictionState(ORDER_A)).toBe('quiescent');
+		expect(harness.buffer.getBacklogView().quarantinedSessionCount).toBe(0);
+	});
+
+	it('discards held work and its retry state when a blocked session is reset', async () => {
+		// Given
+		const events: string[] = [];
+		const persistence = loggingBackend(events, (event) => event === `thought:${ORDER_A}:1`);
+		const harness = createHarness({ persistence, flushInterval: 100 });
+		acceptThought(harness, ORDER_A, 1);
+		acceptThought(harness, ORDER_A, 2);
+		acceptEdges(harness, ORDER_A, [edge(ORDER_A, 'held', 1)]);
+		acceptThought(harness, ORDER_B, 1);
+		await settle(drain(harness.buffer));
+		harness.buffer.startFlushTimer();
+
+		// When
+		await harness.buffer.withSessionResetBarrier(ORDER_A, async () => undefined);
+		const eventsAtReset = events.length;
+		const viewAfterReset = harness.buffer.getBacklogView();
+		await vi.advanceTimersByTimeAsync(1_000);
+		const eventsAfterIdleTicks = events.length;
+		acceptThought(harness, ORDER_A, 2);
+		await vi.advanceTimersByTimeAsync(100);
+
+		// Then
+		expect(events.slice(0, eventsAtReset)).toEqual([
+			`thought:${ORDER_A}:1`,
+			`thought:${ORDER_B}:1`,
+			`thought:${ORDER_A}:1`,
+		]);
+		expect(viewAfterReset).toMatchObject({
+			retainedFailureCount: 0,
+			pendingThoughtCount: 0,
+		});
+		expect(eventsAfterIdleTicks).toBe(eventsAtReset);
+		expect(events.slice(eventsAtReset)).toEqual([`thought:${ORDER_A}:2`]);
+	});
+
+	it('emits persistenceError when a background write is first retained, not on every retry', async () => {
+		// Given
+		const errors: Error[] = [];
+		const persistence = new RecordingPersistence({
+			thought: async () => {
+				throw new ExpectedWriteError('terminal');
+			},
+		});
+		const harness = createHarness({
+			persistence,
+			flushInterval: 100,
+			eventEmitter: {
+				emit(_event, payload) {
+					errors.push(payload.error);
+					return true;
+				},
+			},
+		});
+		acceptThought(harness, ORDER_A, 1);
+		harness.buffer.startFlushTimer();
+
+		// When
+		await vi.advanceTimersByTimeAsync(1_000);
+		const backgroundAttempts = persistence.thoughtWrites.length;
+		const backgroundErrors = errors.length;
+		await settle(drain(harness.buffer));
+
+		// Then
+		expect(backgroundAttempts).toBe(4);
+		expect(backgroundErrors).toBe(1);
+		expect(errors).toHaveLength(2);
 	});
 });
