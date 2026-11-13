@@ -229,8 +229,9 @@ branch, edges or summaries already replaced it, and the drain that sent it rejec
 retry of that failed write that times out again is logged but not reported again. A reset whose clear
 misses the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` through the failed-reset path and leaves
 live state in place.
-At most one backend call, write or clear, is in flight. No write is sent while a reset's clear runs,
-and resets of different sessions clear one at a time. A timed-out write or clear keeps running: until
+Writes reach the backend one at a time. No write is sent while a reset's clear runs, and resets of
+different sessions clear one at a time; a clear can still start while a write of another session is
+in flight. A timed-out write or clear keeps running: until
 it settles, no other call is sent, drains, flushes and session barriers reject with the
 `PERSISTENCE_WRITE_TIMEOUT` of the oldest pending call, and session and global resets fail without
 calling `clearSession` or `clearAll`, so retrying a reset never sends a second clear. `drainSession`
@@ -245,7 +246,8 @@ Size it for shutdown. `stop(timeoutMs)` splits its budget using one start time: 
 and the owned-backend close each get `min(persistenceWriteTimeout, floor(timeoutMs / 3))`, and the
 wait for admitted requests, resets and the watcher teardown gets the rest. The CLI passes 14000 ms
 at the default 30000 ms deadline, which at the default 5000 ms timeout is 4668 ms of waiting,
-4666 ms of flush and 4666 ms of close. A longer timeout no longer stretches shutdown: each phase
+4666 ms of flush and 4666 ms of close. A wait that ends early leaves its unused time to the flush.
+A longer timeout no longer stretches shutdown: each phase
 stops at its own deadline. `stop()` with no argument keeps the unbounded wait and flush.
 
 `persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
