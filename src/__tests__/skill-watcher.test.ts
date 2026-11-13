@@ -1,30 +1,17 @@
-import type { FSWatcher } from 'chokidar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type WatcherEventHandler = (path: string) => Promise<void> | void;
-let eventHandlers: Map<string, WatcherEventHandler>;
-let mockWatcher: {
-	on: ReturnType<typeof vi.fn>;
-	close: ReturnType<typeof vi.fn>;
-};
 
-vi.mock('chokidar', () => ({
-	watch: vi.fn(() => {
-		eventHandlers = new Map();
-		mockWatcher = {
-			on: vi.fn((event: string, handler: WatcherEventHandler) => {
-				eventHandlers.set(event, handler);
-				return mockWatcher;
-			}),
-			close: vi.fn().mockResolvedValue(undefined),
-		};
-		return mockWatcher as unknown as FSWatcher;
-	}),
-}));
+vi.mock('chokidar', async () => {
+	const { watchMock } = await import('./helpers/chokidar-mock.js');
+	return { watch: watchMock };
+});
 
 vi.mock('node:os', () => ({ homedir: () => '/mock/home' }));
 
 import { watch } from 'chokidar';
+import { emitOn, latestWatcher, resetChokidarMock } from './helpers/chokidar-mock.js';
+import { describeWatcherFaultRecovery } from './helpers/watcher-fault-suite.js';
 import type { Logger, LogLevel } from '../logger/StructuredLogger.js';
 import { SkillRegistry } from '../registry/SkillRegistry.js';
 import { SkillWatcher } from '../watchers/SkillWatcher.js';
@@ -41,9 +28,7 @@ function createLogger(): Logger {
 }
 
 function handler(event: string): WatcherEventHandler {
-	const registered = eventHandlers.get(event);
-	if (!registered) throw new Error(`Missing ${event} handler`);
-	return registered;
+	return (path) => emitOn(latestWatcher(), event, path);
 }
 
 describe('SkillWatcher', () => {
@@ -53,6 +38,7 @@ describe('SkillWatcher', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		resetChokidarMock();
 		registry = new SkillRegistry({ skillDirs: [] });
 		refresh = vi.spyOn(registry, 'refreshAsync').mockResolvedValue(0);
 		logger = createLogger();
@@ -73,9 +59,9 @@ describe('SkillWatcher', () => {
 			['.claude/skills', '/mock/home/.claude/skills'],
 			expect.objectContaining({ persistent: true })
 		);
-		expect(mockWatcher.on).toHaveBeenCalledWith('add', expect.any(Function));
-		expect(mockWatcher.on).toHaveBeenCalledWith('change', expect.any(Function));
-		expect(mockWatcher.on).toHaveBeenCalledWith('unlink', expect.any(Function));
+		expect(latestWatcher().on).toHaveBeenCalledWith('add', expect.any(Function));
+		expect(latestWatcher().on).toHaveBeenCalledWith('change', expect.any(Function));
+		expect(latestWatcher().on).toHaveBeenCalledWith('unlink', expect.any(Function));
 		await watcher.stop();
 	});
 
@@ -173,9 +159,9 @@ describe('SkillWatcher', () => {
 
 		// Then
 		expect(refresh).toHaveBeenCalledTimes(1);
-		expect(mockWatcher.close).toHaveBeenCalledTimes(1);
+		expect(latestWatcher().close).toHaveBeenCalledTimes(1);
 		await watcher.stop();
-		expect(mockWatcher.close).toHaveBeenCalledTimes(1);
+		expect(latestWatcher().close).toHaveBeenCalledTimes(1);
 	});
 
 	it('uses debug logging only when watcher verbosity is enabled', async () => {
@@ -203,4 +189,15 @@ describe('SkillWatcher', () => {
 		expect(logger.debug).not.toHaveBeenCalled();
 		await watcher.stop();
 	});
+});
+
+describeWatcherFaultRecovery({
+	name: 'SkillWatcher',
+	eventPath: '/skills/example.md',
+	create(directories, onFault) {
+		const registry = new SkillRegistry({ skillDirs: [] });
+		const refresh = vi.spyOn(registry, 'refreshAsync').mockResolvedValue(0);
+		const logger = createLogger();
+		return { watcher: new SkillWatcher(registry, logger, directories, onFault), refresh, logger };
+	},
 });
