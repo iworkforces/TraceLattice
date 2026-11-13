@@ -8,7 +8,14 @@ import {
 } from '../transport/StreamableHttpTransport.js';
 import { HealthChecker } from '../health/HealthChecker.js';
 import type { IMetrics } from '../contracts/interfaces.js';
+import { TransportStopTimeoutError } from '../errors.js';
 import { getListeningPort } from './integration/ProtocolHarness.js';
+import {
+	connectGatedTransport,
+	controlledCallBody,
+	getTransportServer,
+	startWireRequest,
+} from './integration/TransportLifecycleHarness.js';
 
 /**
  * Helper: send an HTTP request and collect the full response.
@@ -675,6 +682,49 @@ describe('StreamableHttpTransport — error handling coverage', () => {
 			// Don't call connect() — _server is null
 			const stopPromise = transport.stop();
 			await expect(stopPromise).resolves.toBeUndefined();
+		});
+	});
+
+	describe('stop() with accepted work that never finishes', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('rejects with the timeout and abandoned count after disposing sessions and force-closing', async () => {
+			// Given
+			transport = new StreamableHttpTransport({
+				port: 0,
+				host: '127.0.0.1',
+				enableRateLimit: false,
+				stateful: true,
+				requestTimeout: 60_000,
+			});
+			const gate = await connectGatedTransport(transport, '/mcp');
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			const forceClose = vi.spyOn(getTransportServer(transport), 'closeAllConnections');
+			const pending = startWireRequest(gate.endpoint, controlledCallBody(), {
+				...gate.headers,
+				connection: 'close',
+			});
+			await gate.started;
+			const sessionsBeforeStop = transport.clientCount;
+			const outcome = transport.stop(50).then(
+				() => null,
+				(error: unknown) => error
+			);
+
+			// When
+			await vi.advanceTimersByTimeAsync(50);
+
+			// Then
+			const error = await outcome;
+			expect(error).toBeInstanceOf(TransportStopTimeoutError);
+			expect(error).toMatchObject({ timeoutMs: 50, abandonedRequests: 1 });
+			expect(sessionsBeforeStop).toBe(1);
+			expect(transport.clientCount).toBe(0);
+			expect(forceClose).toHaveBeenCalledTimes(1);
+			gate.release();
+			await pending.outcome;
 		});
 	});
 
