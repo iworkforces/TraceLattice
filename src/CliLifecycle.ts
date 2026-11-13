@@ -76,8 +76,9 @@ export function stopWithin(
 
 /**
  * The transport phase of one shutdown. `settled` never rejects and resolves when the transport
- * stopped, failed, or overran its slice; `failures()` reports the transport's own outcome once it
- * has settled and the slice guard's error before that.
+ * stopped, failed, or overran its slice; `failures()` reports the transport's own failure once it
+ * has rejected and the slice guard's error otherwise, so an overrun slice stays a failure even
+ * when the transport stops cleanly afterwards.
  */
 class TransportStopRun {
 	readonly settled: Promise<void>;
@@ -106,7 +107,7 @@ class TransportStopRun {
 	}
 
 	failures(): readonly unknown[] {
-		return this._real ?? this._guard;
+		return this._real !== null && this._real.length > 0 ? this._real : this._guard;
 	}
 }
 

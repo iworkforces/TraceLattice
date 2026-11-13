@@ -318,6 +318,36 @@ describe('CliLifecycle shutdown budget', () => {
 		expect(aggregateErrors(await outcome)).toEqual([lateFailure]);
 	});
 
+	it('keeps the slice timeout as a failure when the transport stops cleanly after overrunning it', async () => {
+		// Given
+		useTimersOnly();
+		const transportGate = deferred();
+		const serverGate = deferred();
+		const rig = createShutdownRig({
+			deadlineMs: 100,
+			transportStop: () => transportGate.promise,
+			serverStop: () => serverGate.promise,
+		});
+		const signal = rig.handler();
+
+		// When
+		await vi.advanceTimersByTimeAsync(50);
+		transportGate.resolve();
+		await vi.advanceTimersByTimeAsync(0);
+		serverGate.resolve();
+		await signal;
+
+		// Then
+		expect(aggregateErrors(rig.reportFailure.mock.calls[0]?.[0])).toEqual([
+			expect.objectContaining({
+				code: 'TRANSPORT_STOP_TIMEOUT',
+				timeoutMs: 50,
+				abandonedRequests: null,
+			}),
+		]);
+		expect(rig.exit).toHaveBeenCalledExactlyOnceWith(1);
+	});
+
 	it('never leaves a late rejection from an abandoned transport unhandled', async () => {
 		// Given
 		useTimersOnly();
