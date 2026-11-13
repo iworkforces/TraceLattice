@@ -108,6 +108,8 @@ type ActiveDrain = {
 	backgroundObserved: boolean;
 	retainedNewFailure: boolean;
 	stalledWrite: PersistenceWriteTimeoutError | null;
+	/** Whether the stalled write is retained as failed; `false` when a newer version replaced it. */
+	stalledWriteRetained: boolean;
 	/** Oldest stall of the closed gate that stopped this generation before its work ran out. */
 	gateError: PersistenceWriteTimeoutError | null;
 	inFlightWork: PersistenceWork | null;
@@ -650,6 +652,7 @@ export class PersistenceBuffer {
 			backgroundObserved: false,
 			retainedNewFailure: false,
 			stalledWrite: null,
+			stalledWriteRetained: false,
 			gateError: null,
 			inFlightWork: null,
 			settlement: null,
@@ -699,19 +702,21 @@ export class PersistenceBuffer {
 		}
 		if (this._queue.acknowledgeFailure(work, result)) generation.retainedNewFailure = true;
 		if (result.cause instanceof PersistenceWriteTimeoutError) {
+			generation.stalledWriteRetained = this._queue.isRetainedFailure(work);
 			this._closeWriteGate(generation, { kind: 'work', work, error: result.cause });
 		}
 	}
 
 	/**
 	 * Background generations report a failure only when it is first retained, not per retry.
-	 * A write that timed out is always reported, once, by the generation that dispatched it.
+	 * A timed-out write that left nothing retained, because a newer version replaced it, is
+	 * reported once by the generation that dispatched it.
 	 */
 	private _reportsFailures(generation: ActiveDrain): boolean {
 		return (
 			generation.mode === 'explicit' ||
 			generation.retainedNewFailure ||
-			generation.stalledWrite !== null
+			(generation.stalledWrite !== null && !generation.stalledWriteRetained)
 		);
 	}
 

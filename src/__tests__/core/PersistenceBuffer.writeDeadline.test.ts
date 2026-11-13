@@ -323,6 +323,46 @@ describe('PersistenceBuffer write deadline gate', () => {
 		expect(harness.events).toHaveLength(1);
 	});
 
+	it('reports a retained head that times out again on background retries only once', async () => {
+		// Given
+		const harness = createHarness();
+		harness.persistence.holdWrites = true;
+		harness.buffer.startFlushTimer();
+		harness.buffer.bufferThought(A, thought(A, 1));
+		await advanceTimeAsync(FLUSH_MS + TIMEOUT_MS);
+		const eventsAfterFirstTimeout = harness.events.length;
+
+		// When the first background retry (backoff 1 s) and the second (backoff 2 s) time out too
+		harness.persistence.releaseHeldCall(new Error('late failure 1'));
+		await advanceTimeAsync(FLUSH_MS + TIMEOUT_MS);
+		harness.persistence.releaseHeldCall(new Error('late failure 2'));
+		await advanceTimeAsync(2 * FLUSH_MS + TIMEOUT_MS);
+
+		// Then
+		expect(harness.persistence.thoughtAttempts).toBe(3);
+		expect(harness.warn).toHaveBeenCalledTimes(3);
+		expect(eventsAfterFirstTimeout).toBe(1);
+		expect(harness.events).toHaveLength(1);
+		expect(harness.buffer.getBacklogView().retainedFailureCount).toBe(1);
+	});
+
+	it('reports every explicit drain whose retry of a retained write times out again', async () => {
+		// Given
+		const harness = createHarness();
+		await stallFirstWrite(harness);
+		harness.persistence.releaseHeldCall(new Error('late failure'));
+		await advanceTimeAsync(0);
+
+		// When
+		const retried = track(harness.buffer.drain());
+		await advanceTimeAsync(TIMEOUT_MS);
+
+		// Then
+		expect(firstCause(retried())).toBeInstanceOf(PersistenceWriteTimeoutError);
+		expect(harness.persistence.thoughtAttempts).toBe(2);
+		expect(harness.events).toHaveLength(2);
+	});
+
 	it('lets an explicit drain retry a late failure at once and save it once', async () => {
 		// Given
 		const harness = createHarness();
