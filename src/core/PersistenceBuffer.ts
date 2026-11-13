@@ -17,7 +17,9 @@ import {
 	PersistenceSessionBarrierReentrancyError,
 	PersistenceWriteTimeoutError,
 } from './PersistenceBufferErrors.js';
-import type { PersistenceCallOutcome } from './PersistenceCallDeadline.js';
+import { ServerStopTimeoutError } from '../errors.js';
+import { callWithinDeadline, type PersistenceCallOutcome } from './PersistenceCallDeadline.js';
+import { SessionLifecycleClosedError } from './SessionErrors.js';
 import {
 	PersistenceWriteGate,
 	timedOutClearCall,
@@ -159,6 +161,10 @@ export class PersistenceBuffer {
 	private _globalResetTail: Promise<void> = Promise.resolve();
 	private _globalResetOwners = 0;
 	private _globalQuarantined = false;
+	/** Set by {@link closeForShutdown}: no buffering, trigger, backlog drain or barrier afterwards. */
+	private _shutdownSealed = false;
+	/** Set once a bounded shutdown flush settles or overruns: no backend call is dispatched. */
+	private _dispatchSealed = false;
 
 	/**
 	 * Creates a persistence-drain coordinator.
@@ -306,6 +312,7 @@ export class PersistenceBuffer {
 	 * @throws {@link PersistenceBacklogFullError} when the session is at its limit.
 	 */
 	public assertThoughtBacklogAvailable(sessionId: SessionId): void {
+		this._assertNotSealed(sessionId);
 		const pending = this._queue.pendingThoughtCountForSession(sessionId);
 		if (pending < this._maxPendingThoughtsPerSession) return;
 		void this._joinOrStart('explicit').promise.catch(() => undefined);
@@ -345,6 +352,38 @@ export class PersistenceBuffer {
 	/** @returns The exact same promise as {@link drain} for the active generation. */
 	public flush(): Promise<void> {
 		return this.drain();
+	}
+
+	/**
+	 * Seals the buffer for shutdown, then drains the work accepted before the seal.
+	 *
+	 * Callers stage everything the shutdown must persist first. Once sealed, `buffer*` calls,
+	 * `assertSessionAdmissionOpen`, backlog checks and session barriers throw
+	 * `SessionLifecycleClosedError` (phase `shutting_down`) without touching the queue, and timer
+	 * and size triggers start nothing. Without `timeoutMs` the drain is unbounded. With it, dispatch
+	 * is sealed as soon as the drain settles or the bound elapses, so no backend call starts after
+	 * this method settles; at the bound it rejects with `ServerStopTimeoutError('flush', timeoutMs,
+	 * pending)`, where `pending` counts queued and failed writes, and the abandoned generation stops
+	 * once its in-flight call settles, rejecting rather than resolving for work it did not send.
+	 *
+	 * @param timeoutMs - Optional flush bound in milliseconds, at most 2147483647.
+	 */
+	public async closeForShutdown(timeoutMs?: number): Promise<void> {
+		this._shutdownSealed = true;
+		this.stopFlushTimer();
+		if (timeoutMs === undefined) return this.drain();
+		const outcome = await callWithinDeadline(() => this.drain(), timeoutMs);
+		this._dispatchSealed = true;
+		switch (outcome.kind) {
+			case 'fulfilled':
+				return;
+			case 'rejected':
+				throw outcome.reason;
+			case 'timedOut':
+				throw new ServerStopTimeoutError('flush', timeoutMs, this._queue.pendingWorkCount);
+			default:
+				assertNever(outcome);
+		}
 	}
 
 	/**
@@ -660,7 +699,7 @@ export class PersistenceBuffer {
 	}
 
 	private _triggerBackgroundDrain(): void {
-		if (this._dispatchBlocked()) return;
+		if (this._shutdownSealed || this._dispatchBlocked()) return;
 		const generation = this._joinOrStart('background');
 		if (generation.backgroundObserved) return;
 		generation.backgroundObserved = true;
@@ -720,9 +759,12 @@ export class PersistenceBuffer {
 		);
 	}
 
-	/** Single predicate read by every dispatch decision: gate closed or a clear in flight. */
+	/**
+	 * Single predicate read by every dispatch decision: gate closed, a clear in flight, or dispatch
+	 * sealed by a bounded shutdown flush.
+	 */
 	private _dispatchBlocked(): boolean {
-		return this._writeGate.isClosed || this._writeGate.clearInFlight;
+		return this._writeGate.isClosed || this._writeGate.clearInFlight || this._dispatchSealed;
 	}
 
 	private _closeWriteGate(
@@ -860,7 +902,8 @@ export class PersistenceBuffer {
 	/**
 	 * A generation that dispatched a timed-out write never resolves, even when no failure was
 	 * retained because a newer version superseded that write while its call was in flight.
-	 * Neither does one that the closed gate stopped: it rejects with the gate's oldest stall.
+	 * Neither does one that the closed gate stopped: it rejects with the gate's oldest stall. One
+	 * that the shutdown dispatch seal stopped with work still eligible rejects as lifecycle-closed.
 	 */
 	private _generationSettlement(generation: ActiveDrain): DrainSettlement {
 		const { failures } = this._queue.generationResult(generation.selectedTokens);
@@ -868,13 +911,24 @@ export class PersistenceBuffer {
 			return { kind: 'rejected', reason: new PersistenceDrainError(failures) };
 		}
 		const timeout = generation.stalledWrite ?? generation.gateError;
-		return timeout === null ? { kind: 'resolved' } : { kind: 'rejected', reason: timeout };
+		if (timeout !== null) return { kind: 'rejected', reason: timeout };
+		if (
+			this._dispatchSealed &&
+			this._queue.hasEligibleWork(generation.selectedTokens, generation.mode)
+		) {
+			return {
+				kind: 'rejected',
+				reason: new SessionLifecycleClosedError(undefined, 'shutting_down'),
+			};
+		}
+		return { kind: 'resolved' };
 	}
 
 	private async _awaitSessionQuiescence(sessionId: SessionId): Promise<void> {
 		const generation = this._joinOrStart('explicit');
 		void generation.promise.catch(() => undefined);
 		while (true) {
+			this._assertNotSealed(sessionId);
 			const quiescence = this._sessionQuiescence(generation, sessionId);
 			switch (quiescence.kind) {
 				case 'pending':
@@ -928,7 +982,13 @@ export class PersistenceBuffer {
 		}
 	}
 
+	/** Work arriving after the shutdown seal, e.g. from an abandoned operation, is refused. */
+	private _assertNotSealed(sessionId: SessionId): void {
+		if (this._shutdownSealed) throw new SessionLifecycleClosedError(sessionId, 'shutting_down');
+	}
+
 	private _assertSessionAdmissionOpen(sessionId: SessionId): void {
+		this._assertNotSealed(sessionId);
 		if (
 			this._globalResetOwners > 0 ||
 			this._globalQuarantined ||
