@@ -24,6 +24,16 @@ interface SessionResetCoordinatorBaseConfig<SessionState> {
 	readonly logger: Logger;
 	/** Deadline for `clearSession` / `clearAll` in milliseconds; `undefined` waits without one. */
 	readonly persistenceWriteTimeout?: number;
+	/**
+	 * Runs the live replacement under the owning lifecycle context and throws when an overrun
+	 * shutdown abandoned that context, so an abandoned reset rejects instead of replacing live
+	 * state. `undefined` replaces directly.
+	 */
+	readonly runLiveReplacement?: (sessionId: SessionId, replace: () => void) => void;
+}
+
+function replaceDirectly(_sessionId: SessionId, replace: () => void): void {
+	replace();
 }
 
 type ClearCall = Extract<PersistenceTimedOutCall, { kind: 'clearSession' | 'clearAll' }>;
@@ -43,6 +53,7 @@ export class SessionResetCoordinator<SessionState> {
 	private readonly _createSessionState: (owner: string | undefined) => SessionState;
 	private readonly _logger: Logger;
 	private readonly _clearTimeoutMs: number | undefined;
+	private readonly _runLiveReplacement: (sessionId: SessionId, replace: () => void) => void;
 	private readonly _assertReplacementCapacity: SessionResetCoordinatorBaseConfig<SessionState>['assertReplacementCapacity'];
 	private readonly _admitReplacement: SessionResetCoordinatorBaseConfig<SessionState>['admitReplacement'];
 
@@ -54,6 +65,7 @@ export class SessionResetCoordinator<SessionState> {
 		this._createSessionState = config.createSessionState;
 		this._logger = config.logger;
 		this._clearTimeoutMs = config.persistenceWriteTimeout;
+		this._runLiveReplacement = config.runLiveReplacement ?? replaceDirectly;
 		this._assertReplacementCapacity = config.assertReplacementCapacity;
 		this._admitReplacement = config.admitReplacement;
 	}
@@ -64,22 +76,25 @@ export class SessionResetCoordinator<SessionState> {
 		clearAuxiliaryState?: () => void
 	): Promise<void> {
 		this._assertReplacementCapacity(sessionId, preservedOwner);
-		const durability = this._durability;
-		if (durability.persistence === null) {
+		const replace = (): void => {
 			this._replaceLiveSession(sessionId, preservedOwner);
 			clearAuxiliaryState?.();
+		};
+		const durability = this._durability;
+		if (durability.persistence === null) {
+			this._runLiveReplacement(sessionId, replace);
 			return;
 		}
 		await durability.barrier.withSessionResetBarrier(sessionId, async () => {
 			await this._clearWithinDeadline({ kind: 'clearSession', sessionId }, () =>
 				durability.persistence.clearSession(sessionId)
 			);
-			this._replaceLiveSession(sessionId, preservedOwner);
-			clearAuxiliaryState?.();
+			this._runLiveReplacement(sessionId, replace);
 		});
 	}
 
 	async resetAll(clearAuxiliaryState?: () => void): Promise<void> {
+		// No lifecycle check: shutdown() is refused while a global reset runs, so it is never abandoned.
 		const durability = this._durability;
 		if (durability.persistence === null) {
 			this._clearAllLiveState();

@@ -19,6 +19,9 @@ vi.mock('../../persistence/PersistenceFactory.js', () => ({
 const WRITE_TIMEOUT_MS = 1500;
 const BUDGET_MS = 3000;
 const IDLE_MS = 1000;
+/** With a 1200 ms budget and a 1500 ms write timeout: idle ends at 400 ms, flush at 800 ms. */
+const SHORT_BUDGET_MS = 1200;
+const SHORT_FLUSH_END_MS = 800;
 const HELD = 'stop-budget-held';
 const OTHER = 'stop-budget-other';
 
@@ -216,6 +219,64 @@ describe('bounded server stop', () => {
 		expect(persistence.clearCalls).toBe(0);
 		expect(persistence.closeCalls).toBe(1);
 		expect(persistence.maxConcurrentCalls).toBe(1);
+	});
+
+	it('rejects a reset abandoned by an overrun stop and refuses the reset queued behind it', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createOwnedServer(persistence);
+		await server.processThought(thoughtInput(HELD));
+		await server.processThought(thoughtInput(OTHER));
+		persistence.holdClears = true;
+		const first = server.resetSession(HELD).then(
+			() => 'fulfilled',
+			() => 'rejected'
+		);
+		const second = server.resetSession(OTHER).then(
+			() => 'fulfilled',
+			() => 'rejected'
+		);
+		await vi.advanceTimersByTimeAsync(0);
+
+		// When
+		const stopping = trackStop(server.stop(SHORT_BUDGET_MS));
+		await vi.advanceTimersByTimeAsync(SHORT_FLUSH_END_MS);
+		const settledAtFlushEnd = stopping.isSettled();
+		persistence.releaseHeldCall();
+		await vi.advanceTimersByTimeAsync(0);
+
+		// Then
+		expect(settledAtFlushEnd).toBe(true);
+		expect(persistence.clearCalls).toBe(1);
+		expect(await first).toBe('rejected');
+		expect(await second).toBe('rejected');
+		expect(server.history.getHistoryLength(HELD)).toBe(1);
+		expect(server.history.getHistoryLength(OTHER)).toBe(1);
+	});
+
+	it('does not apply the reset half of a reset_state thought abandoned by an overrun stop', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createOwnedServer(persistence);
+		await server.processThought(thoughtInput(HELD, 1));
+		await server.processThought(thoughtInput(HELD, 2));
+		persistence.holdClears = true;
+		const fresh = server.processThought({ ...thoughtInput(HELD, 1), reset_state: true });
+		await vi.advanceTimersByTimeAsync(0);
+
+		// When
+		const stopping = trackStop(server.stop(SHORT_BUDGET_MS));
+		await vi.advanceTimersByTimeAsync(SHORT_FLUSH_END_MS);
+		const settledAtFlushEnd = stopping.isSettled();
+		persistence.releaseHeldCall();
+		await vi.advanceTimersByTimeAsync(0);
+		const result = await fresh;
+
+		// Then
+		expect(settledAtFlushEnd).toBe(true);
+		expect(result.isError).toBe(true);
+		expect(result.content[0]?.text).toContain('SESSION_LIFECYCLE_CLOSED');
+		expect(server.history.getHistoryLength(HELD)).toBe(2);
 	});
 
 	it('reports a hung discovery teardown and still flushes and closes', async () => {

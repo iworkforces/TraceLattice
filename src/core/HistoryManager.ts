@@ -208,6 +208,7 @@ export class HistoryManager implements IHistoryManager {
 		this._resetCoordinator = new SessionResetCoordinator({
 			...resetDurability,
 			persistenceWriteTimeout: config.persistenceWriteTimeout,
+			runLiveReplacement: (sessionId, replace) => this._lifecycle.runMutation(sessionId, replace),
 			edgeStore: this._edgeStore,
 			summaryStore: this._summaryStore,
 			sessions: this._sessions,

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { asSessionId, type SessionId } from '../../contracts/ids.js';
+import { InMemorySummaryStore } from '../../core/compression/InMemorySummaryStore.js';
+import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import { PersistenceBuffer } from '../../core/PersistenceBuffer.js';
 import {
 	PersistenceDrainError,
@@ -18,19 +20,32 @@ interface TestSessionState {
 	readonly owner: string | undefined;
 }
 
-function createCoordinator(): {
+type CoordinatorOptions = {
+	readonly durable?: boolean;
+	readonly runLiveReplacement?: (sessionId: SessionId, replace: () => void) => void;
+	readonly edgeStore?: EdgeStore;
+	readonly summaryStore?: InMemorySummaryStore;
+};
+
+function createCoordinator(options: CoordinatorOptions = {}): {
 	coordinator: SessionResetCoordinator<TestSessionState>;
 	persistence: MemoryPersistence;
 	sessions: Map<ReturnType<typeof asSessionId>, TestSessionState>;
 } {
 	const persistence = new MemoryPersistence();
 	const sessions = new Map<ReturnType<typeof asSessionId>, TestSessionState>();
+	const barrier = {
+		withSessionResetBarrier: async (_sessionId: SessionId, operation: () => Promise<void>) =>
+			await operation(),
+		withGlobalResetBarrier: async (operation: () => Promise<void>) => await operation(),
+	};
+	const durability =
+		options.durable === false ? { persistence: null, barrier: null } : { persistence, barrier };
 	const coordinator = new SessionResetCoordinator({
-		persistence,
-		barrier: {
-			withSessionResetBarrier: async (_sessionId, operation) => await operation(),
-			withGlobalResetBarrier: async (operation) => await operation(),
-		},
+		...durability,
+		runLiveReplacement: options.runLiveReplacement,
+		edgeStore: options.edgeStore,
+		summaryStore: options.summaryStore,
 		sessions,
 		createSessionState: (owner) => ({ owner }),
 		assertReplacementCapacity: () => undefined,
@@ -52,6 +67,42 @@ describe('SessionResetCoordinator', () => {
 		expect(clearSession).toHaveBeenCalledWith(sessionId);
 		expect(sessions.get(sessionId)).toEqual({ owner: 'owner-a' });
 	});
+
+	it.each([{ durable: true }, { durable: false }])(
+		'rejects with the error of runLiveReplacement and leaves live state untouched (durable $durable)',
+		async ({ durable }) => {
+			// Given
+			const sessionId = asSessionId('session-a');
+			const abandoned = new Error('reset abandoned');
+			const edgeStore = new EdgeStore();
+			const summaryStore = new InMemorySummaryStore();
+			const clearEdges = vi.spyOn(edgeStore, 'clearSession');
+			const clearSummaries = vi.spyOn(summaryStore, 'clearSession');
+			const { coordinator, persistence, sessions } = createCoordinator({
+				durable,
+				runLiveReplacement: () => {
+					throw abandoned;
+				},
+				edgeStore,
+				summaryStore,
+			});
+			const original = { owner: 'owner-a' };
+			sessions.set(sessionId, original);
+			const clearAuxiliaryState = vi.fn();
+			const clearSession = vi.spyOn(persistence, 'clearSession');
+
+			// When
+			const reset = coordinator.resetSession(sessionId, 'owner-a', clearAuxiliaryState);
+
+			// Then
+			await expect(reset).rejects.toBe(abandoned);
+			expect(clearSession).toHaveBeenCalledTimes(durable ? 1 : 0);
+			expect(sessions.get(sessionId)).toBe(original);
+			expect(clearEdges).not.toHaveBeenCalled();
+			expect(clearSummaries).not.toHaveBeenCalled();
+			expect(clearAuxiliaryState).not.toHaveBeenCalled();
+		}
+	);
 
 	it('clears all persistent and live state through the durable barrier', async () => {
 		const { coordinator, persistence, sessions } = createCoordinator();
