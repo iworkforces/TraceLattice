@@ -223,12 +223,17 @@ or `TRACELATTICE_PERSISTENCE_WRITE_TIMEOUT` overrides.
 
 `persistenceWriteTimeout` is the deadline for each persistence backend write and, during `stop()`,
 for the `close()` of a server-owned backend. A write still pending at the deadline fails with
-`PERSISTENCE_WRITE_TIMEOUT`, is not retried, and is kept as a failed write. A close that misses the
-deadline is one of the failures `stop()` rejects with; an injected backend is still never closed. A
-timer cannot interrupt the synchronous SQLite driver, so the deadline only takes effect for
-asynchronous backends such as File or an injected backend. Size it for shutdown: watcher stop (up to
-2 s), the buffer flush (up to the timeout) and the owned-backend close (up to the timeout) must fit
-inside the server's share of the CLI shutdown deadline, 15 s by default.
+`PERSISTENCE_WRITE_TIMEOUT` and is kept as a failed write, reported once through `persistenceError`.
+At most one backend write is in flight: until the timed-out call settles, no other write is sent,
+drains, flushes and session barriers reject with `PERSISTENCE_WRITE_TIMEOUT`, and session and global
+resets fail without calling `clearSession` or `clearAll`. The call's real outcome is applied once, so
+a late success is never sent again and a late failure stays retained; background draining resumes on
+the next flush tick. A close that misses the deadline is one of the failures `stop()` rejects with;
+an injected backend is still never closed. A timer cannot interrupt the synchronous SQLite driver,
+so the deadline only takes effect for asynchronous backends such as File or an injected backend.
+Size it for shutdown: watcher stop (up to 2 s), the buffer flush (up to the timeout) and the
+owned-backend close (up to the timeout) must fit inside the server's share of the CLI shutdown
+deadline, 15 s by default.
 
 `persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
 unacknowledged, counting writes that failed terminally. At the limit a thought is rejected with
