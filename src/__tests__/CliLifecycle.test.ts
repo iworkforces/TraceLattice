@@ -295,6 +295,27 @@ describe('CliLifecycle shutdown budget', () => {
 		expect(rig.server.stop).toHaveBeenCalledOnce();
 	});
 
+	it('exits 0 when a transport resolves at its own slice timer', async () => {
+		// Given
+		useTimersOnly();
+		const rig = createShutdownRig({
+			deadlineMs: 100,
+			transportStop: (timeoutMs) =>
+				new Promise<void>((resolve) => {
+					setTimeout(resolve, timeoutMs);
+				}),
+		});
+		const signal = rig.handler();
+
+		// When
+		await vi.advanceTimersByTimeAsync(50);
+		await signal;
+
+		// Then
+		expect(rig.reportFailure).not.toHaveBeenCalled();
+		expect(rig.exit).toHaveBeenCalledExactlyOnceWith(0);
+	});
+
 	it('reports the transport failure instead of the guard error when it lands before the server stop settles', async () => {
 		// Given
 		useTimersOnly();
