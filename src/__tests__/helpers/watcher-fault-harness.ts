@@ -1,7 +1,7 @@
 import type { MockInstance } from 'vitest';
 import type { Logger } from '../../logger/StructuredLogger.js';
 import type { WatcherFaultHandler } from '../../watchers/RecoverableWatcher.js';
-import { emitOn, fakeWatchers, latestWatcher, type FakeWatcher } from './chokidar-mock.js';
+import { emitOn, latestWatcher } from './chokidar-mock.js';
 
 export interface WatcherHarness {
 	readonly watcher: { ready(): Promise<void>; stop(): Promise<void> };
@@ -17,12 +17,6 @@ export interface WatcherSubject {
 
 export const DIRS = ['./watched/one/', 'watched/two'] as const;
 export const NEVER_SETTLES = new Promise<void>(() => {});
-
-export function instance(index: number): FakeWatcher {
-	const found = fakeWatchers[index];
-	if (!found) throw new Error(`No watcher #${index}`);
-	return found;
-}
 
 export function fault(error: unknown = new Error('EACCES')): void {
 	emitOn(latestWatcher(), 'error', error);

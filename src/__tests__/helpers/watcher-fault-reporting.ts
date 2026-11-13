@@ -1,13 +1,12 @@
 import { resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { WatcherFaultHandler } from '../../watchers/RecoverableWatcher.js';
-import { emitOn, latestWatcher, watchMock } from './chokidar-mock.js';
+import { emitOn, latestWatcher, watchMock, watcherAt } from './chokidar-mock.js';
 import { advanceTime, advanceTimeAsync } from './timers.js';
 import {
 	DIRS,
 	errorAt,
 	fault,
-	instance,
 	startReady,
 	type WatcherSubject,
 } from './watcher-fault-harness.js';
@@ -120,7 +119,7 @@ export function describeReady(subject: WatcherSubject): void {
 
 		expect(logger.warn).toHaveBeenCalledOnce();
 		expect(watchMock).toHaveBeenCalledOnce();
-		expect(instance(0).close).not.toHaveBeenCalled();
+		expect(watcherAt(0).close).not.toHaveBeenCalled();
 		expect(vi.getTimerCount()).toBe(0);
 	});
 

@@ -1,11 +1,10 @@
 import { expect, it, vi } from 'vitest';
-import { emitOn, latestWatcher, watchMock } from './chokidar-mock.js';
+import { emitOn, latestWatcher, watchMock, watcherAt } from './chokidar-mock.js';
 import { advanceTime, advanceTimeAsync } from './timers.js';
 import {
 	DIRS,
 	NEVER_SETTLES,
 	fault,
-	instance,
 	startReady,
 	type WatcherSubject,
 } from './watcher-fault-harness.js';
@@ -15,7 +14,7 @@ export function describeRestart(subject: WatcherSubject): void {
 		startReady(subject);
 
 		fault();
-		expect(instance(0).close).toHaveBeenCalledOnce();
+		expect(watcherAt(0).close).toHaveBeenCalledOnce();
 		expect(vi.getTimerCount()).toBe(1);
 		advanceTime(999);
 		expect(watchMock).toHaveBeenCalledOnce();
@@ -31,7 +30,7 @@ export function describeRestart(subject: WatcherSubject): void {
 
 	it('restarts even when the failed instance never finishes closing', () => {
 		startReady(subject);
-		instance(0).close.mockReturnValue(NEVER_SETTLES);
+		watcherAt(0).close.mockReturnValue(NEVER_SETTLES);
 
 		fault();
 		advanceTime(1000);
@@ -41,7 +40,7 @@ export function describeRestart(subject: WatcherSubject): void {
 
 	it('logs a rejected close of the failed instance and still restarts', async () => {
 		const { logger } = startReady(subject);
-		instance(0).close.mockRejectedValue(new Error('close failed'));
+		watcherAt(0).close.mockRejectedValue(new Error('close failed'));
 
 		fault();
 		await advanceTimeAsync(1000);
@@ -57,7 +56,7 @@ export function describeRestart(subject: WatcherSubject): void {
 		advanceTime(1000);
 		expect(refresh).not.toHaveBeenCalled();
 		emitOn(latestWatcher(), 'ready');
-		emitOn(instance(0), 'ready');
+		emitOn(watcherAt(0), 'ready');
 
 		expect(refresh).toHaveBeenCalledOnce();
 	});
@@ -84,7 +83,7 @@ export function describeRestart(subject: WatcherSubject): void {
 		fault();
 		advanceTime(2000);
 
-		emitOn(instance(1), 'ready');
+		emitOn(watcherAt(1), 'ready');
 		expect(refresh).not.toHaveBeenCalled();
 		fault();
 		advanceTime(3999);
@@ -134,7 +133,7 @@ export function describeBackoff(subject: WatcherSubject): void {
 
 		delays.forEach((delay, index) => {
 			fault();
-			emitOn(instance(index), 'error', new Error('duplicate from a retired instance'));
+			emitOn(watcherAt(index), 'error', new Error('duplicate from a retired instance'));
 			expect(vi.getTimerCount()).toBe(1);
 			expect(onFault).toHaveBeenCalledTimes(index + 1);
 			advanceTime(delay - 1);

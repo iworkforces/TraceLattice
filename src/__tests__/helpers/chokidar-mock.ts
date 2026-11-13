@@ -13,6 +13,7 @@ export interface FakeWatcher {
 export const fakeWatchers: FakeWatcher[] = [];
 
 let readyOnRegistration = false;
+const creationWaiters: Array<{ count: number; resolve: () => void }> = [];
 
 /** When true, a registered `ready` listener fires on the next microtask. */
 export function setReadyOnRegistration(enabled: boolean): void {
@@ -36,13 +37,30 @@ function createFakeWatcher(): FakeWatcher {
 export const watchMock = vi.fn((): FSWatcher => {
 	const watcher = createFakeWatcher();
 	fakeWatchers.push(watcher);
+	for (const waiter of creationWaiters.splice(0)) {
+		if (fakeWatchers.length >= waiter.count) waiter.resolve();
+		else creationWaiters.push(waiter);
+	}
 	return watcher as unknown as FSWatcher;
 });
 
+/** Resolves once at least `count` instances exist, without polling. */
+export function whenWatchersCreated(count: number): Promise<void> {
+	if (fakeWatchers.length >= count) return Promise.resolve();
+	return new Promise((resolve) => creationWaiters.push({ count, resolve }));
+}
+
 export function resetChokidarMock(): void {
 	fakeWatchers.length = 0;
+	creationWaiters.length = 0;
 	readyOnRegistration = false;
 	watchMock.mockReset();
+}
+
+export function watcherAt(index: number): FakeWatcher {
+	const watcher = fakeWatchers[index];
+	if (!watcher) throw new Error(`No watcher #${index}`);
+	return watcher;
 }
 
 export function latestWatcher(): FakeWatcher {
