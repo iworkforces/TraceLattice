@@ -118,6 +118,44 @@ export class ToolAwareSequentialThinkingServer {
 }
 export async function createServer(options = {}) { return new ToolAwareSequentialThinkingServer(options); }
 export async function initializeServer() { return createServer(); }
+export const ERROR_CODES = Object.freeze({
+  TRANSPORT_STOP_TIMEOUT: 'TRANSPORT_STOP_TIMEOUT',
+  PERSISTENCE_WRITE_TIMEOUT: 'PERSISTENCE_WRITE_TIMEOUT',
+  PERSISTENCE_DRAIN: 'PERSISTENCE_DRAIN',
+  SESSION_LIFECYCLE_CLOSED: 'SESSION_LIFECYCLE_CLOSED',
+});
+export class SequentialThinkingError extends Error {
+  constructor(message, code) { super(message); this.code = code; }
+}
+export class TransportStopTimeoutError extends SequentialThinkingError {
+  constructor(timeoutMs, abandonedRequests) {
+    super('Transport stop timed out', ERROR_CODES.TRANSPORT_STOP_TIMEOUT);
+    this.timeoutMs = timeoutMs;
+    this.abandonedRequests = abandonedRequests;
+  }
+}
+export class PersistenceWriteTimeoutError extends SequentialThinkingError {
+  constructor(timeoutMs, call, lateOutcome) {
+    super('Persistence write timed out', ERROR_CODES.PERSISTENCE_WRITE_TIMEOUT);
+    this.timeoutMs = timeoutMs;
+    this.call = call;
+    this.lateOutcome = lateOutcome;
+  }
+}
+export class PersistenceDrainError extends SequentialThinkingError {
+  constructor(failures) {
+    super('Persistence drain failed', ERROR_CODES.PERSISTENCE_DRAIN);
+    this.failures = failures;
+  }
+}
+export class SessionLifecycleClosedError extends SequentialThinkingError {
+  constructor(sessionId, phase) {
+    super('Lifecycle admission closed', ERROR_CODES.SESSION_LIFECYCLE_CLOSED);
+    this.sessionId = sessionId;
+    this.phase = phase;
+  }
+}
+export function isErrorCode(err, code) { return err instanceof SequentialThinkingError && err.code === code; }
 `;
 const libraryDeclarations = `export type TransportKind = 'http' | 'streamable-http';
 export interface TransportOptions {
@@ -196,6 +234,53 @@ export declare class ToolAwareSequentialThinkingServer implements IToolAwareSequ
 }
 export declare function createServer(options?: ServerOptions): Promise<ToolAwareSequentialThinkingServer>;
 export declare function initializeServer(): Promise<ToolAwareSequentialThinkingServer>;
+export declare const ERROR_CODES: {
+  readonly TRANSPORT_STOP_TIMEOUT: 'TRANSPORT_STOP_TIMEOUT';
+  readonly PERSISTENCE_WRITE_TIMEOUT: 'PERSISTENCE_WRITE_TIMEOUT';
+  readonly PERSISTENCE_DRAIN: 'PERSISTENCE_DRAIN';
+  readonly SESSION_LIFECYCLE_CLOSED: 'SESSION_LIFECYCLE_CLOSED';
+};
+export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
+export declare class SequentialThinkingError extends Error {
+  readonly code: ErrorCode;
+  constructor(message: string, code: ErrorCode);
+}
+export declare class TransportStopTimeoutError extends SequentialThinkingError {
+  readonly timeoutMs: number;
+  readonly abandonedRequests: number | null;
+  constructor(timeoutMs: number, abandonedRequests: number | null);
+}
+export type PersistenceCallOutcome =
+  | { readonly kind: 'fulfilled' }
+  | { readonly kind: 'rejected'; readonly reason: unknown };
+export type PersistenceTimedOutCall =
+  | { readonly kind: 'clearSession'; readonly sessionId: SessionId }
+  | { readonly kind: 'clearAll' }
+  | { readonly kind: 'close' };
+export declare class PersistenceWriteTimeoutError extends SequentialThinkingError {
+  readonly timeoutMs: number;
+  readonly call: PersistenceTimedOutCall;
+  readonly lateOutcome: Promise<PersistenceCallOutcome>;
+  constructor(timeoutMs: number, call: PersistenceTimedOutCall, lateOutcome: Promise<PersistenceCallOutcome>);
+}
+export type PersistenceWorkFailure = {
+  readonly kind: 'thought';
+  readonly token: string;
+  readonly sessionId: SessionId;
+  readonly attempts: number;
+  readonly cause: unknown;
+};
+export declare class PersistenceDrainError extends SequentialThinkingError {
+  readonly failures: readonly PersistenceWorkFailure[];
+  constructor(failures: readonly PersistenceWorkFailure[]);
+}
+export type SessionLifecycleClosedPhase = 'resetting' | 'shutting_down' | 'stopped';
+export declare class SessionLifecycleClosedError extends SequentialThinkingError {
+  readonly sessionId: SessionId;
+  readonly phase: SessionLifecycleClosedPhase;
+  constructor(sessionId: SessionId, phase: SessionLifecycleClosedPhase);
+}
+export declare function isErrorCode<C extends ErrorCode>(err: unknown, code: C): err is SequentialThinkingError & { readonly code: C };
 `;
 
 const cases: readonly FixtureCase[] = [
