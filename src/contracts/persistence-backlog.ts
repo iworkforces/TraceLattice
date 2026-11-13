@@ -10,7 +10,15 @@ export interface PersistenceBacklogView {
 	readonly globalQuarantined: boolean;
 	/** Sessions refused admission after a failed reset or eviction barrier. */
 	readonly quarantinedSessionCount: number;
-	/** Accepted writes that exhausted their retries and wait for an explicit drain. */
+	/**
+	 * Sessions with a retained thought or backtrack failure. Every write such a session accepted
+	 * later is held until that write succeeds or the session is reset.
+	 */
+	readonly blockedSessionCount: number;
+	/**
+	 * Accepted writes that exhausted their retries. Explicit drains retry them at once; timer and
+	 * size-triggered drains retry them on a capped backoff.
+	 */
 	readonly retainedFailureCount: number;
 	/** Accepted thought writes not yet acknowledged successful. */
 	readonly pendingThoughtCount: number;

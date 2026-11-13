@@ -1266,7 +1266,7 @@ describe.each(LIFECYCLE_CASES)('$name readiness from persistence state', (transp
 		return { history, ready };
 	}
 
-	it('stays ready and counts a quarantined session, a retained failure and pending work', async () => {
+	it('stays ready and counts a quarantined session, a blocked session, a retained failure and pending work', async () => {
 		// Given
 		const persistence = new ControlledPersistence();
 		const { history, ready } = await startReady(persistence);
@@ -1290,7 +1290,7 @@ describe.each(LIFECYCLE_CASES)('$name readiness from persistence state', (transp
 		expect(body.components['persistenceBacklog']).toEqual({
 			name: 'persistenceBacklog',
 			healthy: true,
-			details: 'quarantined sessions: 1, retained failures: 1, pending thoughts: 2',
+			details: 'quarantined sessions: 1, blocked sessions: 1, retained failures: 1, pending thoughts: 2',
 		});
 	});
 

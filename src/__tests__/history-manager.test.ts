@@ -1395,7 +1395,7 @@ describe('HistoryManager — uncovered branches', () => {
 			expect(edgeSaveAttempts).toBe(1);
 		});
 
-		it('saveThought failure does not block subsequent edge save attempts', async () => {
+		it('saveThought failure holds the session thought and edge writes accepted after it', async () => {
 			const persistence = new MockPersistence();
 			persistence.saveThoughtFailCount = 100; // fail all retries
 			let edgeAttempts = 0;
@@ -1417,13 +1417,11 @@ describe('HistoryManager — uncovered branches', () => {
 			manager.addThought(createTestThought({ thought_number: 2, session_id: 'y', id: 'y-2' }));
 			await expect(manager.shutdown()).rejects.toMatchObject({
 				name: 'PersistenceDrainError',
-				failures: [
-					{ kind: 'thought', sessionId, attempts: 1 },
-					{ kind: 'thought', sessionId, attempts: 1 },
-				],
+				failures: [{ kind: 'thought', sessionId, attempts: 1 }],
 			});
 
-			expect(edgeAttempts).toBe(1);
+			expect(persistence.saveThoughtFailCount).toBe(99);
+			expect(edgeAttempts).toBe(0);
 		});
 	});
 });
