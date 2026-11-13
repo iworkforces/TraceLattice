@@ -1,27 +1,33 @@
-import { watch, type FSWatcher } from 'chokidar';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getErrorMessage } from '../errors.js';
 import type { Logger } from '../logger/StructuredLogger.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
+import { RecoverableWatcher, type WatcherFaultHandler } from './RecoverableWatcher.js';
 
 /** Watches tool discovery directories and serializes registry refreshes. */
 export class ToolWatcher {
-	private _watcher: FSWatcher | null = null;
 	private readonly _logger: Logger;
-	private readonly _readyPromise: Promise<void>;
+	private readonly _recoverable: RecoverableWatcher;
 	private _pendingRefresh: Promise<void> | null = null;
 	private _refreshQueued = false;
-	private _stopped = false;
 	private _stopPromise: Promise<void> | null = null;
 
 	constructor(
 		private readonly _toolRegistry: ToolRegistry,
 		logger?: Logger,
-		watchDirs: readonly string[] = ['.claude/tools', join(homedir(), '.claude/tools')]
+		watchDirs: readonly string[] = ['.claude/tools', join(homedir(), '.claude/tools')],
+		onFault?: WatcherFaultHandler
 	) {
 		this._logger = logger ?? this._createNoopLogger();
-		this._readyPromise = this._setupWatcher(watchDirs);
+		this._recoverable = new RecoverableWatcher({
+			label: 'Tool',
+			directories: watchDirs,
+			logger: this._logger,
+			onEvent: (_event, path) => this._handleEvent(path),
+			onRecovered: () => void this._scheduleRefresh('(watcher restarted)'),
+			onFault,
+		});
 	}
 
 	private _createNoopLogger(): Logger {
@@ -35,22 +41,8 @@ export class ToolWatcher {
 		};
 	}
 
-	private _setupWatcher(watchDirs: readonly string[]): Promise<void> {
-		if (watchDirs.length === 0) return Promise.resolve();
-		const watcher = watch([...watchDirs], {
-			ignored: [/node_modules/, /\.DS_Store$/],
-			persistent: true,
-			ignoreInitial: true,
-		});
-		this._watcher = watcher;
-		watcher.on('add', (path) => this._handleEvent(path));
-		watcher.on('change', (path) => this._handleEvent(path));
-		watcher.on('unlink', (path) => this._handleEvent(path));
-		return new Promise((resolve) => watcher.on('ready', () => resolve()));
-	}
-
 	private _handleEvent(path: string): Promise<void> {
-		if (this._stopped || !path.endsWith('.tool.md')) return Promise.resolve();
+		if (!path.endsWith('.tool.md')) return Promise.resolve();
 		return this._scheduleRefresh(path);
 	}
 
@@ -78,19 +70,17 @@ export class ToolWatcher {
 		}
 	}
 
-	/** Resolves when Chokidar has completed its initial scan. */
+	/** Resolves when Chokidar is ready, or degraded after a fixed bound; never rejects. */
 	public ready(): Promise<void> {
-		return this._readyPromise;
+		return this._recoverable.ready();
 	}
 
-	/** Closes Chokidar and joins any refresh accepted before shutdown. */
+	/** Cancels pending restarts, closes Chokidar within a bound, and joins any accepted refresh. */
 	public stop(): Promise<void> {
 		if (this._stopPromise) return this._stopPromise;
-		this._stopped = true;
-		const watcher = this._watcher;
+		const closing = this._recoverable.stop();
 		const pendingRefresh = this._pendingRefresh;
-		this._watcher = null;
-		this._stopPromise = Promise.all([watcher?.close(), pendingRefresh]).then(() => undefined);
+		this._stopPromise = Promise.all([closing, pendingRefresh]).then(() => undefined);
 		return this._stopPromise;
 	}
 }
