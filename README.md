@@ -152,6 +152,7 @@ persistenceBufferSize: 7 # example file-only override; default 100
 persistenceFlushInterval: 750 # milliseconds, file-only; default 1000
 persistenceMaxRetries: 2 # example file-only override; default 3
 persistenceMaxPendingThoughtsPerSession: 500 # example file-only override; default and maximum 10000
+persistenceWriteTimeout: 5000 # milliseconds, file-only; default 5000, maximum 2147483647
 features:
   dagEdges: true
   reasoningStrategy: sequential # sequential or tot
@@ -212,11 +213,21 @@ environment value is not expanded by `ConfigLoader`. `TRACELATTICE_DISCOVERY_CAC
 variables ending in `_MS` and the corresponding YAML fields use milliseconds.
 
 `persistenceBufferSize` (default 100 thoughts), `persistenceFlushInterval` (default 1000 ms),
-`persistenceMaxRetries` (default 3), and `persistenceMaxPendingThoughtsPerSession` (default 10000,
-allowed 1 to 10000) are YAML/JSON settings, not environment variables. There are no
+`persistenceMaxRetries` (default 3), `persistenceMaxPendingThoughtsPerSession` (default 10000,
+allowed 1 to 10000), and `persistenceWriteTimeout` (default 5000 ms, above 0 and at most 2147483647)
+are YAML/JSON settings, not environment variables. There are no
 `TRACELATTICE_PERSISTENCE_BUFFER_SIZE`, `TRACELATTICE_PERSISTENCE_FLUSH_INTERVAL`,
-`TRACELATTICE_PERSISTENCE_MAX_RETRIES`, or `TRACELATTICE_PERSISTENCE_MAX_PENDING_THOUGHTS_PER_SESSION`
-overrides.
+`TRACELATTICE_PERSISTENCE_MAX_RETRIES`, `TRACELATTICE_PERSISTENCE_MAX_PENDING_THOUGHTS_PER_SESSION`,
+or `TRACELATTICE_PERSISTENCE_WRITE_TIMEOUT` overrides.
+
+`persistenceWriteTimeout` is the deadline for each persistence backend write and, during `stop()`,
+for the `close()` of a server-owned backend. A write still pending at the deadline fails with
+`PERSISTENCE_WRITE_TIMEOUT`, is not retried, and is kept as a failed write. A close that misses the
+deadline is one of the failures `stop()` rejects with; an injected backend is still never closed. A
+timer cannot interrupt the synchronous SQLite driver, so the deadline only takes effect for
+asynchronous backends such as File or an injected backend. Size it for shutdown: watcher stop (up to
+2 s), the buffer flush (up to the timeout) and the owned-backend close (up to the timeout) must fit
+inside the server's share of the CLI shutdown deadline, 15 s by default.
 
 `persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
 unacknowledged, counting writes that failed terminally. At the limit a thought is rejected with
