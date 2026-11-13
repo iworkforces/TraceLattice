@@ -28,6 +28,9 @@ These say nothing about your input.
 
 - `LOCK_TIMEOUT`, `PERSISTENCE_BACKLOG_FULL`: wait and resend the same call.
 - `MAX_SESSIONS_REACHED`: the server holds its maximum of live sessions. A different `session_id` hits the same limit, so wait and resend.
-- `SESSION_LIFECYCLE_CLOSED`: the message names a phase. `resetting`, `reset_failed`, `evicting` and `eviction_failed` concern this session only: retry once, then continue under a new `session_id`. `shutting_down` and `stopped` mean the whole server is going away and no id will work.
+- `SESSION_LIFECYCLE_CLOSED`: the message names a phase. The session phases concern this session only:
+  - `resetting` and `evicting` pass on their own: retry once, then continue under a new `session_id`.
+  - `eviction_failed` and `reset_failed` stay closed until the session is recovered. Continue under a new `session_id` with a thought that restates what was established, or restart the same id with `reset_state: true` on thought 1, which deletes its chain. A session in `eviction_failed` that the server later finishes evicting answers `SESSION_EXPIRED` instead.
+  - `shutting_down` and `stopped` mean the whole server is going away and no id will work.
 
 After two failed retries, stop calling the tool. Finish the reasoning without it and tell the user the thinking server was unavailable.
