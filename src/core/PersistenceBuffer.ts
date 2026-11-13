@@ -585,6 +585,7 @@ export class PersistenceBuffer {
 					if (!(error instanceof PersistenceDrainError)) throw error;
 				}
 				return await this._runResetOperation(
+					sessionId,
 					() => this._sessionBarrierOwnership.run(operationOwnership, operation),
 					() => {
 						this._queue.discardSession(sessionId);
@@ -620,7 +621,7 @@ export class PersistenceBuffer {
 					if (!(error instanceof PersistenceDrainError)) throw error;
 				}
 				this._assertWriteGateOpen();
-				return await this._runResetOperation(operation, () => {
+				return await this._runResetOperation(undefined, operation, () => {
 					this._queue.discardAll();
 					this._quarantinedSessions.clear();
 					this._evictionQuarantinedSessions.clear();
@@ -798,10 +799,16 @@ export class PersistenceBuffer {
 	 * applies `commit` on success. No write is dispatched until both are done, so a retained
 	 * write of the reset scope cannot land after the clear. A clear that outlived the write
 	 * deadline keeps running, so it then closes the gate like a stalled write until its real
-	 * outcome settles.
+	 * outcome settles. A reset that waited behind another clear across the shutdown seal is
+	 * refused before its clear starts, as a failed reset of `sessionId` (undefined: global).
 	 */
-	private async _runResetOperation<T>(operation: () => Promise<T>, commit: () => void): Promise<T> {
+	private async _runResetOperation<T>(
+		sessionId: SessionId | undefined,
+		operation: () => Promise<T>,
+		commit: () => void
+	): Promise<T> {
 		while (this._writeGate.clearInFlight) await this._writeGate.clearsSettled();
+		if (this._shutdownSealed) throw new SessionLifecycleClosedError(sessionId, 'shutting_down');
 		this._assertWriteGateOpen();
 		const finishClear = this._writeGate.beginClear();
 		try {

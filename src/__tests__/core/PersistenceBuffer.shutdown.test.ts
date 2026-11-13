@@ -230,4 +230,30 @@ describe('PersistenceBuffer shutdown seal', () => {
 		expect(buffer.isFlushing).toBe(false);
 		expect(vi.getTimerCount()).toBe(0);
 	});
+
+	it('refuses a reset clear that waited behind another clear across the seal', async () => {
+		// Given
+		const { persistence, buffer } = createHarness();
+		persistence.holdClears = true;
+		const clearOf = (sessionId: SessionId) => () => persistence.clearSession(sessionId);
+		const operationOfB = vi.fn(clearOf(B));
+		const resetA = track(buffer.withSessionResetBarrier(A, clearOf(A)));
+		const resetB = track(buffer.withSessionResetBarrier(B, operationOfB));
+		await advanceTimeAsync(0);
+
+		// When
+		const closed = track(buffer.closeForShutdown(FLUSH_BOUND_MS));
+		await advanceTimeAsync(FLUSH_BOUND_MS);
+		persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+
+		// Then
+		expect(reasonOf(closed())).toMatchObject({ phase: 'flush' });
+		expect(resetA().status).toBe('fulfilled');
+		expect(operationOfB).not.toHaveBeenCalled();
+		expect(persistence.clearCalls).toBe(1);
+		expect(reasonOf(resetB())).toBeInstanceOf(SessionLifecycleClosedError);
+		expect(reasonOf(resetB())).toMatchObject({ phase: 'shutting_down', sessionId: B });
+		expect(buffer.getBacklogView().quarantinedSessionCount).toBe(1);
+	});
 });
