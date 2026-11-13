@@ -726,14 +726,9 @@ export class PersistenceBuffer {
 		if (this._activeDrain !== generation) return;
 		let settlement: DrainSettlement;
 		switch (termination.kind) {
-			case 'result': {
-				const result = this._queue.generationResult(generation.selectedTokens);
-				settlement =
-					result.failures.length === 0
-						? { kind: 'resolved' }
-						: { kind: 'rejected', reason: new PersistenceDrainError(result.failures) };
+			case 'result':
+				settlement = this._generationSettlement(generation);
 				break;
-			}
 			case 'fault':
 				settlement = { kind: 'rejected', reason: termination.fault };
 				break;
@@ -752,7 +747,9 @@ export class PersistenceBuffer {
 			case 'rejected':
 				generation.reject(settlement.reason);
 				if (
-					settlement.reason instanceof PersistenceDrainError &&
+					(settlement.reason instanceof PersistenceDrainError ||
+						(settlement.reason instanceof PersistenceWriteTimeoutError &&
+							settlement.reason === generation.stalledWrite)) &&
 					this._reportsFailures(generation)
 				) {
 					this._observeFailure(generation, settlement.reason);
@@ -761,6 +758,20 @@ export class PersistenceBuffer {
 			default:
 				assertNever(settlement);
 		}
+	}
+
+	/**
+	 * A generation that dispatched a timed-out write never resolves, even when no failure was
+	 * retained because a newer version superseded that write while its call was in flight.
+	 */
+	private _generationSettlement(generation: ActiveDrain): DrainSettlement {
+		const { failures } = this._queue.generationResult(generation.selectedTokens);
+		if (failures.length > 0) {
+			return { kind: 'rejected', reason: new PersistenceDrainError(failures) };
+		}
+		return generation.stalledWrite === null
+			? { kind: 'resolved' }
+			: { kind: 'rejected', reason: generation.stalledWrite };
 	}
 
 	private async _awaitSessionQuiescence(sessionId: SessionId): Promise<void> {
@@ -831,9 +842,12 @@ export class PersistenceBuffer {
 		}
 	}
 
-	private _observeFailure(generation: ActiveDrain, error: PersistenceDrainError): void {
+	private _observeFailure(
+		generation: ActiveDrain,
+		error: PersistenceDrainError | PersistenceWriteTimeoutError
+	): void {
 		this._logger.info('Persistence drain completed with failures', {
-			failed: error.failures.length,
+			failed: error instanceof PersistenceDrainError ? error.failures.length : 0,
 			selected: generation.selectedTokens.size,
 		});
 		this._eventEmitter?.emit('persistenceError', { operation: 'flushBuffer', error });

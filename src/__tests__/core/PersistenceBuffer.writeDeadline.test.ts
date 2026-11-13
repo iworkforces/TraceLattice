@@ -375,6 +375,49 @@ describe('PersistenceBuffer write deadline gate', () => {
 		expect(harness.persistence.maxConcurrentWrites).toBe(1);
 	});
 
+	it('rejects every drain joined to a stalled edge snapshot superseded in flight', async () => {
+		// Given
+		const harness = createHarness();
+		const saveEdges = vi.spyOn(harness.persistence, 'saveEdges');
+		harness.persistence.holdWrites = true;
+		harness.buffer.bufferEdges(A, [edge(A, 'v1')]);
+		const drained = track(harness.buffer.drain());
+		await advanceTimeAsync(0);
+		harness.buffer.bufferEdges(A, [edge(A, 'v2')]);
+		harness.buffer.bufferThought(B, thought(B, 1));
+		const sessionB = track(harness.buffer.drainSession(B));
+		const barrierB = track(harness.buffer.withSessionBarrier(B, async () => undefined));
+
+		// When
+		await advanceTimeAsync(TIMEOUT_MS);
+
+		// Then
+		for (const outcome of [drained, sessionB, barrierB]) {
+			expect(reasonOf(outcome())).toBeInstanceOf(PersistenceWriteTimeoutError);
+			expect(reasonOf(outcome())).toMatchObject({ code: 'PERSISTENCE_WRITE_TIMEOUT' });
+		}
+		expect(harness.events).toHaveLength(1);
+		expect(harness.events[0]).toBe(reasonOf(drained()));
+		expect(harness.warn).toHaveBeenCalledTimes(1);
+		expect(harness.persistence.thoughtAttempts).toBe(0);
+
+		// When the late call succeeds
+		harness.persistence.holdWrites = false;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+		const stateAfterRelease = harness.buffer.sessionEvictionState(A);
+		await harness.buffer.drain();
+
+		// Then
+		expect(stateAfterRelease).toBe('pending');
+		expect(await harness.persistence.loadEdges(A)).toEqual([edge(A, 'v2')]);
+		expect(saveEdges).toHaveBeenCalledTimes(2);
+		expect(saveEdges).toHaveBeenLastCalledWith(A, [edge(A, 'v2')]);
+		expect(harness.persistence.thoughtAttempts).toBe(1);
+		expect(harness.persistence.maxConcurrentWrites).toBe(1);
+		expect(harness.events).toHaveLength(1);
+	});
+
 	it('waits on a stalled write without a gate when no deadline is configured', async () => {
 		// Given
 		const harness = createHarness({ writeTimeout: undefined });
