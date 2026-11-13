@@ -62,7 +62,7 @@ Refs = production `.ts` files containing the identifier (tests excluded). LSP is
 | `ServiceRegistry`                   | iface  | `src/di/ServiceRegistry.ts`                | 5    | 20 typed keys incl. `sessionLifecycle`                                     |
 | `IReasoningStrategy`                | iface  | `src/contracts/strategy.ts`                | 6    | `decide` / `shouldBranch` / `shouldTerminate`                              |
 | `EdgeEmitter`                       | class  | `src/core/graph/EdgeEmitter.ts`            | 2    | DAG writes; `dagEdges` gates this path                                     |
-| `PersistenceBuffer`                 | class  | `src/core/PersistenceBuffer.ts`            | 4    | Barriers (~1032L). Queue is `PersistenceWorkQueue` (~740L)                 |
+| `PersistenceBuffer`                 | class  | `src/core/PersistenceBuffer.ts`            | 4    | Barriers (~1035L). Queue is `PersistenceWorkQueue` (~740L)                 |
 | `SessionLifecycleCoordinator`       | class  | `src/core/SessionLifecycleCoordinator.ts`  | 6    | Admission + exclusive reset/evict                                          |
 | `createPersistenceBackend`          | fn     | `src/persistence/PersistenceFactory.ts`    | 3    | file / sqlite / memory, or `null` when disabled                            |
 | `StreamableHttpTransport`           | class  | `src/transport/StreamableHttpTransport.ts` | 6    | Production HTTP MCP path (~875L); not a lib export                         |
@@ -106,7 +106,7 @@ Refs = production `.ts` files containing the identifier (tests excluded). LSP is
 - Layers: types → crosscutting → config → core → domain → infrastructure → di → app → cli. `contracts/` and `utils.ts` are unlayered.
 - `ConnectionPool` is off CLI/DI. `HttpTransport` is a **library export**; CLI never selects it. `cluster/` does not exist (still a sentrux boundary).
 - `maxHistorySize` default and cap are **10000**. Persistence buffer size, flush interval, retries, and write timeout are file-only (no `TRACELATTICE_*` override).
-- Large files: `HistoryManager` 1092, `ThoughtProcessor` 920, `StreamableHttpTransport` 875, `lib` 1089, `schema` 802, `errors` 886, `PersistenceBuffer` 1032, `ConnectionPool` 633, `PersistenceWorkQueue` 740.
+- Large files: `HistoryManager` 1092, `ThoughtProcessor` 920, `StreamableHttpTransport` 875, `lib` 1089, `schema` 802, `errors` 886, `PersistenceBuffer` 1035, `ConnectionPool` 633, `PersistenceWorkQueue` 740.
 - Tests: `src/__tests__/` mirrors source; flags via constructor; all three local `*.eval.ts` suites run by default in `npm test`, `npm run test:coverage`, and `npm run verify:release`.
 
 ## COMMANDS
