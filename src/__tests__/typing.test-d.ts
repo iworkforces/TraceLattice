@@ -40,6 +40,7 @@ import {
 	HttpTransport,
 	PersistenceDrainError,
 	PersistenceWriteTimeoutError,
+	ServerStopTimeoutError,
 	SessionLifecycleClosedError,
 	ToolAwareSequentialThinkingServer,
 	TransportStopTimeoutError,
@@ -55,6 +56,7 @@ import {
 	type PersistenceTimedOutCall,
 	type PersistenceWorkFailure,
 	type SequentialThinkingError,
+	type ServerStopPhase,
 	type SessionLifecycleClosedPhase,
 	type TransportKind,
 	type TransportOptions,
@@ -267,6 +269,11 @@ function _classifyRootError(caught: unknown): readonly unknown[] {
 		const phase: SessionLifecycleClosedPhase = caught.phase;
 		const sessionId: SessionId | undefined = caught.sessionId;
 		return [phase, sessionId];
+	}
+	if (caught instanceof ServerStopTimeoutError) {
+		const phase: ServerStopPhase = caught.phase;
+		const pending: number | null = caught.pending;
+		return [phase, pending, caught.timeoutMs];
 	}
 	if (isErrorCode(caught, ERROR_CODES.TRANSPORT_STOP_TIMEOUT)) {
 		const narrowed: SequentialThinkingError & { readonly code: 'TRANSPORT_STOP_TIMEOUT' } = caught;

@@ -25,6 +25,7 @@ const rootErrorSubclasses = [
   'PersistenceWriteTimeoutError',
   'PersistenceDrainError',
   'SessionLifecycleClosedError',
+  'ServerStopTimeoutError',
 ];
 for (const name of ['SequentialThinkingError', 'isErrorCode', ...rootErrorSubclasses]) {
   assert.equal(typeof PublicApi[name], 'function', \`root export missing: \${name}\`);
@@ -45,6 +46,10 @@ assert.equal(
   true
 );
 assert.equal(PublicApi.isErrorCode(stopTimeout, PublicApi.ERROR_CODES.PERSISTENCE_DRAIN), false);
+const serverStopTimeout = new PublicApi.ServerStopTimeoutError('flush', 25, 2);
+assert.equal(serverStopTimeout.code, PublicApi.ERROR_CODES.SERVER_STOP_TIMEOUT);
+assert.equal(serverStopTimeout.phase, 'flush');
+assert.equal(serverStopTimeout.pending, 2);
 
 for (const name of [
   'CliShutdownTimeoutError',
@@ -277,6 +282,7 @@ const declarationConsumer = `import {
   PersistenceDrainError,
   PersistenceWriteTimeoutError,
   SequentialThinkingError,
+  ServerStopTimeoutError,
   SessionLifecycleClosedError,
   ToolAwareSequentialThinkingServer,
   TransportStopTimeoutError,
@@ -289,6 +295,7 @@ const declarationConsumer = `import {
   type PersistenceCallOutcome,
   type PersistenceTimedOutCall,
   type PersistenceWorkFailure,
+  type ServerStopPhase,
   type SessionLifecycleClosedPhase,
   type IToolAwareSequentialThinkingServer,
   type ITransport,
@@ -438,6 +445,11 @@ function classifyRootError(caught: unknown): readonly unknown[] {
     const phase: SessionLifecycleClosedPhase = caught.phase;
     const sessionId: SessionId | undefined = caught.sessionId;
     return [phase, sessionId];
+  }
+  if (caught instanceof ServerStopTimeoutError) {
+    const phase: ServerStopPhase = caught.phase;
+    const pending: number | null = caught.pending;
+    return [phase, pending, caught.timeoutMs];
   }
   if (isErrorCode(caught, ERROR_CODES.TRANSPORT_STOP_TIMEOUT)) {
     const narrowed: SequentialThinkingError & { readonly code: 'TRANSPORT_STOP_TIMEOUT' } = caught;

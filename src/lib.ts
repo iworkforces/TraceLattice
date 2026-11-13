@@ -20,6 +20,7 @@ import {
 	getErrorMessage,
 	isErrorCode,
 	type ErrorCode,
+	type ServerStopPhase,
 } from './errors.js';
 import { assertNever } from './utils.js';
 
@@ -87,11 +88,13 @@ export {
 	PersistenceWriteTimeoutError,
 	PersistenceDrainError,
 	SessionLifecycleClosedError,
+	ServerStopTimeoutError,
 	ERROR_CODES,
 	isErrorCode,
 };
 export type {
 	ErrorCode,
+	ServerStopPhase,
 	PersistenceWorkFailure,
 	PersistenceTimedOutCall,
 	PersistenceCallOutcome,
