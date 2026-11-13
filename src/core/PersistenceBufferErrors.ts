@@ -1,6 +1,12 @@
 import type { SessionId } from '../contracts/ids.js';
-import type { PersistenceWorkFailure } from '../contracts/persistence-work.js';
+import type {
+	PersistenceWork,
+	PersistenceWorkFailure,
+	PersistenceWorkToken,
+} from '../contracts/persistence-work.js';
 import { ERROR_CODES, SequentialThinkingError } from '../errors.js';
+import { assertNever } from '../utils.js';
+import type { PersistenceCallOutcome } from './PersistenceCallDeadline.js';
 
 /** Error raised when an explicit persistence drain has terminal write failures. */
 export class PersistenceDrainError extends SequentialThinkingError {
@@ -65,5 +71,56 @@ export class PersistenceBacklogFullError extends SequentialThinkingError {
 		this.sessionId = sessionId;
 		this.pending = pending;
 		this.limit = limit;
+	}
+}
+
+/** Backend call reported by a {@link PersistenceWriteTimeoutError}. */
+export type PersistenceTimedOutCall =
+	| {
+			readonly kind: 'work';
+			readonly operation: PersistenceWork['kind'];
+			readonly token: PersistenceWorkToken;
+			readonly sessionId: SessionId;
+	  }
+	| { readonly kind: 'close' };
+
+function describeTimedOutCall(call: PersistenceTimedOutCall): string {
+	switch (call.kind) {
+		case 'work':
+			return `${call.operation} write ${call.token} for session '${call.sessionId}'`;
+		case 'close':
+			return 'backend close';
+		default:
+			return assertNever(call);
+	}
+}
+
+/**
+ * Error raised when a persistence backend call outlives `persistenceWriteTimeout`.
+ *
+ * The call itself keeps running: `lateOutcome` settles once with its real outcome and
+ * never rejects, so the caller can apply that outcome instead of sending the work again.
+ */
+export class PersistenceWriteTimeoutError extends SequentialThinkingError {
+	/** Deadline the call exceeded, in milliseconds. */
+	public readonly timeoutMs: number;
+	/** Identity of the backend call that did not settle in time. */
+	public readonly call: PersistenceTimedOutCall;
+	/** Eventual outcome of the same backend call. */
+	public readonly lateOutcome: Promise<PersistenceCallOutcome>;
+
+	constructor(
+		timeoutMs: number,
+		call: PersistenceTimedOutCall,
+		lateOutcome: Promise<PersistenceCallOutcome>
+	) {
+		super(
+			`Persistence ${describeTimedOutCall(call)} did not settle within ${timeoutMs}ms`,
+			ERROR_CODES.PERSISTENCE_WRITE_TIMEOUT
+		);
+		this.name = 'PersistenceWriteTimeoutError';
+		this.timeoutMs = timeoutMs;
+		this.call = Object.freeze({ ...call });
+		this.lateOutcome = lateOutcome;
 	}
 }

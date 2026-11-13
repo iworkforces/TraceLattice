@@ -573,7 +573,8 @@ describe('effective runtime configuration', () => {
 
 		try {
 			expect(settled).toBe(false);
-			expect(vi.getTimerCount()).toBe(0);
+			// Only the in-flight write's persistenceWriteTimeout deadline remains armed.
+			expect(vi.getTimerCount()).toBe(1);
 		} finally {
 			releaseWrite.resolve();
 			await stopping;

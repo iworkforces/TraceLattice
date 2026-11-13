@@ -11,6 +11,7 @@ vi.mock('node:os', () => ({
 import { readFileSync, existsSync } from 'node:fs';
 import { ConfigLoader } from '../config/ConfigLoader.js';
 import { ConfigurationError } from '../errors.js';
+import { ServerConfig } from '../ServerConfig.js';
 
 const mockReadFileSync = readFileSync as unknown as ReturnType<typeof vi.fn>;
 const mockExistsSync = existsSync as unknown as ReturnType<typeof vi.fn>;
@@ -558,6 +559,60 @@ describe('ConfigLoader', () => {
 			expect(
 				loader.toServerConfigOptions({}).persistenceMaxPendingThoughtsPerSession
 			).toBeUndefined();
+		});
+	});
+
+	describe('persistenceWriteTimeout', () => {
+		function loadJson(value: unknown): ReturnType<ConfigLoader['load']> {
+			loader = new ConfigLoader();
+			mockExistsSync.mockImplementation((path: string) => path.endsWith('.json'));
+			mockReadFileSync.mockReturnValue(JSON.stringify({ persistenceWriteTimeout: value }));
+			return loader.load();
+		}
+
+		it('should carry a file value into the effective ServerConfig', () => {
+			const loaded = loadJson(2500);
+
+			const effective = new ServerConfig(loader.toServerConfigOptions(loaded ?? {}));
+
+			expect(loaded?.persistenceWriteTimeout).toBe(2500);
+			expect(effective.persistenceWriteTimeout).toBe(2500);
+			expect(effective.toJSON().persistenceWriteTimeout).toBe(2500);
+		});
+
+		it('should default the effective value to 5000 when the file omits it', () => {
+			loader = new ConfigLoader();
+			const effective = new ServerConfig(loader.toServerConfigOptions(loader.load() ?? {}));
+
+			expect(effective.persistenceWriteTimeout).toBe(5000);
+		});
+
+		it.each([0, -1, 2_147_483_648])(
+			'should raise ConfigurationError for the file value %s',
+			(value) => {
+				const loaded = loadJson(value);
+
+				expect(() => new ServerConfig(loader.toServerConfigOptions(loaded ?? {}))).toThrow(
+					ConfigurationError
+				);
+			}
+		);
+
+		it('should not read an environment variable for the setting', () => {
+			process.env.TRACELATTICE_PERSISTENCE_WRITE_TIMEOUT = '1234';
+			try {
+				loader = new ConfigLoader();
+				mockExistsSync.mockReturnValue(false);
+
+				const loaded = loader.load();
+
+				expect(loaded).toEqual({});
+				expect(
+					new ServerConfig(loader.toServerConfigOptions(loaded ?? {})).persistenceWriteTimeout
+				).toBe(5000);
+			} finally {
+				delete process.env.TRACELATTICE_PERSISTENCE_WRITE_TIMEOUT;
+			}
 		});
 	});
 

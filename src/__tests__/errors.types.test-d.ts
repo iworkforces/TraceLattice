@@ -56,6 +56,7 @@ import type { ERROR_CODES, ErrorCode } from '../errors.js';
  *  - PersistenceSessionBarrierReentrancyError → PERSISTENCE_SESSION_BARRIER_REENTRANCY
  *  - PersistenceBacklogFullError → PERSISTENCE_BACKLOG_FULL
  *  - PersistenceUnavailableError → PERSISTENCE_UNAVAILABLE
+ *  - PersistenceWriteTimeoutError → PERSISTENCE_WRITE_TIMEOUT
  *
  * Direct `SequentialThinkingError` usages (no dedicated subclass):
  *  - DUPLICATE_SUMMARY (thrown by `core/compression/InMemorySummaryStore.ts`)
@@ -100,7 +101,8 @@ type _AllSubclassCodes =
 	| 'PERSISTENCE_UNAVAILABLE'
 	| 'PERSISTENCE_COMPATIBILITY'
 	| 'PERSISTENCE_BACKLOG_FULL'
-	| 'DUPLICATE_SUMMARY';
+	| 'DUPLICATE_SUMMARY'
+	| 'PERSISTENCE_WRITE_TIMEOUT';
 
 type _ErrorCodeValues = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 type _Equal<Left, Right> = [Left] extends [Right] ? ([Right] extends [Left] ? true : false) : false;
