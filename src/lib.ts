@@ -80,6 +80,9 @@ import type { TransportOptions } from './transport/BaseTransport.js';
 import type { ITransport, TransportKind } from './contracts/transport.js';
 import type { PersistenceWorkFailure } from './contracts/persistence-work.js';
 
+/** Largest delay `setTimeout` honours; a larger stop budget would clamp to 1 ms. */
+const MAX_STOP_TIMEOUT_MS = 2_147_483_647;
+
 export {
 	HttpTransport,
 	createHttpTransport,
@@ -246,8 +249,11 @@ export interface IToolAwareSequentialThinkingServer extends IDisposable {
 	/**
 	 * Stop the server and clean up watchers, suspension stores, and persistence.
 	 *
-	 * @param timeoutMs - Optional stop budget in milliseconds; omitted, the idle wait and the
-	 * flush are unbounded. The first call wins: later calls return its promise whatever they pass.
+	 * @param timeoutMs - Optional stop budget in milliseconds, above 0 and at most 2147483647;
+	 * omitted, the idle wait and the flush are unbounded. The first valid call wins: later calls
+	 * with a valid budget return its promise whatever they pass.
+	 * @returns A promise that rejects with a `RangeError` for an invalid budget, before anything
+	 * changes: admission stays open and a later valid `stop()` works.
 	 */
 	stop(timeoutMs?: number): Promise<void>;
 
@@ -806,8 +812,19 @@ export class ToolAwareSequentialThinkingServer
 	 * `discovery` or `flush`) or, for the close, `PersistenceWriteTimeoutError`. Without
 	 * `timeoutMs` the idle wait and flush are unbounded and the close is bounded by T. Memoized:
 	 * the first call's promise is returned to every later call.
+	 *
+	 * @param timeoutMs - Optional stop budget in milliseconds, above 0 and at most 2147483647.
+	 * @returns A promise that rejects with a `RangeError` for any other value, before anything
+	 * changes: the call is not memoized, admission stays open and a later valid `stop()` works.
 	 */
 	public stop(timeoutMs?: number): Promise<void> {
+		if (timeoutMs !== undefined && !(timeoutMs > 0 && timeoutMs <= MAX_STOP_TIMEOUT_MS)) {
+			return Promise.reject(
+				new RangeError(
+					`stop timeoutMs must be above 0 and at most ${MAX_STOP_TIMEOUT_MS}, got ${timeoutMs}`
+				)
+			);
+		}
 		this._acceptingDiscoveryRefreshes = false;
 		if (this._stopPromise) return this._stopPromise;
 		const deadlines =

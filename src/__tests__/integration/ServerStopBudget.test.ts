@@ -360,6 +360,32 @@ describe('bounded server stop', () => {
 		expect(settledAtIdle).toBe(first !== undefined);
 	});
 
+	it.each([Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 2_147_483_648])(
+		'rejects stop(%s) as a RangeError before closing anything and still stops afterwards',
+		async (timeoutMs) => {
+			// Given
+			const persistence = new StallingPersistence();
+			const server = await createOwnedServer(persistence);
+
+			// When
+			const rejection = await server.stop(timeoutMs).then(
+				() => null,
+				(error: unknown) => error
+			);
+			const processed = await server.processThought(thoughtInput(OTHER));
+			const laterStop = trackStop(server.stop());
+			await vi.advanceTimersByTimeAsync(0);
+
+			// Then
+			expect(rejection).toBeInstanceOf(RangeError);
+			expect(processed.isError).not.toBe(true);
+			expect(laterStop.isSettled()).toBe(true);
+			expect(await laterStop.result).toBeUndefined();
+			expect(persistence.closeCalls).toBe(1);
+			expect(await persistence.loadHistoryForSession(asSessionId(OTHER))).toHaveLength(1);
+		}
+	);
+
 	it('rejects a budgeted stop during resetAll at once without stopping the watchers', async () => {
 		// Given
 		vi.useRealTimers();
