@@ -16,7 +16,7 @@ env > project > user > defaults.
 1. `TRACELATTICE_CONFIG` or a constructor path replaces the search list.
 2. Else first hit: `.claude/config.json`, `.yaml`, `.yml`, then the same three under `~/`.
 
-YAML or JSON. All fields optional. Extra keys kept (`looseObject`). Supported env vars override the file. Buffer size, flush interval, and retries are file-only.
+YAML or JSON. All fields optional. Extra keys kept (`looseObject`). Supported env vars override the file. Buffer size, flush interval, retries, and write timeout are file-only.
 
 ## DI KEYS
 

@@ -31,7 +31,7 @@ src/
 | Discovery rescan               | `lib.ts` `refreshDiscovery()` — coalesced; rejects after shutdown                      |
 | Add a service                  | `di/ServiceRegistry.ts` + `lib.ts`                                                     |
 | Add a feature flag             | `contracts/features.ts` + `ServerConfig.ts` + `TRACELATTICE_FEATURES_*`                |
-| Add an error                   | `errors.ts` (`ERROR_CODES` 38) or module `*Errors.ts`                                  |
+| Add an error                   | `errors.ts` (`ERROR_CODES` 41) or module `*Errors.ts`                                  |
 | MCP input schema / tool prompt | `schema.ts` (`SEQUENTIAL_THINKING_TOOL`)                                               |
 | Thought session validation     | `schema.ts` + `contracts/ids.ts`; `session_id` is required and `__global__` is retired |
 | Request owner / requestId      | `context/RequestContext.ts` (`runWithContext`, `getOwner`, `getRequestId`)             |
