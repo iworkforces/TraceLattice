@@ -36,14 +36,14 @@ Shared GET: `/health`, `/ready`, `/metrics`.
 - 100 req/min per-IP (`X-Forwarded-For` aware)
 - 10MB body, 30s request timeout
 - JSON-RPC via `safeParse(JsonRpcRequestSchema, raw)` — never `JSON.parse` as typed RPC
-- `PreDispatchTracker` + `AcceptedWorkTracker` so `stop()` aborts pre-body work then joins in-flight POSTs
+- `PreDispatchTracker` + `AcceptedWorkTracker` so `stop()` aborts pre-body work then joins in-flight POSTs until its timeout
 
 ## NOTES
 
 - Factories: `createStreamableHttpTransport()`, `createHttpTransport()`. Lib exports only `HttpTransport` / `createHttpTransport`.
 - Stateful StreamableHTTP keys sessions by `Mcp-Session-Id` after init.
 - Idle reaper is **opt-in**: `maxSessions` + `sessionIdleTimeoutMs` + `sessionSweepIntervalMs` must all be set together. CLI passes all three when `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS`, `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS`, and `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` are set. `src/config/CliTransportConfig.ts` parses them and rejects partial sets or stateless retention. With none set, sessions live until `stop()`.
-- `stop()` closes `PreDispatchTracker` then joins `_acceptedWork`. Do not drop in-flight POSTs. Cancel reasons: `peer` | `shutdown` | `timeout`.
+- `stop(timeout = 30000)` closes `PreDispatchTracker` then joins `_acceptedWork` until the timeout. Do not drop in-flight POSTs before it. At the timeout the transport's own ref'd timer (`boundStop`) force-closes connections and settles, not `closeAllConnections()` or `server.close`: it rejects with `TransportStopTimeoutError` (`timeoutMs`, `abandonedRequests` = `_acceptedWork.size`) while accepted work is pending and resolves otherwise. A rejected stop clears the memo, so a later `stop()` starts a new bounded join. No timer is armed when the server is not listening and no accepted work is pending. Cancel reasons: `peer` | `shutdown` | `timeout`.
 - `ConnectionPool` is unused here. Do not wire it in.
 - `HealthChecker` feeds `/health` + `/ready`. Readiness is 200 only for `ok`; any other status is 503. The CLI injects one. Keep probe routing in the `_isProbeRoute`/`_serveProbe` helpers and keep non-probe requests synchronous up to the body read.
 - ALS owner: stateful Streamable = `Mcp-Session-Id`; stateless Streamable and `HttpTransport` = fresh UUID per request. Stdio never wraps ALS.

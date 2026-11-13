@@ -367,11 +367,14 @@ export abstract class BaseTransport {
 	 *
 	 * This method should:
 	 * 1. Set shutdown flag to prevent new connections
-	 * 2. Wait for in-flight requests to complete (configurable timeout)
+	 * 2. Join accepted requests until the timeout
 	 * 3. Close server connections
 	 * 4. Release resources
 	 *
-	 * @param timeout - Maximum time to wait for requests to drain (default: 30 seconds)
+	 * At the timeout the transport settles from its own timer: it rejects with
+	 * `TransportStopTimeoutError` while accepted requests are still pending and resolves otherwise.
+	 *
+	 * @param timeout - Maximum time to join accepted requests (default: 30 seconds)
 	 * @returns Promise that resolves when shutdown is complete
 	 */
 	abstract stop(timeout?: number): Promise<void>;
