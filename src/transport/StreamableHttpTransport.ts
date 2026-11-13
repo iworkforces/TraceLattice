@@ -35,6 +35,7 @@ import {
 	LifecycleFailureReporter,
 	PreDispatchTracker,
 	ResponseFinalizer,
+	boundStop,
 	type PreDispatchLease,
 } from './HttpRequestLifecycle.js';
 
@@ -799,55 +800,54 @@ export class StreamableHttpTransport extends BaseTransport implements ITransport
 	/**
 	 * Stop transport server with graceful shutdown.
 	 *
-	 * @param timeout - Maximum time before force-closing HTTP connections (default: 30s)
+	 * Accepted work is joined until the timeout. At the timeout the transport's own timer force-closes
+	 * connections and settles: it rejects with `TransportStopTimeoutError` while accepted work is
+	 * still pending and resolves otherwise. A later `stop()` starts a new bounded join.
+	 *
+	 * @param timeout - Maximum time to join accepted work and server close (default: 30s)
 	 */
-	stop(timeout?: number): Promise<void> {
+	stop(timeout = 30000): Promise<void> {
 		if (this._stopPromise) return this._stopPromise;
 		this._isShuttingDown = true;
 		this._preDispatch.closeAdmission('shutdown');
 		this._stopRateLimitCleanup();
 		this._stopSessionSweep();
 
-		const shutdownTimeout = timeout ?? 30000;
-
 		for (const sessionId of this._sessions.keys()) {
 			this._disposeSession(sessionId);
 		}
 
 		const server = this._server;
+		const needsDeadline = Boolean(server?.listening) || this._acceptedWork.size > 0;
 		const serverClosed = new Promise<void>((resolve, reject) => {
 			if (!server?.listening) {
 				resolve();
 				return;
 			}
-
-			let settled = false;
-			let forceClose: NodeJS.Timeout | null = null;
 			server.close((error) => {
-				if (settled) return;
-				settled = true;
-				if (forceClose) clearTimeout(forceClose);
 				if (error) {
 					reject(error);
 					return;
 				}
 				resolve();
 			});
-			if (settled) return;
-			forceClose = setTimeout(() => {
-				if (settled) return;
-				settled = true;
-				this.log('warn', 'Streamable HTTP transport force-closing after timeout');
-				server.closeAllConnections();
-				resolve();
-			}, shutdownTimeout);
 		});
-		const stopPromise = Promise.all([
+		const joined = Promise.all([
 			serverClosed,
 			this._preDispatch.join().then(() => this._acceptedWork.join()),
 		]).then(() => {
 			this.log('info', 'Streamable HTTP transport stopped');
 		});
+		const stopPromise = needsDeadline
+			? boundStop(joined, {
+					timeoutMs: timeout,
+					acceptedWork: this._acceptedWork,
+					forceClose: () => {
+						this.log('warn', 'Streamable HTTP transport force-closing after timeout');
+						server?.closeAllConnections();
+					},
+				})
+			: joined;
 		this._stopPromise = stopPromise;
 		void stopPromise.catch(() => {
 			if (this._stopPromise === stopPromise) this._stopPromise = null;

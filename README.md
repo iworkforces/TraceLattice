@@ -193,6 +193,7 @@ All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `f
 | `TRACELATTICE_CORS_ORIGIN`              | `*`                     | CORS origin                                  |
 | `TRACELATTICE_ENABLE_CORS`              | `true`                  | Enable CORS preflight                        |
 | `TRACELATTICE_ALLOWED_HOSTS`            | derived from bound host | Comma-separated allowed `Host` header values |
+| `TRACELATTICE_SHUTDOWN_DEADLINE_MS`     | `30000`                 | Total CLI shutdown budget in ms (stdio and Streamable HTTP) |
 
 ### Skill discovery
 
@@ -244,6 +245,8 @@ Set all three transport-session retention variables or leave all three unset. Ea
 
 In Streamable HTTP mode, the port and retention values accept only unsigned decimal integers without leading zeros (except `0`), signs, whitespace, or trailing characters, and must be safe integers. `TRACELATTICE_STREAMABLE_HTTP_PORT` accepts 0 through 65535 and defaults to 9007. `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` must be at most 2147483647, the largest timer delay Node and Bun honor. Invalid values, a partial retention set, or an unknown `TRACELATTICE_TRANSPORT_TYPE` stop CLI startup with exit code 1. Stdio ignores HTTP-only variables.
 
+`TRACELATTICE_SHUTDOWN_DEADLINE_MS` is parsed for stdio and Streamable HTTP alike. It accepts a positive safe integer of at most 2147483647; zero, a malformed value, an empty string, or a larger value stops CLI startup with exit code 1 after stopping the already initialized server. On SIGINT, SIGTERM, or stdin end (stdio) the CLI gives the transport half of the budget as its stop timeout, then always stops the server with the time left, which drains buffered writes and releases the File backend's writer lock. A transport still waiting on an accepted request at that point is abandoned with a `TRANSPORT_STOP_TIMEOUT` failure. Every failure is reported and exits with code 1; a server stop that outlives the total budget fails with `CLI_SHUTDOWN_TIMEOUT` at the deadline. A clean stop exits with code 0. Set the budget below your process supervisor's kill timeout.
+
 ### Session model
 
 TraceLattice uses separate session concepts with separate identifiers:
@@ -281,7 +284,7 @@ export async function startHttpTransport(mcpServer: McpServer): Promise<ITranspo
 }
 ```
 
-Call and await `transport.stop()` during application shutdown.
+Call and await `transport.stop(timeout)` during application shutdown. It joins accepted requests for up to `timeout` milliseconds (default 30000). At the timeout it force-closes connections and settles from its own timer: it rejects with an error whose `code` is `TRANSPORT_STOP_TIMEOUT`, carrying `timeoutMs` and `abandonedRequests`, while accepted requests are still running, and resolves otherwise. A later `stop()` call starts a new bounded join.
 
 ## Current v2 contract
 

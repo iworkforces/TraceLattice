@@ -11,6 +11,7 @@ import { McpServer } from 'tmcp';
 import { vi } from 'vitest';
 import type { HttpTransport } from '../../transport/HttpTransport.js';
 import type { StreamableHttpTransport } from '../../transport/StreamableHttpTransport.js';
+import { INITIALIZE_PARAMS, getListeningPort, postJson } from './ProtocolHarness.js';
 
 export type LifecycleTransport = HttpTransport | StreamableHttpTransport;
 
@@ -114,6 +115,52 @@ export function createControlledProtocolServer(onHandlerStarted?: () => void): C
 				throw new LifecycleFixtureError('controlled receive failure');
 			});
 		},
+	};
+}
+
+export function getTransportServer(transport: LifecycleTransport): Server {
+	const server = Reflect.get(transport, '_server');
+	if (!(server instanceof Server)) {
+		throw new LifecycleFixtureError('Transport server is not initialized');
+	}
+	return server;
+}
+
+export function controlledCallBody(): string {
+	return JSON.stringify({
+		jsonrpc: '2.0',
+		id: 'controlled-call',
+		method: 'tools/call',
+		params: { name: 'controlled', arguments: {} },
+	});
+}
+
+export type GatedTransport = {
+	readonly endpoint: string;
+	readonly headers: Readonly<Record<string, string>>;
+	readonly started: Promise<void>;
+	readonly release: () => void;
+};
+
+export async function connectGatedTransport(
+	transport: LifecycleTransport,
+	path: string
+): Promise<GatedTransport> {
+	const controlled = createControlledProtocolServer();
+	await transport.connect(controlled.server);
+	const endpoint = `http://127.0.0.1:${getListeningPort(transport)}${path}`;
+	const initialized = await postJson(endpoint, {
+		jsonrpc: '2.0',
+		id: 'gated-initialize',
+		method: 'initialize',
+		params: INITIALIZE_PARAMS,
+	});
+	const sessionId = initialized.headers.get('mcp-session-id');
+	return {
+		endpoint,
+		headers: sessionId ? { 'mcp-session-id': sessionId } : {},
+		started: controlled.started,
+		release: controlled.release,
 	};
 }
 

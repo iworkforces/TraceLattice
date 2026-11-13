@@ -18,7 +18,11 @@ export interface ITransport {
 	/** Connect the transport to an MCP server. */
 	connect(mcpServer: McpServer): Promise<void>;
 
-	/** Stop the transport with graceful shutdown. */
+	/**
+	 * Stop the transport with graceful shutdown. Accepted work is joined until `timeout`
+	 * milliseconds (default 30000); at the timeout the promise rejects with a
+	 * `TRANSPORT_STOP_TIMEOUT` error while accepted work is still pending and resolves otherwise.
+	 */
 	stop(timeout?: number): Promise<void>;
 
 	/** Number of currently active client connections. */

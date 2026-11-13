@@ -13,10 +13,12 @@ const retention = Object.fromEntries(
 );
 
 describe('CLI transport defaults and isolation', () => {
-	it('defaults to stdio', () => expect(parseCliTransportConfig({})).toEqual({ kind: 'stdio' }));
+	it('defaults to stdio', () =>
+		expect(parseCliTransportConfig({})).toEqual({ kind: 'stdio', shutdownDeadlineMs: 30_000 }));
 	it('preserves HTTP defaults with unbounded sessions', () => {
 		expect(parseCliTransportConfig(http)).toEqual({
 			kind: 'streamable-http',
+			shutdownDeadlineMs: 30_000,
 			port: 9007,
 			host: 'localhost',
 			corsOrigin: '*',
@@ -40,6 +42,7 @@ describe('CLI transport defaults and isolation', () => {
 		);
 		expect(parseCliTransportConfig({ ...env, TRACELATTICE_TRANSPORT_TYPE: type })).toEqual({
 			kind: 'stdio',
+			shutdownDeadlineMs: 30_000,
 		});
 	});
 	it.each(['streamable_http', '', 'http'])('rejects unknown transport %j', (type) => {
@@ -83,6 +86,32 @@ describe('CLI transport defaults and isolation', () => {
 			allowedHosts: [''],
 		});
 	});
+});
+
+describe.each([
+	{ kind: 'stdio', base: {} },
+	{ kind: 'streamable-http', base: http },
+])('CLI shutdown deadline for $kind', ({ kind, base }) => {
+	const deadline = 'TRACELATTICE_SHUTDOWN_DEADLINE_MS';
+
+	it('defaults to 30000 ms', () => {
+		expect(parseCliTransportConfig(base)).toMatchObject({ kind, shutdownDeadlineMs: 30_000 });
+	});
+	it.each(['1', '5000', '2147483647'])('accepts %s', (raw) => {
+		expect(parseCliTransportConfig({ ...base, [deadline]: raw })).toMatchObject({
+			kind,
+			shutdownDeadlineMs: Number(raw),
+		});
+	});
+	it.each(['0', 'abc', '', '01', '-1', '1.5', ' 1', '2147483648', '9007199254740992'])(
+		'rejects %j',
+		(raw) => {
+			expect(() => parseCliTransportConfig({ ...base, [deadline]: raw })).toThrow(
+				ConfigurationError
+			);
+			expect(() => parseCliTransportConfig({ ...base, [deadline]: raw })).toThrow(deadline);
+		}
+	);
 });
 
 describe('CLI HTTP integers', () => {

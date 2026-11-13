@@ -1,9 +1,14 @@
-import { CliShutdownTimeoutError } from './errors.js';
+import { DEFAULT_SHUTDOWN_DEADLINE_MS } from './config/CliTransportConfig.js';
+import { CliShutdownTimeoutError, TransportStopTimeoutError } from './errors.js';
 
-export const CLI_SHUTDOWN_DEADLINE_MS = 30_000;
+export const CLI_SHUTDOWN_DEADLINE_MS = DEFAULT_SHUTDOWN_DEADLINE_MS;
 
 export interface CliOwnedResource {
 	stop(): void | Promise<void>;
+}
+
+export interface CliTransportResource {
+	stop(timeoutMs: number): void | Promise<void>;
 }
 
 export interface CliShutdownBoundary {
@@ -26,6 +31,12 @@ const SYSTEM_CLOCK: CliLifecycleClock = {
 	clearTimeout: (handle) => clearTimeout(handle),
 };
 
+const SHUTDOWN_FAILURE_MESSAGE = 'CLI shutdown did not complete cleanly';
+
+export function transportStopSliceMs(totalMs: number): number {
+	return Math.max(1, Math.floor(totalMs / 2));
+}
+
 function appendFailure(failures: unknown[], failure: unknown): void {
 	if (failure instanceof AggregateError) {
 		for (const nestedFailure of failure.errors) appendFailure(failures, nestedFailure);
@@ -34,11 +45,76 @@ function appendFailure(failures: unknown[], failure: unknown): void {
 	failures.push(failure);
 }
 
+function collectFailures(first: readonly unknown[], second: readonly unknown[]): unknown[] {
+	const failures: unknown[] = [];
+	for (const failure of [...first, ...second]) appendFailure(failures, failure);
+	return failures;
+}
+
+async function invoke(stop: () => void | Promise<void>): Promise<void> {
+	await stop();
+}
+
+/**
+ * Starts `stop` at once, then arms a guard that rejects with `TransportStopTimeoutError` when
+ * `stop` has not settled after `timeoutMs`. The guard is armed second so that a stopper with its
+ * own timer of the same length settles first and its typed error wins.
+ */
+export function stopWithin(
+	stop: () => void | Promise<void>,
+	timeoutMs: number,
+	clock: CliLifecycleClock = SYSTEM_CLOCK
+): Promise<void> {
+	const guard = Promise.withResolvers<void>();
+	const stopping = invoke(stop);
+	const timer = clock.setTimeout(
+		() => guard.reject(new TransportStopTimeoutError(timeoutMs, null)),
+		timeoutMs
+	);
+	return Promise.race([stopping, guard.promise]).finally(() => clock.clearTimeout(timer));
+}
+
+/**
+ * The transport phase of one shutdown. `settled` never rejects and resolves when the transport
+ * stopped, failed, or overran its slice; `failures()` reports the transport's own outcome once it
+ * has settled and the slice guard's error before that.
+ */
+class TransportStopRun {
+	readonly settled: Promise<void>;
+	private _real: readonly unknown[] | null = null;
+	private _guard: readonly unknown[] = [];
+
+	constructor(transport: CliTransportResource, sliceMs: number, clock: CliLifecycleClock) {
+		this.settled = stopWithin(
+			async () => {
+				try {
+					await transport.stop(sliceMs);
+					this._real = [];
+				} catch (error) {
+					this._real = [error];
+					throw error;
+				}
+			},
+			sliceMs,
+			clock
+		).then(
+			() => undefined,
+			(error: unknown) => {
+				if (this._real === null) this._guard = [error];
+			}
+		);
+	}
+
+	failures(): readonly unknown[] {
+		return this._real ?? this._guard;
+	}
+}
+
 export class CliLifecycle {
 	private readonly _server: CliOwnedResource;
 	private readonly _deadlineMs: number;
 	private readonly _clock: CliLifecycleClock;
-	private _transport: CliOwnedResource | null = null;
+	private _transport: CliTransportResource | null = null;
 	private _shutdownPromise: Promise<void> | null = null;
 
 	constructor(server: CliOwnedResource, options: CliLifecycleOptions = {}) {
@@ -47,7 +123,7 @@ export class CliLifecycle {
 		this._clock = options.clock ?? SYSTEM_CLOCK;
 	}
 
-	attachTransport(transport: CliOwnedResource): void {
+	attachTransport(transport: CliTransportResource): void {
 		if (this._transport) throw new TypeError('CLI transport owner is already attached');
 		this._transport = transport;
 	}
@@ -56,7 +132,7 @@ export class CliLifecycle {
 		if (this._shutdownPromise) return this._shutdownPromise;
 		const completion = Promise.withResolvers<void>();
 		this._shutdownPromise = completion.promise;
-		this._startShutdown(completion);
+		void this._stopAll().then(completion.resolve, completion.reject);
 		return this._shutdownPromise;
 	}
 
@@ -71,36 +147,42 @@ export class CliLifecycle {
 		throw new AggregateError(failures, 'CLI startup failed and rollback did not complete cleanly');
 	}
 
-	private _startShutdown(completion: PromiseWithResolvers<void>): void {
-		const deadline = Promise.withResolvers<never>();
-		const timeout = this._clock.setTimeout(() => {
-			deadline.reject(new CliShutdownTimeoutError(this._deadlineMs));
-		}, this._deadlineMs);
-		void Promise.race([this._stopOwnedResources(), deadline.promise]).then(
-			() => {
-				this._clock.clearTimeout(timeout);
-				completion.resolve();
-			},
-			(error: unknown) => {
-				this._clock.clearTimeout(timeout);
-				completion.reject(error);
-			}
-		);
+	private async _stopAll(): Promise<void> {
+		const expiry = Promise.withResolvers<void>();
+		const timer = this._clock.setTimeout(() => expiry.resolve(), this._deadlineMs);
+		const transportRun = this._transport
+			? new TransportStopRun(this._transport, transportStopSliceMs(this._deadlineMs), this._clock)
+			: null;
+		try {
+			await this._stopWithinBudget(transportRun, expiry.promise);
+		} finally {
+			this._clock.clearTimeout(timer);
+		}
 	}
 
-	private async _stopOwnedResources(): Promise<void> {
-		const failures: unknown[] = [];
-		const resources = this._transport ? [this._transport, this._server] : [this._server];
-		for (const resource of resources) {
-			try {
-				await resource.stop();
-			} catch (error) {
-				appendFailure(failures, error);
-			}
-		}
-		if (failures.length > 0) {
-			throw new AggregateError(failures, 'CLI shutdown did not complete cleanly');
-		}
+	private async _stopWithinBudget(
+		transportRun: TransportStopRun | null,
+		expired: Promise<void>
+	): Promise<void> {
+		if (transportRun) await Promise.race([transportRun.settled, expired]);
+		const serverStopped = invoke(() => this._server.stop()).then(
+			() => [],
+			(error: unknown) => [error]
+		);
+		const serverFailures = await Promise.race([serverStopped, expired.then(() => null)]);
+		const transportFailures = transportRun?.failures() ?? [];
+		if (serverFailures === null) throw this._timeoutFailure(transportFailures);
+		const failures = collectFailures(transportFailures, serverFailures);
+		if (failures.length > 0) throw new AggregateError(failures, SHUTDOWN_FAILURE_MESSAGE);
+	}
+
+	private _timeoutFailure(transportFailures: readonly unknown[]): Error {
+		const timeout = new CliShutdownTimeoutError(this._deadlineMs);
+		if (transportFailures.length === 0) return timeout;
+		return new AggregateError(
+			collectFailures(transportFailures, [timeout]),
+			SHUTDOWN_FAILURE_MESSAGE
+		);
 	}
 }
 
