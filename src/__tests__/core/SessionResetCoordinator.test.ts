@@ -119,6 +119,7 @@ describe('SessionResetCoordinator', () => {
 const TIMEOUT_MS = 1000;
 const SESSION_A = asSessionId('clear-deadline-a');
 const SESSION_B = asSessionId('clear-deadline-b');
+const SESSION_C = asSessionId('clear-deadline-c');
 
 type DeadlineHarness = {
 	readonly coordinator: SessionResetCoordinator<TestSessionState>;
@@ -565,6 +566,59 @@ describe('SessionResetCoordinator clear deadline', () => {
 		expect(harness.persistence.thoughtAttempts).toBe(2);
 		expect(await harness.persistence.loadHistoryForSession(SESSION_A)).toHaveLength(1);
 		expect(harness.persistence.maxConcurrentCalls).toBe(1);
+	});
+
+	it('sends a retry that waited on a clear before a reset queued behind that clear starts its own', async () => {
+		// Given
+		const harness = createDeadlineHarness(undefined, FLUSH_MS, 3);
+		const { drained } = await holdClearDuringRetryDelay(harness);
+		await advanceTimeAsync(TIMEOUT_MS);
+		const queuedReset = track(harness.coordinator.resetSession(SESSION_C, 'owner-c'));
+		await advanceTimeAsync(0);
+		harness.persistence.down = false;
+
+		// When
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+		const attemptsAfterFirstClear = harness.persistence.thoughtAttempts;
+		const clearsAfterFirstClear = harness.persistence.clearCalls;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+
+		// Then
+		expect(attemptsAfterFirstClear).toBe(2);
+		expect(clearsAfterFirstClear).toBe(2);
+		expect(harness.persistence.writesStartedDuringClear).toBe(0);
+		expect(drained().status).toBe('fulfilled');
+		expect(queuedReset().status).toBe('fulfilled');
+		expect(await harness.persistence.loadHistoryForSession(SESSION_A)).toHaveLength(1);
+	});
+
+	it('keeps a due retry waiting while a reset queued before it runs its clear', async () => {
+		// Given
+		const harness = createDeadlineHarness(undefined, FLUSH_MS, 3);
+		const { drained } = await holdClearDuringRetryDelay(harness);
+		const queuedReset = track(harness.coordinator.resetSession(SESSION_C, 'owner-c'));
+		await advanceTimeAsync(0);
+		await advanceTimeAsync(TIMEOUT_MS);
+		harness.persistence.down = false;
+
+		// When
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+		const attemptsWhileSecondHeld = harness.persistence.thoughtAttempts;
+		const clearsWhileSecondHeld = harness.persistence.clearCalls;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+
+		// Then
+		expect(attemptsWhileSecondHeld).toBe(1);
+		expect(clearsWhileSecondHeld).toBe(2);
+		expect(harness.persistence.thoughtAttempts).toBe(2);
+		expect(harness.persistence.writesStartedDuringClear).toBe(0);
+		expect(harness.persistence.maxConcurrentCalls).toBe(1);
+		expect(drained().status).toBe('fulfilled');
+		expect(queuedReset().status).toBe('fulfilled');
 	});
 
 	it('ends a write whose retry came due behind a clear that timed out, and resends it only after the clear settles', async () => {

@@ -39,6 +39,7 @@ import {
 import {
 	PersistenceWriter,
 	type PersistenceDelay,
+	type PersistenceRetryAdmission,
 	type PersistenceWriteResult,
 } from './PersistenceWriter.js';
 import type { ThoughtData } from './thought.js';
@@ -770,12 +771,14 @@ export class PersistenceBuffer {
 	}
 
 	/**
-	 * Admits a write's retry attempt under the rules of a first dispatch: it waits for a clear in
-	 * flight while the gate is open, and is refused once dispatch is still blocked afterwards.
+	 * Answers a write's retry attempt under the rules of a first dispatch. While a clear is in
+	 * flight and the gate is open the answer is that clear's settlement, and the writer asks again
+	 * afterwards. Otherwise the answer is final and synchronous, so a reset that waited on the same
+	 * clear cannot start its own clear between an admission and the writer's dispatch.
 	 */
-	private async _retryAdmitted(): Promise<boolean> {
-		while (this._writeGate.clearInFlight && !this._writeGate.isClosed) {
-			await this._writeGate.clearsSettled();
+	private _retryAdmitted(): PersistenceRetryAdmission {
+		if (this._writeGate.clearInFlight && !this._writeGate.isClosed) {
+			return this._writeGate.clearsSettled();
 		}
 		return !this._dispatchBlocked();
 	}

@@ -13,6 +13,7 @@ import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
  * released as a success takes effect; one released with an error changes nothing.
  * `holdWrites` covers every write: thought, backtrack, branch save and delete, edges, summaries.
  * `maxConcurrentCalls` counts writes and clears together that were unsettled at the same time.
+ * `writesStartedDuringClear` counts writes that reached the backend while a clear was unsettled.
  */
 export class StallingPersistence extends MemoryPersistence {
 	public down = false;
@@ -25,7 +26,9 @@ export class StallingPersistence extends MemoryPersistence {
 	public clearCalls = 0;
 	public maxConcurrentWrites = 0;
 	public maxConcurrentCalls = 0;
+	public writesStartedDuringClear = 0;
 	private _concurrentWrites = 0;
+	private _concurrentClears = 0;
 	private _concurrentCalls = 0;
 	private readonly _held: PromiseWithResolvers<void>[] = [];
 
@@ -93,10 +96,12 @@ export class StallingPersistence extends MemoryPersistence {
 		this.clearCalls += 1;
 		if (this.failClear) throw new Error('delete failed');
 		this._startCall();
+		this._concurrentClears += 1;
 		try {
 			if (this.holdClears) await this._hold();
 			await super.clearSession(sessionId);
 		} finally {
+			this._concurrentClears -= 1;
 			this._concurrentCalls -= 1;
 		}
 	}
@@ -104,10 +109,12 @@ export class StallingPersistence extends MemoryPersistence {
 	public override async clearAll(): Promise<void> {
 		this.clearCalls += 1;
 		this._startCall();
+		this._concurrentClears += 1;
 		try {
 			if (this.holdClears) await this._hold();
 			await super.clearAll();
 		} finally {
+			this._concurrentClears -= 1;
 			this._concurrentCalls -= 1;
 		}
 	}
@@ -121,6 +128,7 @@ export class StallingPersistence extends MemoryPersistence {
 	private async _write(write: () => Promise<void>): Promise<void> {
 		this._concurrentWrites += 1;
 		this.maxConcurrentWrites = Math.max(this.maxConcurrentWrites, this._concurrentWrites);
+		if (this._concurrentClears > 0) this.writesStartedDuringClear += 1;
 		this._startCall();
 		try {
 			if (this.holdWrites) await this._hold();

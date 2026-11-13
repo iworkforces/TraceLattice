@@ -276,7 +276,7 @@ describe('PersistenceWriter write deadline', () => {
 describe('PersistenceWriter retry admission', () => {
 	it('is not consulted before the first attempt, nor after a first-attempt success', async () => {
 		// Given
-		const admitRetry = vi.fn(() => Promise.resolve(true));
+		const admitRetry = vi.fn(() => true);
 		const harness = createHarness({ admitRetry });
 		harness.persistence.holdWrites = true;
 
@@ -294,7 +294,7 @@ describe('PersistenceWriter retry admission', () => {
 
 	it('ends the write with the attempts made and the real cause when a retry is refused', async () => {
 		// Given
-		const admitRetry = vi.fn(() => Promise.resolve(false));
+		const admitRetry = vi.fn(() => false);
 		const harness = createHarness({ admitRetry });
 		harness.persistence.down = true;
 
@@ -312,7 +312,7 @@ describe('PersistenceWriter retry admission', () => {
 
 	it('keeps attempts and delays unchanged while every retry is admitted', async () => {
 		// Given
-		const admitRetry = vi.fn(() => Promise.resolve(true));
+		const admitRetry = vi.fn(() => true);
 		const harness = createHarness({ admitRetry });
 		harness.persistence.down = true;
 
@@ -327,10 +327,12 @@ describe('PersistenceWriter retry admission', () => {
 		expect(admitRetry).toHaveBeenCalledTimes(3);
 	});
 
-	it('holds a retry until a pending admission resolves', async () => {
+	it('holds a retry while the admission is pending and asks again once it settles', async () => {
 		// Given
-		const admission = Promise.withResolvers<boolean>();
-		const harness = createHarness({ admitRetry: () => admission.promise });
+		const pending = Promise.withResolvers<void>();
+		let decided = false;
+		const admitRetry = vi.fn(() => (decided ? true : pending.promise));
+		const harness = createHarness({ admitRetry });
 		harness.persistence.down = true;
 
 		// When
@@ -339,12 +341,43 @@ describe('PersistenceWriter retry admission', () => {
 		const attemptsWhilePending = harness.persistence.thoughtAttempts;
 		const settledWhilePending = write.isSettled();
 		harness.persistence.down = false;
-		admission.resolve(true);
+		decided = true;
+		pending.resolve();
 
 		// Then
 		expect(attemptsWhilePending).toBe(1);
 		expect(settledWhilePending).toBe(false);
 		expect(await write.result).toBe(true);
 		expect(harness.persistence.thoughtAttempts).toBe(2);
+		expect(admitRetry).toHaveBeenCalledTimes(2);
 	});
+
+	it.each([
+		{ deadline: 'a write deadline', writeTimeout: TIMEOUT_MS },
+		{ deadline: 'no write deadline', writeTimeout: undefined },
+	])(
+		'dispatches an admitted retry in the same step as the admission with $deadline',
+		async ({ writeTimeout }) => {
+			// Given
+			let attemptsOneMicrotaskAfterAdmission = 0;
+			const harness = createHarness({
+				maxRetries: 1,
+				writeTimeout,
+				admitRetry: () => {
+					queueMicrotask(() => {
+						attemptsOneMicrotaskAfterAdmission = harness.persistence.thoughtAttempts;
+					});
+					return true;
+				},
+			});
+			harness.persistence.down = true;
+
+			// When
+			const result = await harness.writer.write(harness.work);
+
+			// Then
+			expect(attemptsOneMicrotaskAfterAdmission).toBe(2);
+			expect(result).toMatchObject({ kind: 'thought', attempts: 2 });
+		}
+	);
 });
