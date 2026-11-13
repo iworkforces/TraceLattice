@@ -27,6 +27,7 @@ export type RunningProcess = {
 
 export type FixtureMode =
 	| 'deadline'
+	| 'server-overrun'
 	| 'cleanup-rejection'
 	| 'streamable-file'
 	| 'reload-file'

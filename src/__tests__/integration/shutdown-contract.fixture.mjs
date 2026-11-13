@@ -83,37 +83,53 @@ function cleanConfig(ServerConfig, dataDir) {
 	});
 }
 
-async function runDeadline() {
+const DEADLINE_MS = 40;
+
+function flattenFailures(error) {
+	if (!(error instanceof AggregateError)) return [error];
+	return error.errors.flatMap(flattenFailures);
+}
+
+function describeFailure(error) {
+	return {
+		name: error.name,
+		code: error.code,
+		timeoutMs: error.timeoutMs,
+		abandonedRequests: error.abandonedRequests,
+	};
+}
+
+async function runStuckTransport(holdServerStop) {
 	const { CliLifecycle, createCliShutdownHandler } = await import('../../../dist/CliLifecycle.js');
 	const transportGate = deferred();
-	const serverStopped = deferred();
+	const serverGate = deferred();
 	let transportStops = 0;
 	let serverStops = 0;
+	let transportTimeoutArgument = null;
 	let reportCount = 0;
-	let reportedError;
+	let causes = [];
 	const exits = [];
 	const lifecycle = new CliLifecycle(
 		{
 			stop: async () => {
 				serverStops++;
-				serverStopped.resolve();
+				if (holdServerStop) await serverGate.promise;
 			},
 		},
-		{ deadlineMs: 25 }
+		{ deadlineMs: DEADLINE_MS }
 	);
 	lifecycle.attachTransport({
-		stop: async () => {
+		stop: async (timeoutMs) => {
 			transportStops++;
+			transportTimeoutArgument = timeoutMs;
 			await transportGate.promise;
 		},
 	});
 	const handler = createCliShutdownHandler(lifecycle, {
 		reportFailure: (error) => {
 			reportCount++;
-			reportedError = error;
-			process.stderr.write(
-				`${JSON.stringify({ code: error.code, message: error.message, name: error.name, timeoutMs: error.timeoutMs })}\n`
-			);
+			causes = flattenFailures(error).map(describeFailure);
+			process.stderr.write(`${JSON.stringify(causes)}\n`);
 		},
 		exit: (code) => {
 			exits.push(code);
@@ -127,19 +143,15 @@ async function runDeadline() {
 		event: 'deadline-observed',
 		transportStops,
 		serverStops,
+		transportTimeoutArgument,
 		samePromise: first === repeated,
 		reportCount,
 		exits,
-		error: {
-			name: reportedError.name,
-			code: reportedError.code,
-			message: reportedError.message,
-			timeoutMs: reportedError.timeoutMs,
-		},
+		causes,
 	});
 	await nextControl('release-transport');
 	transportGate.resolve();
-	await serverStopped.promise;
+	serverGate.resolve();
 	await nextTurn();
 	await finish(1, {
 		event: 'deadline-final',
@@ -533,7 +545,10 @@ async function runResetShutdownRace() {
 async function main() {
 	switch (mode) {
 		case 'deadline':
-			await runDeadline();
+			await runStuckTransport(false);
+			return;
+		case 'server-overrun':
+			await runStuckTransport(true);
 			return;
 		case 'cleanup-rejection':
 			await runCleanupRejection();
