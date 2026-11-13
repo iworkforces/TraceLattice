@@ -87,6 +87,8 @@ export interface HistoryManagerConfig {
 	persistenceMaxRetries?: number;
 	/** Per-session limit on unacknowledged thought writes, terminal failures included. @default 10000 */
 	persistenceMaxPendingThoughtsPerSession?: number;
+	/** Deadline per backend write in ms. @default undefined (no deadline) */
+	persistenceWriteTimeout?: number;
 	persistenceHistorySize?: number;
 	persistBranches?: boolean;
 	eventEmitter?: PersistenceEventEmitter;
@@ -191,6 +193,7 @@ export class HistoryManager implements IHistoryManager {
 				flushInterval: config.persistenceFlushInterval ?? 1000,
 				maxRetries: config.persistenceMaxRetries ?? 3,
 				maxPendingThoughtsPerSession: config.persistenceMaxPendingThoughtsPerSession ?? 10_000,
+				writeTimeout: config.persistenceWriteTimeout,
 				durableHistorySize: config.persistenceHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
 				persistBranches: config.persistBranches ?? true,
 				eventEmitter: this._eventEmitter,

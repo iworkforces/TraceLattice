@@ -53,6 +53,8 @@ export interface PersistenceBufferConfig {
 	 * @default 10000
 	 */
 	readonly maxPendingThoughtsPerSession?: number;
+	/** Deadline per backend write in milliseconds; `undefined` waits without a deadline. */
+	readonly writeTimeout?: number;
 }
 
 const DEFAULT_MAX_PENDING_THOUGHTS_PER_SESSION = 10_000;
@@ -127,6 +129,7 @@ export class PersistenceBuffer {
 			persistence: config.persistence,
 			maxRetries: config.maxRetries,
 			delay: config.delay,
+			writeTimeout: config.writeTimeout,
 		});
 	}
 
