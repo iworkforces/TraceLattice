@@ -17,6 +17,7 @@ const TIMEOUT_MS = 1000;
 const FLUSH_MS = 1000;
 const A = createTestSessionId('stall-a');
 const B = createTestSessionId('stall-b');
+const C = createTestSessionId('stall-c');
 
 type Harness = {
 	readonly persistence: StallingPersistence;
@@ -108,6 +109,17 @@ async function stallFirstWrite(harness: Harness, sessionId: SessionId = A): Prom
 	return drained();
 }
 
+/** Joins `drainSession` for A, whose write stalls, and for C, which never had work. */
+function joinDrainSessions(harness: Harness): {
+	readonly stalledSession: () => Outcome;
+	readonly sessionWithoutWork: () => Outcome;
+} {
+	return {
+		stalledSession: track(harness.buffer.drainSession(A)),
+		sessionWithoutWork: track(harness.buffer.drainSession(C)),
+	};
+}
+
 beforeEach(() => {
 	useFakeTimers();
 });
@@ -160,8 +172,8 @@ describe('PersistenceBuffer write deadline gate', () => {
 			track(harness.buffer.drain()),
 			track(harness.buffer.flush()),
 			track(harness.buffer.drainSession(A)),
-			track(harness.buffer.drainSession(B)),
 		];
+		const sessionWithoutWork = track(harness.buffer.drainSession(B));
 		await advanceTimeAsync(0);
 
 		// Then
@@ -169,6 +181,7 @@ describe('PersistenceBuffer write deadline gate', () => {
 			expect(reasonOf(outcome())).toBeInstanceOf(PersistenceWriteTimeoutError);
 			expect(reasonOf(outcome())).toMatchObject({ code: 'PERSISTENCE_WRITE_TIMEOUT' });
 		}
+		expect(sessionWithoutWork().status).toBe('fulfilled');
 		expect(harness.persistence.thoughtAttempts).toBe(1);
 		expect(harness.events).toHaveLength(1);
 	});
@@ -188,6 +201,49 @@ describe('PersistenceBuffer write deadline gate', () => {
 		expect(reasonOf(sessionB())).toBeInstanceOf(PersistenceWriteTimeoutError);
 		expect(await harness.persistence.loadHistoryForSession(B)).toHaveLength(0);
 	});
+
+	it.each([
+		{
+			stall: 'retained',
+			start: async (harness: Harness) => {
+				harness.persistence.holdWrites = true;
+				harness.buffer.bufferThought(A, thought(A, 1));
+				return joinDrainSessions(harness);
+			},
+		},
+		{
+			stall: 'superseded',
+			start: async (harness: Harness) => {
+				harness.persistence.holdWrites = true;
+				harness.buffer.bufferEdges(A, [edge(A, 'v1')]);
+				void track(harness.buffer.drain());
+				await advanceTimeAsync(0);
+				harness.buffer.bufferEdges(A, [edge(A, 'v2')]);
+				return joinDrainSessions(harness);
+			},
+		},
+		{
+			stall: 'rejected at join',
+			start: async (harness: Harness) => {
+				await stallFirstWrite(harness);
+				return joinDrainSessions(harness);
+			},
+		},
+	])(
+		'resolves drainSession for a session without work and rejects it for the stalled session ($stall)',
+		async ({ start }) => {
+			// Given
+			const harness = createHarness();
+
+			// When
+			const { stalledSession, sessionWithoutWork } = await start(harness);
+			await advanceTimeAsync(TIMEOUT_MS);
+
+			// Then
+			expect(sessionWithoutWork().status).toBe('fulfilled');
+			expect(stalledSession().status).toBe('rejected');
+		}
+	);
 
 	it('keeps timer and size triggers inert while the timed-out call is pending', async () => {
 		// Given
@@ -265,6 +321,46 @@ describe('PersistenceBuffer write deadline gate', () => {
 		expect(harness.buffer.getBacklogView().retainedFailureCount).toBe(0);
 		expect(harness.persistence.maxConcurrentWrites).toBe(1);
 		expect(harness.events).toHaveLength(1);
+	});
+
+	it('reports a retained head that times out again on background retries only once', async () => {
+		// Given
+		const harness = createHarness();
+		harness.persistence.holdWrites = true;
+		harness.buffer.startFlushTimer();
+		harness.buffer.bufferThought(A, thought(A, 1));
+		await advanceTimeAsync(FLUSH_MS + TIMEOUT_MS);
+		const eventsAfterFirstTimeout = harness.events.length;
+
+		// When the first background retry (backoff 1 s) and the second (backoff 2 s) time out too
+		harness.persistence.releaseHeldCall(new Error('late failure 1'));
+		await advanceTimeAsync(FLUSH_MS + TIMEOUT_MS);
+		harness.persistence.releaseHeldCall(new Error('late failure 2'));
+		await advanceTimeAsync(2 * FLUSH_MS + TIMEOUT_MS);
+
+		// Then
+		expect(harness.persistence.thoughtAttempts).toBe(3);
+		expect(harness.warn).toHaveBeenCalledTimes(3);
+		expect(eventsAfterFirstTimeout).toBe(1);
+		expect(harness.events).toHaveLength(1);
+		expect(harness.buffer.getBacklogView().retainedFailureCount).toBe(1);
+	});
+
+	it('reports every explicit drain whose retry of a retained write times out again', async () => {
+		// Given
+		const harness = createHarness();
+		await stallFirstWrite(harness);
+		harness.persistence.releaseHeldCall(new Error('late failure'));
+		await advanceTimeAsync(0);
+
+		// When
+		const retried = track(harness.buffer.drain());
+		await advanceTimeAsync(TIMEOUT_MS);
+
+		// Then
+		expect(firstCause(retried())).toBeInstanceOf(PersistenceWriteTimeoutError);
+		expect(harness.persistence.thoughtAttempts).toBe(2);
+		expect(harness.events).toHaveLength(2);
 	});
 
 	it('lets an explicit drain retry a late failure at once and save it once', async () => {

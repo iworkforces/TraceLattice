@@ -12,6 +12,7 @@ import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
  * test releases them in call order with {@link StallingPersistence.releaseHeldCall}. A held call
  * released as a success takes effect; one released with an error changes nothing.
  * `holdWrites` covers every write: thought, backtrack, branch save and delete, edges, summaries.
+ * `maxConcurrentCalls` counts writes and clears together that were unsettled at the same time.
  */
 export class StallingPersistence extends MemoryPersistence {
 	public down = false;
@@ -23,7 +24,9 @@ export class StallingPersistence extends MemoryPersistence {
 	public closeCalls = 0;
 	public clearCalls = 0;
 	public maxConcurrentWrites = 0;
+	public maxConcurrentCalls = 0;
 	private _concurrentWrites = 0;
+	private _concurrentCalls = 0;
 	private readonly _held: PromiseWithResolvers<void>[] = [];
 
 	/** Number of held calls the test has not released yet. */
@@ -89,14 +92,24 @@ export class StallingPersistence extends MemoryPersistence {
 	public override async clearSession(sessionId: SessionId): Promise<void> {
 		this.clearCalls += 1;
 		if (this.failClear) throw new Error('delete failed');
-		if (this.holdClears) await this._hold();
-		await super.clearSession(sessionId);
+		this._startCall();
+		try {
+			if (this.holdClears) await this._hold();
+			await super.clearSession(sessionId);
+		} finally {
+			this._concurrentCalls -= 1;
+		}
 	}
 
 	public override async clearAll(): Promise<void> {
 		this.clearCalls += 1;
-		if (this.holdClears) await this._hold();
-		await super.clearAll();
+		this._startCall();
+		try {
+			if (this.holdClears) await this._hold();
+			await super.clearAll();
+		} finally {
+			this._concurrentCalls -= 1;
+		}
 	}
 
 	public override async close(): Promise<void> {
@@ -108,12 +121,19 @@ export class StallingPersistence extends MemoryPersistence {
 	private async _write(write: () => Promise<void>): Promise<void> {
 		this._concurrentWrites += 1;
 		this.maxConcurrentWrites = Math.max(this.maxConcurrentWrites, this._concurrentWrites);
+		this._startCall();
 		try {
 			if (this.holdWrites) await this._hold();
 			await write();
 		} finally {
 			this._concurrentWrites -= 1;
+			this._concurrentCalls -= 1;
 		}
+	}
+
+	private _startCall(): void {
+		this._concurrentCalls += 1;
+		this.maxConcurrentCalls = Math.max(this.maxConcurrentCalls, this._concurrentCalls);
 	}
 
 	private _hold(): Promise<void> {

@@ -225,14 +225,20 @@ or `TRACELATTICE_PERSISTENCE_WRITE_TIMEOUT` overrides.
 `clearAll` call of a session or global reset, and, during `stop()`, for the `close()` of a server-owned
 backend. A write still pending at the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` and is reported
 once through `persistenceError`; it is kept as a failed write unless a newer snapshot of the same
-branch, edges or summaries already replaced it, and the drain that sent it rejects either way. A reset
-whose clear misses the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` through the failed-reset path
-and leaves live state in place.
-At most one backend write is in flight: until the timed-out call settles, no other write is sent,
-drains, flushes and session barriers reject with `PERSISTENCE_WRITE_TIMEOUT`, and session and global
-resets fail without calling `clearSession` or `clearAll`. The call's real outcome is applied once, so
-a late success is never sent again and a late failure stays retained; background draining resumes on
-the next flush tick. A close that misses the deadline is one of the failures `stop()` rejects with;
+branch, edges or summaries already replaced it, and the drain that sent it rejects either way. A timer
+retry of that failed write that times out again is logged but not reported again. A reset whose clear
+misses the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` through the failed-reset path and leaves
+live state in place.
+At most one backend call, write or clear, is in flight. No write is sent while a reset's clear runs,
+and resets of different sessions clear one at a time. A timed-out write or clear keeps running: until
+it settles, no other call is sent, drains, flushes and session barriers reject with the
+`PERSISTENCE_WRITE_TIMEOUT` of the oldest pending call, and session and global resets fail without
+calling `clearSession` or `clearAll`, so retrying a reset never sends a second clear. `drainSession`
+rejects only for a session that still has unsaved writes or owns a pending call; `clearAll` belongs to
+every session. A timed-out write's real outcome is applied once, so a late success is never sent again
+and a late failure stays retained. A timed-out clear's late outcome does not change the reset's
+result: the reset stays failed and a retry clears again. Background draining resumes on the next flush
+tick. A close that misses the deadline is one of the failures `stop()` rejects with;
 an injected backend is still never closed. A timer cannot interrupt the synchronous SQLite driver,
 so the deadline only takes effect for asynchronous backends such as File or an injected backend.
 Size it for shutdown: watcher stop (up to 2 s), the buffer flush (up to the timeout) and the

@@ -406,6 +406,14 @@ export class PersistenceWorkQueue {
 	}
 
 	/**
+	 * @param work - Previously selected work handle.
+	 * @returns Whether `work` is still current and holds a retained terminal failure.
+	 */
+	public isRetainedFailure(work: PersistenceWork): boolean {
+		return this._currentEntry(work)?.terminalFailure !== undefined;
+	}
+
+	/**
 	 * Replaces the cause of the failure already retained for `work` without counting another
 	 * failed attempt, so its background retry state is unchanged.
 	 *
