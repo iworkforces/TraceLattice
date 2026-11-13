@@ -31,7 +31,8 @@ export type FixtureMode =
 	| 'cleanup-rejection'
 	| 'streamable-file'
 	| 'reload-file'
-	| 'reset-shutdown-race';
+	| 'reset-shutdown-race'
+	| 'operation-hang';
 
 export type FixtureEvent = Readonly<{ event: string } & Record<string, unknown>>;
 

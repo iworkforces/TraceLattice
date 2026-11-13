@@ -1,6 +1,9 @@
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
+import { FILE_WRITER_LOCK_NAME } from '../../persistence/FileWriter.js';
 import { INITIALIZE_PARAMS } from './ProtocolHarness.js';
 import {
 	cleanupShutdownFixtures,
@@ -52,10 +55,13 @@ async function startAdmittedRace(order: 'reset-first' | 'shutdown-first' | 'clea
 	return { running, dataDir };
 }
 
-async function reloadRaceHistory(dataDir: string): Promise<readonly { readonly thought: string }[]> {
+async function reloadRaceHistory(
+	dataDir: string,
+	sessionId = 'shutdown-race-session'
+): Promise<readonly { readonly thought: string }[]> {
 	const reload = spawnFixture('reload-file');
 	try {
-		await reload.send('configure', { dataDir, sessionId: 'shutdown-race-session' });
+		await reload.send('configure', { dataDir, sessionId });
 		const result = await reload.nextEvent();
 		expect(result.event).toBe('reload-final');
 		expect(await reload.exited).toEqual({ code: 0, signal: null });
@@ -448,5 +454,41 @@ describe('admitted thought versus global reset and shutdown', () => {
 		} finally {
 			await stopChild(running);
 		}
+	}, 30_000);
+});
+
+describe('operation hung inside thought processing at shutdown', () => {
+	it('reports the operations overrun before the total deadline, flushes and unlocks', async () => {
+		// Given
+		const dataDir = await createTemporaryDirectory('tracelattice-operation-hang-');
+		const running = spawnFixture('operation-hang');
+		try {
+			await running.send('configure', { dataDir });
+			expect(await running.nextEvent()).toEqual({ event: 'operation-held' });
+
+			// When
+			const final = await running.nextEvent();
+
+			// Then
+			expect(final).toEqual({
+				event: 'operation-hang-final',
+				exits: [1],
+				causes: [
+					{ name: 'ServerStopTimeoutError', code: 'SERVER_STOP_TIMEOUT', phase: 'operations' },
+				],
+				heldRejected: true,
+				unhandledRejections: [],
+				uncaughtExceptions: [],
+			});
+			expect(await running.exited).toEqual({ code: 1, signal: null });
+			expect(running.stdout()).toBe('');
+		} finally {
+			await stopChild(running);
+		}
+		expect(existsSync(join(dataDir, FILE_WRITER_LOCK_NAME))).toBe(false);
+		expect(await reloadRaceHistory(dataDir, 'operation-hang-other')).toEqual([
+			{ thought: 'accepted before the hang' },
+		]);
+		expect(await reloadRaceHistory(dataDir, 'operation-hang-held')).toEqual([]);
 	}, 30_000);
 });
