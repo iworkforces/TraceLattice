@@ -1,7 +1,7 @@
-import { once } from 'node:events';
+import { on } from 'node:events';
 import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type ToolAwareSequentialThinkingServer } from '../../lib.js';
@@ -13,6 +13,7 @@ import { SkillWatcher } from '../../watchers/SkillWatcher.js';
 import { ToolWatcher } from '../../watchers/ToolWatcher.js';
 
 const EVENT_DEADLINE_MS = 5_000;
+const PROBE_PREFIX = 'delivery-probe-';
 
 type RefreshableRegistry = {
 	refreshAsync(): Promise<number>;
@@ -103,10 +104,54 @@ async function withObserver<T>(
 	}
 }
 
+function observerReady(observer: FSWatcher): Promise<void> {
+	return withDeadline(
+		new Promise<void>((resolve) => observer.once('ready', resolve)),
+		'observer ready'
+	);
+}
+
+async function waitForAdd(
+	watcher: FSWatcher,
+	isExpected: (path: string) => boolean
+): Promise<void> {
+	for await (const [path] of on(watcher, 'add')) {
+		if (isExpected(path)) return;
+	}
+}
+
+// On macOS chokidar reports `ready` before the native backend delivers events, and a write made in
+// that gap is never reported. Probes are written until the observer sees one: a delivered event
+// proves delivery is live for every watcher that was opened before the observer.
+async function proveDelivery(observer: FSWatcher, directory: string): Promise<void> {
+	const delivered = waitForAdd(observer, (path) => basename(path).startsWith(PROBE_PREFIX));
+	let probing = true;
+	const writer = (async () => {
+		for (let probe = 0; probing; probe++) {
+			await writeFile(join(directory, `${PROBE_PREFIX}${probe}`), 'probe', 'utf8');
+		}
+	})();
+	try {
+		await withDeadline(delivered, 'native event delivery');
+	} finally {
+		probing = false;
+		await writer;
+	}
+}
+
+async function awaitNativeDelivery(directory: string): Promise<void> {
+	await mkdir(directory, { recursive: true });
+	await withObserver(watch(directory, { ignoreInitial: true }), async (observer) => {
+		await observerReady(observer);
+		await proveDelivery(observer, directory);
+	});
+}
+
 describe('Discovery refresh integration', () => {
 	let rootDir: string;
 	const activeWatchers: Array<{ stop(): Promise<void> }> = [];
 	const activeServers: ToolAwareSequentialThinkingServer[] = [];
+	const awaitDelivery = (): Promise<void> => awaitNativeDelivery(join(rootDir, 'delivery-probe'));
 
 	beforeEach(async () => {
 		rootDir = await mkdtemp(join(tmpdir(), 'tracelattice-discovery-refresh-'));
@@ -131,6 +176,7 @@ describe('Discovery refresh integration', () => {
 		activeWatchers.push(watcher);
 		await withDeadline(watcher.ready(), 'skill watcher readiness');
 		await registry.refreshAsync();
+		await awaitDelivery();
 		const nextRefresh = observeRefreshes(registry);
 
 		// When/Then: add
@@ -165,6 +211,7 @@ describe('Discovery refresh integration', () => {
 		activeWatchers.push(watcher);
 		await withDeadline(watcher.ready(), 'malformed skill watcher readiness');
 		await registry.refreshAsync();
+		await awaitDelivery();
 		const refreshed = observeRefreshes(registry)(() =>
 			vi
 				.mocked(logger.warn)
@@ -196,6 +243,7 @@ describe('Discovery refresh integration', () => {
 		const watcher = new ToolWatcher(registry, undefined, [toolDir]);
 		activeWatchers.push(watcher);
 		await withDeadline(watcher.ready(), 'tool watcher readiness');
+		await awaitDelivery();
 		const nextRefresh = observeRefreshes(registry);
 
 		// When/Then: add
@@ -246,10 +294,7 @@ describe('Discovery refresh integration', () => {
 		const observedDir = join(rootDir, 'failing-observer');
 		await mkdir(observedDir);
 		const observer = watch(observedDir, { ignoreInitial: true });
-		await withDeadline(
-			new Promise<void>((resolve) => observer.once('ready', resolve)),
-			'observer ready'
-		);
+		await observerReady(observer);
 		const closeObserver = vi.spyOn(observer, 'close');
 		const failure = new Error('forced observer operation failure');
 
@@ -286,6 +331,7 @@ describe('Discovery refresh integration', () => {
 		const watcher = new SkillWatcher(registry, undefined, [skillDir]);
 		activeWatchers.push(watcher);
 		await withDeadline(watcher.ready(), 'stoppable watcher readiness');
+		await awaitDelivery();
 
 		// When
 		await writeFile(join(skillDir, 'before-stop.md'), skillDocument('before-stop', 'one'), 'utf8');
@@ -303,11 +349,9 @@ describe('Discovery refresh integration', () => {
 		expect(registry.has('before-stop')).toBe(true);
 
 		await withObserver(watch(skillDir, { ignoreInitial: true }), async (observer) => {
-			await withDeadline(
-				new Promise<void>((resolve) => observer.once('ready', resolve)),
-				'observer ready'
-			);
-			const observedAdd = waitForEvent(observer, 'add');
+			await observerReady(observer);
+			await proveDelivery(observer, skillDir);
+			const observedAdd = waitForAdd(observer, (path) => basename(path) === 'after-stop.md');
 			await writeFile(join(skillDir, 'after-stop.md'), skillDocument('after-stop', 'two'), 'utf8');
 			await withDeadline(observedAdd, 'post-stop filesystem event');
 			await new Promise<void>((resolve) => setImmediate(resolve));
@@ -341,6 +385,7 @@ describe('Discovery refresh integration', () => {
 		expect(toolRefreshDuringStartup).not.toHaveBeenCalled();
 		skillRefreshDuringStartup.mockRestore();
 		toolRefreshDuringStartup.mockRestore();
+		await awaitDelivery();
 
 		const nextSkillRefresh = observeRefreshes(server.skills);
 		const nextToolRefresh = observeRefreshes(server.tools);
@@ -404,6 +449,7 @@ describe('Discovery refresh integration', () => {
 			loadFromPersistence: false,
 		});
 		activeServers.push(server);
+		await awaitDelivery();
 		const warning = vi.spyOn(StructuredLogger.prototype, 'warn');
 		const skillRefreshed = observeRefreshes(server.skills)(() =>
 			warning.mock.calls.some(([message]) => message === 'Invalid skill discovery file')
@@ -520,7 +566,3 @@ describe('Discovery refresh integration', () => {
 		expect(server.tools.get('sequentialthinking_tools')?.description).not.toBe('filesystem');
 	});
 });
-
-async function waitForEvent(watcher: FSWatcher, event: 'add'): Promise<void> {
-	await once(watcher, event);
-}
