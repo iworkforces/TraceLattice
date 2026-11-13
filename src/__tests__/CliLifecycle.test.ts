@@ -3,12 +3,17 @@ import {
 	CLI_SHUTDOWN_DEADLINE_MS,
 	CliLifecycle,
 	createCliShutdownHandler,
+	serverStopBudgetMs,
 	stopWithin,
 	transportStopSliceMs,
 	type CliLifecycleClock,
 	type CliOwnedResource,
 } from '../CliLifecycle.js';
-import { CliShutdownTimeoutError, TransportStopTimeoutError } from '../errors.js';
+import {
+	CliShutdownTimeoutError,
+	ServerStopTimeoutError,
+	TransportStopTimeoutError,
+} from '../errors.js';
 
 class LifecycleFixtureError extends Error {
 	constructor(message: string) {
@@ -151,7 +156,7 @@ describe('CliLifecycle', () => {
 type ShutdownRigOptions = {
 	readonly deadlineMs: number;
 	readonly transportStop: (timeoutMs: number) => void | Promise<void>;
-	readonly serverStop?: () => void | Promise<void>;
+	readonly serverStop?: (timeoutMs: number) => void | Promise<void>;
 	readonly clock?: CliLifecycleClock;
 };
 
@@ -408,6 +413,59 @@ describe('CliLifecycle shutdown budget', () => {
 		// Then
 		expect(rig.exit).toHaveBeenCalledExactlyOnceWith(0);
 		expect(rig.reportFailure).not.toHaveBeenCalled();
+		expect(rig.server.stop).toHaveBeenCalledExactlyOnceWith(serverStopBudgetMs(100));
+	});
+
+	it.each([
+		{ totalMs: 30_000, budgetMs: 14_000 },
+		{ totalMs: 3_000, budgetMs: 1_200 },
+		{ totalMs: 40, budgetMs: 16 },
+		{ totalMs: 2, budgetMs: 1 },
+		{ totalMs: 1, budgetMs: 1 },
+	])(
+		'gives the server a $budgetMs ms budget of a $totalMs ms deadline',
+		({ totalMs, budgetMs }) => {
+			// Given / When / Then
+			expect(serverStopBudgetMs(totalMs)).toBe(budgetMs);
+		}
+	);
+
+	it('reports the typed error of a server that honors its budget before the total deadline', async () => {
+		// Given
+		useTimersOnly();
+		const rig = createShutdownRig({
+			deadlineMs: 100,
+			transportStop: (timeoutMs) =>
+				new Promise<void>((resolve) => {
+					setTimeout(resolve, timeoutMs);
+				}),
+			serverStop: (timeoutMs) =>
+				new Promise<void>((_resolve, reject) => {
+					setTimeout(
+						() => reject(new ServerStopTimeoutError('operations', timeoutMs, 1)),
+						timeoutMs
+					);
+				}),
+		});
+		const signal = rig.handler();
+
+		// When
+		await vi.advanceTimersByTimeAsync(50 + serverStopBudgetMs(100));
+		await signal;
+
+		// Then
+		const failure = rig.reportFailure.mock.calls[0]?.[0];
+		expect(aggregateErrors(failure)).toEqual([
+			expect.objectContaining({
+				code: 'SERVER_STOP_TIMEOUT',
+				phase: 'operations',
+				timeoutMs: serverStopBudgetMs(100),
+				pending: 1,
+			}),
+		]);
+		expect(failureCodes(failure)).not.toContain('CLI_SHUTDOWN_TIMEOUT');
+		expect(rig.exit).toHaveBeenCalledExactlyOnceWith(1);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it('aggregates a transport failure and a server failure and exits 1', async () => {

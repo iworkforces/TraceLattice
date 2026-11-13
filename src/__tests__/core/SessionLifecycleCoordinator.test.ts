@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { asSessionId } from '../../contracts/ids.js';
 import { SessionLifecycleCoordinator } from '../../core/SessionLifecycleCoordinator.js';
@@ -316,5 +316,385 @@ describe('SessionLifecycleCoordinator shutdown and atomic idle eviction', () => 
 		expect(() => coordinator.tryEvictIdleSessions([sessionA, sessionB], cleanup)).toThrow(failure);
 		expect(coordinator.phaseFor(sessionA)).toBe('eviction_failed');
 		expect(coordinator.phaseFor(sessionB)).toBe('eviction_failed');
+	});
+});
+
+function useTimersOnly(): void {
+	vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+}
+
+function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+	return promise.then(
+		() => null,
+		(error: unknown) => error
+	);
+}
+
+function aggregateErrors(failure: unknown): readonly unknown[] {
+	if (!(failure instanceof AggregateError)) throw new TypeError('Expected an aggregate failure');
+	return failure.errors;
+}
+
+describe('SessionLifecycleCoordinator bounded idle', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('waits for admitted work without a bound when no idle timeout is given', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const gate = deferred();
+		const held = coordinator.runOperation(asSessionId('unbounded'), async () => gate.promise);
+		const operation = vi.fn(async () => undefined);
+
+		// When
+		const stopping = coordinator.shutdown(operation);
+		await vi.advanceTimersByTimeAsync(60_000);
+
+		// Then
+		expect(operation).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+		expect(coordinator.globalPhase).toBe('shutting_down');
+		gate.resolve();
+		await held;
+		await expect(stopping).resolves.toBeUndefined();
+		expect(coordinator.globalPhase).toBe('stopped');
+	});
+
+	it('runs the operation at the bound and rejects with the operations timeout', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const gate = deferred();
+		const held = coordinator.runOperation(asSessionId('held'), async () => gate.promise);
+		const operation = vi.fn(async (_idle: unknown) => undefined);
+		const outcome = rejectionOf(coordinator.shutdown(operation, { idleTimeoutMs: 100 }));
+
+		// When
+		await vi.advanceTimersByTimeAsync(99);
+		const callsBeforeBound = operation.mock.calls.length;
+		await vi.advanceTimersByTimeAsync(1);
+
+		// Then
+		expect(callsBeforeBound).toBe(0);
+		expect(operation).toHaveBeenCalledExactlyOnceWith({
+			timedOut: true,
+			admissionClosedSettled: true,
+		});
+		expect(aggregateErrors(await outcome)).toEqual([
+			expect.objectContaining({
+				code: 'SERVER_STOP_TIMEOUT',
+				phase: 'operations',
+				timeoutMs: 100,
+				pending: 1,
+			}),
+		]);
+		expect(coordinator.globalPhase).toBe('shutdown_failed');
+		expect(vi.getTimerCount()).toBe(0);
+		gate.resolve();
+		await held;
+	});
+
+	it('counts a held session reset as pending maintenance', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const operationGate = deferred();
+		const resetGate = deferred();
+		const held = coordinator.runOperation(asSessionId('op'), async () => operationGate.promise);
+		const reset = coordinator.withSessionReset(asSessionId('reset'), async () => resetGate.promise);
+		const outcome = rejectionOf(
+			coordinator.shutdown(async () => undefined, { idleTimeoutMs: 100 })
+		);
+
+		// When
+		await vi.advanceTimersByTimeAsync(100);
+
+		// Then
+		expect(aggregateErrors(await outcome)).toEqual([
+			expect.objectContaining({ code: 'SERVER_STOP_TIMEOUT', pending: 2 }),
+		]);
+		operationGate.resolve();
+		resetGate.resolve();
+		await Promise.all([held, reset]);
+		expect(coordinator.hasMaintenance).toBe(false);
+	});
+
+	it('refuses the mutation of an operation abandoned at the bound', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const sessionId = asSessionId('abandoned');
+		const gate = deferred();
+		const mutation = vi.fn(() => 'mutated');
+		const held = rejectionOf(
+			coordinator.runOperation(sessionId, async () => {
+				await gate.promise;
+				return coordinator.runMutation(sessionId, mutation);
+			})
+		);
+		const outcome = rejectionOf(
+			coordinator.shutdown(async () => undefined, { idleTimeoutMs: 100 })
+		);
+		await vi.advanceTimersByTimeAsync(100);
+		await outcome;
+
+		// When
+		gate.resolve();
+
+		// Then
+		const failure = await held;
+		expect(failure).toBeInstanceOf(SessionLifecycleClosedError);
+		expect(failure).toMatchObject({ sessionId, phase: 'shutdown_failed' });
+		expect(mutation).not.toHaveBeenCalled();
+		expect(coordinator.isIdle(sessionId)).toBe(true);
+	});
+
+	it('refuses the same-session exclusive re-entry of an abandoned reset', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const sessionId = asSessionId('abandoned-reset');
+		const gate = deferred();
+		const inner = vi.fn(async () => undefined);
+		const reset = rejectionOf(
+			coordinator.withSessionReset(sessionId, async () => {
+				await gate.promise;
+				await coordinator.withSessionReset(sessionId, inner);
+			})
+		);
+		const outcome = rejectionOf(
+			coordinator.shutdown(async () => undefined, { idleTimeoutMs: 100 })
+		);
+		await vi.advanceTimersByTimeAsync(100);
+		await outcome;
+
+		// When
+		gate.resolve();
+
+		// Then
+		expect(await reset).toBeInstanceOf(SessionLifecycleClosedError);
+		expect(inner).not.toHaveBeenCalled();
+		expect(coordinator.hasMaintenance).toBe(false);
+	});
+
+	it('never starts a session exclusive that was still waiting for its session at the bound', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const sessionId = asSessionId('queued-reset');
+		const gate = deferred();
+		const resetCallback = vi.fn(async () => undefined);
+		const held = coordinator.runOperation(sessionId, async () => gate.promise);
+		const reset = rejectionOf(coordinator.withSessionReset(sessionId, resetCallback));
+		const outcome = rejectionOf(
+			coordinator.shutdown(async () => undefined, { idleTimeoutMs: 100 })
+		);
+		await vi.advanceTimersByTimeAsync(100);
+		await outcome;
+
+		// When
+		gate.resolve();
+		await held;
+
+		// Then
+		expect(await reset).toBeInstanceOf(SessionLifecycleClosedError);
+		expect(resetCallback).not.toHaveBeenCalled();
+		expect(coordinator.hasMaintenance).toBe(false);
+	});
+
+	it('stops cleanly and clears its timer when work finishes inside the bound', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const gate = deferred();
+		const held = coordinator.runOperation(asSessionId('quick'), async () => gate.promise);
+		const operation = vi.fn(async (_idle: unknown) => undefined);
+		const stopping = coordinator.shutdown(operation, { idleTimeoutMs: 100 });
+
+		// When
+		await vi.advanceTimersByTimeAsync(50);
+		gate.resolve();
+		await held;
+
+		// Then
+		await expect(stopping).resolves.toBeUndefined();
+		expect(operation).toHaveBeenCalledExactlyOnceWith({
+			timedOut: false,
+			admissionClosedSettled: true,
+		});
+		expect(coordinator.globalPhase).toBe('stopped');
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it.each([
+		{ label: 'an aggregate', flattened: true },
+		{ label: 'a single failure', flattened: false },
+	])('aggregates $label from the operation after the timeout error', async ({ flattened }) => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const gate = deferred();
+		const first = new Error('first cleanup failure');
+		const second = new Error('second cleanup failure');
+		const failure = flattened ? new AggregateError([first, second], 'cleanup') : first;
+		const held = coordinator.runOperation(asSessionId('failing'), async () => gate.promise);
+		const outcome = rejectionOf(
+			coordinator.shutdown(async () => Promise.reject(failure), { idleTimeoutMs: 100 })
+		);
+
+		// When
+		await vi.advanceTimersByTimeAsync(100);
+
+		// Then
+		expect(aggregateErrors(await outcome)).toEqual([
+			expect.objectContaining({ code: 'SERVER_STOP_TIMEOUT' }),
+			...(flattened ? [first, second] : [first]),
+		]);
+		expect(coordinator.globalPhase).toBe('shutdown_failed');
+		gate.resolve();
+		await held;
+	});
+});
+
+describe('SessionLifecycleCoordinator admission-closed callback', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('calls the callback once, synchronously, after admission closes', async () => {
+		// Given
+		const coordinator = new SessionLifecycleCoordinator();
+		const phases: string[] = [];
+		const onAdmissionClosed = vi.fn(async () => {
+			phases.push(coordinator.globalPhase);
+		});
+
+		// When
+		const first = coordinator.shutdown(async () => undefined, { onAdmissionClosed });
+		const second = coordinator.shutdown(async () => undefined, { onAdmissionClosed });
+
+		// Then
+		expect(phases).toEqual(['shutting_down']);
+		expect(onAdmissionClosed).toHaveBeenCalledOnce();
+		expect(second).toBe(first);
+		await expect(first).resolves.toBeUndefined();
+	});
+
+	it('does not call the callback when a global reset refuses the shutdown', async () => {
+		// Given
+		const coordinator = new SessionLifecycleCoordinator();
+		const gate = deferred();
+		const reset = coordinator.withGlobalReset(async () => gate.promise);
+		const onAdmissionClosed = vi.fn(async () => undefined);
+
+		// When
+		const refused = coordinator.shutdown(async () => undefined, { onAdmissionClosed });
+
+		// Then
+		await expect(refused).rejects.toBeInstanceOf(SessionLifecycleClosedError);
+		expect(onAdmissionClosed).not.toHaveBeenCalled();
+		gate.resolve();
+		await reset;
+	});
+
+	it('waits for the callback before the operation when no bound is given', async () => {
+		// Given
+		const coordinator = new SessionLifecycleCoordinator();
+		const callbackGate = deferred();
+		const operation = vi.fn(async (_idle: unknown) => undefined);
+
+		// When
+		const stopping = coordinator.shutdown(operation, {
+			onAdmissionClosed: () => callbackGate.promise,
+		});
+		await flushMicrotasks();
+
+		// Then
+		expect(operation).not.toHaveBeenCalled();
+		callbackGate.resolve();
+		await expect(stopping).resolves.toBeUndefined();
+		expect(operation).toHaveBeenCalledExactlyOnceWith({
+			timedOut: false,
+			admissionClosedSettled: true,
+		});
+	});
+
+	it('runs the operation without an operations error when only the callback is pending', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const operation = vi.fn(async (_idle: unknown) => undefined);
+		const stopping = coordinator.shutdown(operation, {
+			idleTimeoutMs: 100,
+			onAdmissionClosed: () => new Promise<void>(() => {}),
+		});
+
+		// When
+		await vi.advanceTimersByTimeAsync(100);
+
+		// Then
+		await expect(stopping).resolves.toBeUndefined();
+		expect(operation).toHaveBeenCalledExactlyOnceWith({
+			timedOut: true,
+			admissionClosedSettled: false,
+		});
+		expect(coordinator.globalPhase).toBe('stopped');
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('never leaves a rejected callback promise unhandled', async () => {
+		// Given
+		useTimersOnly();
+		const unhandledRejections: unknown[] = [];
+		const record = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on('unhandledRejection', record);
+		try {
+			const coordinator = new SessionLifecycleCoordinator();
+			const operation = vi.fn(async (_idle: unknown) => undefined);
+
+			// When
+			await coordinator.shutdown(operation, {
+				idleTimeoutMs: 100,
+				onAdmissionClosed: async () => Promise.reject(new Error('discovery teardown failed')),
+			});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			// Then
+			expect(unhandledRejections).toEqual([]);
+			expect(operation).toHaveBeenCalledExactlyOnceWith({
+				timedOut: false,
+				admissionClosedSettled: true,
+			});
+		} finally {
+			process.off('unhandledRejection', record);
+		}
+	});
+
+	it('returns one bounded settlement to every caller and runs one operation', async () => {
+		// Given
+		useTimersOnly();
+		const coordinator = new SessionLifecycleCoordinator();
+		const gate = deferred();
+		const held = coordinator.runOperation(asSessionId('shared'), async () => gate.promise);
+		const operation = vi.fn(async () => undefined);
+		const later = vi.fn(async () => undefined);
+
+		// When
+		const first = coordinator.shutdown(operation, { idleTimeoutMs: 100 });
+		const second = coordinator.shutdown(later, { idleTimeoutMs: 5 });
+		const outcome = rejectionOf(first);
+		await vi.advanceTimersByTimeAsync(100);
+
+		// Then
+		expect(second).toBe(first);
+		expect(aggregateErrors(await outcome)).toHaveLength(1);
+		expect(operation).toHaveBeenCalledOnce();
+		expect(later).not.toHaveBeenCalled();
+		gate.resolve();
+		await held;
 	});
 });
