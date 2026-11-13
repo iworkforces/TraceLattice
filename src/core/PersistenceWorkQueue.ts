@@ -406,6 +406,19 @@ export class PersistenceWorkQueue {
 	}
 
 	/**
+	 * Replaces the cause of the failure already retained for `work` without counting another
+	 * failed attempt, so its background retry state is unchanged.
+	 *
+	 * @param work - Previously selected work handle whose failure is retained.
+	 * @param cause - Settled outcome of the same backend call.
+	 */
+	public replaceFailureCause(work: PersistenceWork, cause: unknown): void {
+		const entry = this._currentEntry(work);
+		if (entry?.terminalFailure === undefined) return;
+		entry.terminalFailure = Object.freeze({ ...entry.terminalFailure, cause });
+	}
+
+	/**
 	 * Returns an immutable acceptance-ordered snapshot of current terminal failures.
 	 *
 	 * @param selectedTokens - Optional generation-token projection.
