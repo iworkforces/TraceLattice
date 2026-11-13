@@ -221,9 +221,13 @@ are YAML/JSON settings, not environment variables. There are no
 `TRACELATTICE_PERSISTENCE_MAX_RETRIES`, `TRACELATTICE_PERSISTENCE_MAX_PENDING_THOUGHTS_PER_SESSION`,
 or `TRACELATTICE_PERSISTENCE_WRITE_TIMEOUT` overrides.
 
-`persistenceWriteTimeout` is the deadline for each persistence backend write and, during `stop()`,
-for the `close()` of a server-owned backend. A write still pending at the deadline fails with
-`PERSISTENCE_WRITE_TIMEOUT` and is kept as a failed write, reported once through `persistenceError`.
+`persistenceWriteTimeout` is the deadline for each persistence backend write, for the `clearSession` or
+`clearAll` call of a session or global reset, and, during `stop()`, for the `close()` of a server-owned
+backend. A write still pending at the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` and is reported
+once through `persistenceError`; it is kept as a failed write unless a newer snapshot of the same
+branch, edges or summaries already replaced it, and the drain that sent it rejects either way. A reset
+whose clear misses the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` through the failed-reset path
+and leaves live state in place.
 At most one backend write is in flight: until the timed-out call settles, no other write is sent,
 drains, flushes and session barriers reject with `PERSISTENCE_WRITE_TIMEOUT`, and session and global
 resets fail without calling `clearSession` or `clearAll`. The call's real outcome is applied once, so
