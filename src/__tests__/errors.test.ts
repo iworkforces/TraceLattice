@@ -15,6 +15,7 @@ import {
 	PoolTerminatedError,
 	PersistenceCompatibilityError,
 	PersistenceUnavailableError,
+	ServerStopTimeoutError,
 	ValidationError,
 } from '../errors.js';
 import { asSessionId } from '../contracts/ids.js';
@@ -268,5 +269,24 @@ describe('Persistence startup errors', () => {
 		expect(unavailable.code).toBe('PERSISTENCE_UNAVAILABLE');
 		expect(compatibility.code).toBe('PERSISTENCE_COMPATIBILITY');
 		expect(unavailable.code).not.toBe(compatibility.code);
+	});
+});
+
+describe('ServerStopTimeoutError', () => {
+	it.each([
+		{ phase: 'operations' as const, timeoutMs: 4668, pending: 3 },
+		{ phase: 'flush' as const, timeoutMs: 4666, pending: 7 },
+		{ phase: 'discovery' as const, timeoutMs: 4668, pending: null },
+	])('carries the $phase phase, its deadline and its pending count', (expected) => {
+		// Given / When
+		const error = new ServerStopTimeoutError(expected.phase, expected.timeoutMs, expected.pending);
+
+		// Then
+		expect(error).toBeInstanceOf(SequentialThinkingError);
+		expect(error).toMatchObject({
+			name: 'ServerStopTimeoutError',
+			code: 'SERVER_STOP_TIMEOUT',
+			...expected,
+		});
 	});
 });

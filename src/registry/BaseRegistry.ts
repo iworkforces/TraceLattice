@@ -11,7 +11,7 @@
 
 import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { DiscoveryCache } from '../cache/DiscoveryCache.js';
 import { NullLogger } from '../logger/NullLogger.js';
@@ -434,8 +434,9 @@ export abstract class BaseRegistry<T extends { name: string }> {
 	}
 
 	private _retainDirectory(directory: string, scan: DiscoveryScan<T>): void {
+		const root = resolve(directory);
 		for (const [filePath, item] of scan.previousItemsByPath) {
-			if (dirname(filePath) === directory && !scan.claimedNames.has(item.name)) {
+			if (resolve(dirname(filePath)) === root && !scan.claimedNames.has(item.name)) {
 				scan.itemsByPath.set(filePath, item);
 				scan.claimedNames.add(item.name);
 			}

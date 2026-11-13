@@ -26,13 +26,33 @@ import type { ThoughtData } from './thought.js';
 /** Selects whether retained terminal failures are eligible for a generation. */
 export type PersistenceSelectionMode = 'explicit' | 'background';
 
+/** Clock and backoff that decide when a background generation may retry a retained failure. */
+export interface PersistenceRetrySchedule {
+	/** @returns Current time in milliseconds. */
+	now(): number;
+	/** @returns Milliseconds a background generation waits after `failures` terminal failures. */
+	backoffAfter(failures: number): number;
+}
+
+const BACKGROUND_RETRY_DISABLED: PersistenceRetrySchedule = Object.freeze({
+	now: () => 0,
+	backoffAfter: () => Number.POSITIVE_INFINITY,
+});
+
 type WorkKind = PersistenceWork['kind'];
 type WorkOf<K extends WorkKind> = Extract<PersistenceWork, { readonly kind: K }>;
+
+type RetryState = {
+	readonly failures: number;
+	readonly retryAfter: number;
+};
 
 type QueueEntry<K extends WorkKind> = {
 	readonly acceptedSequence: number;
 	readonly work: WorkOf<K>;
 	terminalFailure: PersistenceWorkFailure | undefined;
+	/** Set together with `terminalFailure`; dropped with the entry on success or discard. */
+	retry?: RetryState;
 };
 
 type ThoughtEntry = QueueEntry<'thought'>;
@@ -53,6 +73,8 @@ type Acceptance = {
  * Thought entries retain FIFO acceptance order. Auxiliary snapshots coalesce at
  * their stable coordinate and use versioned compare-and-set acknowledgement.
  * Generation state remains caller-owned in a `Set` passed to selection methods.
+ * A retained thought or backtrack failure holds every entry its session accepted after it,
+ * of every kind, until that write succeeds or the session is discarded.
  *
  * @example
  * ```ts
@@ -77,12 +99,18 @@ export class PersistenceWorkQueue {
 	private readonly _edgeVersions = new Map<SessionId, number>();
 	private readonly _summaryVersions = new Map<SessionId, number>();
 	private _nextSequence = 1;
+	private readonly _retrySchedule: PersistenceRetrySchedule;
 
-	public constructor(durableHistorySize = 10_000, persistBranches = true) {
+	public constructor(
+		durableHistorySize = 10_000,
+		persistBranches = true,
+		retrySchedule: PersistenceRetrySchedule = BACKGROUND_RETRY_DISABLED
+	) {
 		this._durableThoughtIdentities = new DurableThoughtIdentityIndex(
 			normalizeDurableHistoryRetention(durableHistorySize)
 		);
 		this._persistBranches = persistBranches;
+		this._retrySchedule = retrySchedule;
 	}
 
 	/**
@@ -270,7 +298,8 @@ export class PersistenceWorkQueue {
 	 * Reports whether a generation can select current work.
 	 *
 	 * @param selectedTokens - Tokens already selected by the caller's generation.
-	 * @param mode - Explicit generations re-arm failures; background generations skip them.
+	 * @param mode - Explicit generations re-arm failures at once; background generations retry
+	 * them only once the retry schedule's backoff has elapsed.
 	 * @param sessionId - Optional session projection.
 	 * @returns `true` when at least one current entry is eligible.
 	 */
@@ -286,7 +315,8 @@ export class PersistenceWorkQueue {
 	 * Selects the oldest currently eligible work and records it in the generation set.
 	 *
 	 * @param selectedTokens - Mutable set owned by the caller's generation.
-	 * @param mode - Explicit generations re-arm failures; background generations skip them.
+	 * @param mode - Explicit generations re-arm failures at once; background generations retry
+	 * them only once the retry schedule's backoff has elapsed.
 	 * @param sessionId - Optional session projection.
 	 * @returns The selected work, or `undefined` when no current entry is eligible.
 	 */
@@ -355,15 +385,45 @@ export class PersistenceWorkQueue {
 	}
 
 	/**
-	 * Attaches a terminal failure only when both work and failure still match current work.
+	 * Attaches a terminal failure only when both work and failure still match current work,
+	 * and schedules its next background retry.
 	 *
 	 * @param work - Previously selected work handle.
 	 * @param failure - Terminal backend failure attributed to that handle.
+	 * @returns `true` when this failure is the first one retained for the current work.
 	 */
-	public acknowledgeFailure(work: PersistenceWork, failure: PersistenceWorkFailure): void {
-		if (!this._matchesFailure(work, failure)) return;
+	public acknowledgeFailure(work: PersistenceWork, failure: PersistenceWorkFailure): boolean {
+		if (!this._matchesFailure(work, failure)) return false;
 		const entry = this._currentEntry(work);
-		if (entry !== undefined) entry.terminalFailure = Object.freeze({ ...failure });
+		if (entry === undefined) return false;
+		const failures = (entry.retry?.failures ?? 0) + 1;
+		entry.terminalFailure = Object.freeze({ ...failure });
+		entry.retry = {
+			failures,
+			retryAfter: this._retrySchedule.now() + this._retrySchedule.backoffAfter(failures),
+		};
+		return failures === 1;
+	}
+
+	/**
+	 * @param work - Previously selected work handle.
+	 * @returns Whether `work` is still current and holds a retained terminal failure.
+	 */
+	public isRetainedFailure(work: PersistenceWork): boolean {
+		return this._currentEntry(work)?.terminalFailure !== undefined;
+	}
+
+	/**
+	 * Replaces the cause of the failure already retained for `work` without counting another
+	 * failed attempt, so its background retry state is unchanged.
+	 *
+	 * @param work - Previously selected work handle whose failure is retained.
+	 * @param cause - Settled outcome of the same backend call.
+	 */
+	public replaceFailureCause(work: PersistenceWork, cause: unknown): void {
+		const entry = this._currentEntry(work);
+		if (entry?.terminalFailure === undefined) return;
+		entry.terminalFailure = Object.freeze({ ...entry.terminalFailure, cause });
 	}
 
 	/**
@@ -432,6 +492,21 @@ export class PersistenceWorkQueue {
 	/** @returns Whether current retained work for a session owns a terminal failure. */
 	public hasSessionTerminalFailure(sessionId: SessionId): boolean {
 		return this.currentFailures(undefined, sessionId).length > 0;
+	}
+
+	/** @returns Number of sessions whose later writes are held behind a retained failure. */
+	public get blockedSessionCount(): number {
+		return this._sessionHolds().size;
+	}
+
+	/**
+	 * @param sessionId - Session whose oldest retained thought or backtrack failure is read.
+	 * @returns The failure that holds the session's later writes, or `undefined`.
+	 */
+	public blockingFailure(sessionId: SessionId): PersistenceWorkFailure | undefined {
+		return this._thoughts.find(
+			(entry) => entry.work.sessionId === sessionId && entry.terminalFailure !== undefined
+		)?.terminalFailure;
 	}
 
 	/**
@@ -537,22 +612,41 @@ export class PersistenceWorkQueue {
 		mode: PersistenceSelectionMode,
 		sessionId?: SessionId
 	): AnyQueueEntry | undefined {
+		const holds = this._sessionHolds();
+		const now = this._retrySchedule.now();
 		let oldest: AnyQueueEntry | undefined;
 		for (const entry of this._entries()) {
 			if (selectedTokens.has(entry.work.token)) continue;
 			if (sessionId !== undefined && entry.work.sessionId !== sessionId) continue;
-			if (!this._modeAllows(mode, entry.terminalFailure !== undefined)) continue;
+			if (this._isHeld(entry, holds)) continue;
+			if (!this._modeAllows(mode, entry, now)) continue;
 			if (oldest === undefined || entry.acceptedSequence < oldest.acceptedSequence) oldest = entry;
 		}
 		return oldest;
 	}
 
-	private _modeAllows(mode: PersistenceSelectionMode, hasTerminalFailure: boolean): boolean {
+	/** @returns Accepted sequence of each session's oldest retained thought or backtrack failure. */
+	private _sessionHolds(): Map<SessionId, number> {
+		const holds = new Map<SessionId, number>();
+		for (const entry of this._thoughts) {
+			if (entry.terminalFailure !== undefined && !holds.has(entry.work.sessionId)) {
+				holds.set(entry.work.sessionId, entry.acceptedSequence);
+			}
+		}
+		return holds;
+	}
+
+	private _isHeld(entry: AnyQueueEntry, holds: ReadonlyMap<SessionId, number>): boolean {
+		const hold = holds.get(entry.work.sessionId);
+		return hold !== undefined && entry.acceptedSequence > hold;
+	}
+
+	private _modeAllows(mode: PersistenceSelectionMode, entry: AnyQueueEntry, now: number): boolean {
 		switch (mode) {
 			case 'explicit':
 				return true;
 			case 'background':
-				return !hasTerminalFailure;
+				return entry.retry === undefined || entry.retry.retryAfter <= now;
 			default:
 				return assertNever(mode);
 		}

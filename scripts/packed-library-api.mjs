@@ -20,7 +20,39 @@ assert.equal(typeof PublicApi.ToolAwareSequentialThinkingServer, 'function');
 assert.equal(typeof PublicApi.createServer, 'function');
 assert.equal(typeof PublicApi.initializeServer, 'function');
 
+const rootErrorSubclasses = [
+  'TransportStopTimeoutError',
+  'PersistenceWriteTimeoutError',
+  'PersistenceDrainError',
+  'SessionLifecycleClosedError',
+  'ServerStopTimeoutError',
+];
+for (const name of ['SequentialThinkingError', 'isErrorCode', ...rootErrorSubclasses]) {
+  assert.equal(typeof PublicApi[name], 'function', \`root export missing: \${name}\`);
+}
+for (const name of rootErrorSubclasses) {
+  assert.equal(
+    PublicApi[name].prototype instanceof PublicApi.SequentialThinkingError,
+    true,
+    \`root error does not extend SequentialThinkingError: \${name}\`
+  );
+}
+assert.equal(typeof PublicApi.ERROR_CODES, 'object');
+assert.equal(PublicApi.ERROR_CODES.TRANSPORT_STOP_TIMEOUT, 'TRANSPORT_STOP_TIMEOUT');
+const stopTimeout = new PublicApi.TransportStopTimeoutError(25, 1);
+assert.equal(stopTimeout.code, PublicApi.ERROR_CODES.TRANSPORT_STOP_TIMEOUT);
+assert.equal(
+  PublicApi.isErrorCode(stopTimeout, PublicApi.ERROR_CODES.TRANSPORT_STOP_TIMEOUT),
+  true
+);
+assert.equal(PublicApi.isErrorCode(stopTimeout, PublicApi.ERROR_CODES.PERSISTENCE_DRAIN), false);
+const serverStopTimeout = new PublicApi.ServerStopTimeoutError('flush', 25, 2);
+assert.equal(serverStopTimeout.code, PublicApi.ERROR_CODES.SERVER_STOP_TIMEOUT);
+assert.equal(serverStopTimeout.phase, 'flush');
+assert.equal(serverStopTimeout.pending, 2);
+
 for (const name of [
+  'CliShutdownTimeoutError',
   'BaseTransport',
   'Container',
   'ServerConfig',
@@ -245,12 +277,26 @@ if (primaryFailure) throw primaryFailure;
 `;
 
 const declarationConsumer = `import {
+  ERROR_CODES,
   HttpTransport,
+  PersistenceDrainError,
+  PersistenceWriteTimeoutError,
+  SequentialThinkingError,
+  ServerStopTimeoutError,
+  SessionLifecycleClosedError,
   ToolAwareSequentialThinkingServer,
+  TransportStopTimeoutError,
   createHttpTransport,
   createServer,
   initializeServer,
+  isErrorCode,
+  type ErrorCode,
   type HttpTransportOptions,
+  type PersistenceCallOutcome,
+  type PersistenceTimedOutCall,
+  type PersistenceWorkFailure,
+  type ServerStopPhase,
+  type SessionLifecycleClosedPhase,
   type IToolAwareSequentialThinkingServer,
   type ITransport,
   type TransportKind,
@@ -379,6 +425,39 @@ const classSessionRequired: {} extends Pick<ClassProcessInput, 'session_id'> ? f
 const exactInterfaceGetBranches: Exact<InterfaceGetBranchesParameters, [sessionId: string]> = true;
 const exactClassGetBranches: Exact<ClassGetBranchesParameters, [sessionId: string]> = true;
 
+function classifyRootError(caught: unknown): readonly unknown[] {
+  if (caught instanceof TransportStopTimeoutError) {
+    const base: SequentialThinkingError = caught;
+    const code: ErrorCode = caught.code;
+    const abandoned: number | null = caught.abandonedRequests;
+    return [base, code, caught.timeoutMs, abandoned];
+  }
+  if (caught instanceof PersistenceWriteTimeoutError) {
+    const call: PersistenceTimedOutCall = caught.call;
+    const lateOutcome: Promise<PersistenceCallOutcome> = caught.lateOutcome;
+    return [call, lateOutcome, caught.timeoutMs];
+  }
+  if (caught instanceof PersistenceDrainError) {
+    const failures: readonly PersistenceWorkFailure[] = caught.failures;
+    return [failures];
+  }
+  if (caught instanceof SessionLifecycleClosedError) {
+    const phase: SessionLifecycleClosedPhase = caught.phase;
+    const sessionId: SessionId | undefined = caught.sessionId;
+    return [phase, sessionId];
+  }
+  if (caught instanceof ServerStopTimeoutError) {
+    const phase: ServerStopPhase = caught.phase;
+    const pending: number | null = caught.pending;
+    return [phase, pending, caught.timeoutMs];
+  }
+  if (isErrorCode(caught, ERROR_CODES.TRANSPORT_STOP_TIMEOUT)) {
+    const narrowed: SequentialThinkingError & { readonly code: 'TRANSPORT_STOP_TIMEOUT' } = caught;
+    return [narrowed];
+  }
+  return [];
+}
+
 void classTransport;
 void kind;
 void serverClass;
@@ -390,6 +469,7 @@ void interfaceSessionRequired;
 void classSessionRequired;
 void exactInterfaceGetBranches;
 void exactClassGetBranches;
+void classifyRootError;
 `;
 
 async function runCommand(command, args, options) {

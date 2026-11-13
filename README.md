@@ -114,17 +114,17 @@ Supported environment variables override values from configuration files. The de
 `ServerConfig` when no file or environment override is present; `.example.env` contains explicit example
 overrides, not another set of defaults.
 
-| Variable                                | Default      | Description                                 |
-| --------------------------------------- | ------------ | ------------------------------------------- |
-| `TRACELATTICE_CONFIG`                   | search paths | Explicit YAML or JSON configuration file    |
-| `TRACELATTICE_MAX_HISTORY_SIZE`         | `10000`      | Maximum thoughts to keep in history         |
-| `TRACELATTICE_MAX_BRANCHES`             | `50`         | Maximum number of branches                  |
-| `TRACELATTICE_MAX_BRANCH_SIZE`          | `100`        | Maximum size of each branch                 |
-| `TRACELATTICE_LOG_LEVEL`                | `info`       | Log level: `debug`, `info`, `warn`, `error` |
+| Variable                                | Default      | Description                                                                                   |
+| --------------------------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| `TRACELATTICE_CONFIG`                   | search paths | Explicit YAML or JSON configuration file                                                      |
+| `TRACELATTICE_MAX_HISTORY_SIZE`         | `10000`      | Maximum thoughts to keep in history                                                           |
+| `TRACELATTICE_MAX_BRANCHES`             | `50`         | Maximum number of branches                                                                    |
+| `TRACELATTICE_MAX_BRANCH_SIZE`          | `100`        | Maximum size of each branch                                                                   |
+| `TRACELATTICE_LOG_LEVEL`                | `info`       | Log level: `debug`, `info`, `warn`, `error`                                                   |
 | `TRACELATTICE_PRETTY_LOG`               | `true`       | Only the literal `false` disables pretty logging; other values do not override a file setting |
-| `TRACELATTICE_SESSION_MAX_PER_OWNER`    | `50`         | Maximum isolated sessions per owner         |
-| `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS`   | `60000`      | Suspended tool-call token TTL in ms         |
-| `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | `60000`      | Expired suspension cleanup interval in ms   |
+| `TRACELATTICE_SESSION_MAX_PER_OWNER`    | `50`         | Maximum isolated sessions per owner                                                           |
+| `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS`   | `60000`      | Suspended tool-call token TTL in ms                                                           |
+| `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | `60000`      | Expired suspension cleanup interval in ms                                                     |
 
 ### Config files
 
@@ -152,6 +152,7 @@ persistenceBufferSize: 7 # example file-only override; default 100
 persistenceFlushInterval: 750 # milliseconds, file-only; default 1000
 persistenceMaxRetries: 2 # example file-only override; default 3
 persistenceMaxPendingThoughtsPerSession: 500 # example file-only override; default and maximum 10000
+persistenceWriteTimeout: 5000 # milliseconds, file-only; default 5000, maximum 2147483647
 features:
   dagEdges: true
   reasoningStrategy: sequential # sequential or tot
@@ -181,28 +182,29 @@ All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `f
 
 ### Transport
 
-| Variable                                | Default                 | Description                                  |
-| --------------------------------------- | ----------------------- | -------------------------------------------- |
-| `TRACELATTICE_TRANSPORT_TYPE`           | `stdio`                 | Transport: `stdio` or `streamable-http`      |
-| `TRACELATTICE_STREAMABLE_HTTP_PORT`     | `9007`                  | Port for Streamable HTTP server              |
-| `TRACELATTICE_STREAMABLE_HTTP_HOST`     | `localhost`             | Host for Streamable HTTP server              |
-| `TRACELATTICE_STREAMABLE_HTTP_STATEFUL` | `true`                  | Enable stateful session tracking             |
-| `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS` | unset | Maximum retained transport sessions |
-| `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS` | unset | Transport-session idle timeout in milliseconds |
-| `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` | unset | Idle-session sweep interval in milliseconds |
-| `TRACELATTICE_CORS_ORIGIN`              | `*`                     | CORS origin                                  |
-| `TRACELATTICE_ENABLE_CORS`              | `true`                  | Enable CORS preflight                        |
-| `TRACELATTICE_ALLOWED_HOSTS`            | derived from bound host | Comma-separated allowed `Host` header values |
+| Variable                                                 | Default                 | Description                                                 |
+| -------------------------------------------------------- | ----------------------- | ----------------------------------------------------------- |
+| `TRACELATTICE_TRANSPORT_TYPE`                            | `stdio`                 | Transport: `stdio` or `streamable-http`                     |
+| `TRACELATTICE_STREAMABLE_HTTP_PORT`                      | `9007`                  | Port for Streamable HTTP server                             |
+| `TRACELATTICE_STREAMABLE_HTTP_HOST`                      | `localhost`             | Host for Streamable HTTP server                             |
+| `TRACELATTICE_STREAMABLE_HTTP_STATEFUL`                  | `true`                  | Enable stateful session tracking                            |
+| `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS`              | unset                   | Maximum retained transport sessions                         |
+| `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS`   | unset                   | Transport-session idle timeout in milliseconds              |
+| `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` | unset                   | Idle-session sweep interval in milliseconds                 |
+| `TRACELATTICE_CORS_ORIGIN`                               | `*`                     | CORS origin                                                 |
+| `TRACELATTICE_ENABLE_CORS`                               | `true`                  | Enable CORS preflight                                       |
+| `TRACELATTICE_ALLOWED_HOSTS`                             | derived from bound host | Comma-separated allowed `Host` header values                |
+| `TRACELATTICE_SHUTDOWN_DEADLINE_MS`                      | `30000`                 | Total CLI shutdown budget in ms (stdio and Streamable HTTP) |
 
 ### Skill discovery
 
-| Variable                                | Default                                | Description                                             |
-| --------------------------------------- | -------------------------------------- | ------------------------------------------------------- |
-| `TRACELATTICE_SKILL_DIRS`               | `.claude/skills:<home>/.claude/skills:.agents/skills:<home>/.agents/skills` | Colon-separated skill directories |
-| `TRACELATTICE_TOOL_DIRS`                | `.claude/tools:<home>/.claude/tools`   | Colon-separated tool directories                        |
-| `TRACELATTICE_DISCOVERY_CACHE_TTL`      | `300`                                  | Discovery cache TTL in seconds; stored internally as ms |
-| `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | `100`                                  | Discovery cache max entries                             |
-| `TRACELATTICE_WATCHER_VERBOSE`          | unset                                  | Log skill watcher events when set to `true`             |
+| Variable                                | Default                                                                     | Description                                             |
+| --------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `TRACELATTICE_SKILL_DIRS`               | `.claude/skills:<home>/.claude/skills:.agents/skills:<home>/.agents/skills` | Colon-separated skill directories                       |
+| `TRACELATTICE_TOOL_DIRS`                | `.claude/tools:<home>/.claude/tools`                                        | Colon-separated tool directories                        |
+| `TRACELATTICE_DISCOVERY_CACHE_TTL`      | `300`                                                                       | Discovery cache TTL in seconds; stored internally as ms |
+| `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | `100`                                                                       | Discovery cache max entries                             |
+| `TRACELATTICE_WATCHER_VERBOSE`          | unset                                                                       | Log skill watcher events when set to `true`             |
 
 The default skill paths include project-local `.claude/skills` and `.agents/skills` plus both paths
 under the user's home directory. The default tool paths include only `.claude/tools` and its home
@@ -212,17 +214,52 @@ environment value is not expanded by `ConfigLoader`. `TRACELATTICE_DISCOVERY_CAC
 variables ending in `_MS` and the corresponding YAML fields use milliseconds.
 
 `persistenceBufferSize` (default 100 thoughts), `persistenceFlushInterval` (default 1000 ms),
-`persistenceMaxRetries` (default 3), and `persistenceMaxPendingThoughtsPerSession` (default 10000,
-allowed 1 to 10000) are YAML/JSON settings, not environment variables. There are no
+`persistenceMaxRetries` (default 3), `persistenceMaxPendingThoughtsPerSession` (default 10000,
+allowed 1 to 10000), and `persistenceWriteTimeout` (default 5000 ms, above 0 and at most 2147483647)
+are YAML/JSON settings, not environment variables. There are no
 `TRACELATTICE_PERSISTENCE_BUFFER_SIZE`, `TRACELATTICE_PERSISTENCE_FLUSH_INTERVAL`,
-`TRACELATTICE_PERSISTENCE_MAX_RETRIES`, or `TRACELATTICE_PERSISTENCE_MAX_PENDING_THOUGHTS_PER_SESSION`
-overrides.
+`TRACELATTICE_PERSISTENCE_MAX_RETRIES`, `TRACELATTICE_PERSISTENCE_MAX_PENDING_THOUGHTS_PER_SESSION`,
+or `TRACELATTICE_PERSISTENCE_WRITE_TIMEOUT` overrides.
+
+`persistenceWriteTimeout` is the deadline for each persistence backend write, for the `clearSession` or
+`clearAll` call of a session or global reset, and, during `stop()`, for the `close()` of a server-owned
+backend. A write still pending at the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` and is reported
+once through `persistenceError`; it is kept as a failed write unless a newer snapshot of the same
+branch, edges or summaries already replaced it, and the drain that sent it rejects either way. A timer
+retry of that failed write that times out again is logged but not reported again. A reset whose clear
+misses the deadline fails with `PERSISTENCE_WRITE_TIMEOUT` through the failed-reset path and leaves
+live state in place.
+Writes reach the backend one at a time. No write is sent while a reset's clear runs, and resets of
+different sessions clear one at a time; a clear can still start while a write of another session is
+in flight. A timed-out write or clear keeps running: until
+it settles, no other call is sent, drains, flushes and session barriers reject with the
+`PERSISTENCE_WRITE_TIMEOUT` of the oldest pending call, and session and global resets fail without
+calling `clearSession` or `clearAll`, so retrying a reset never sends a second clear. `drainSession`
+rejects only for a session that still has unsaved writes or owns a pending call; `clearAll` belongs to
+every session. A timed-out write's real outcome is applied once, so a late success is never sent again
+and a late failure stays retained. A timed-out clear's late outcome does not change the reset's
+result: the reset stays failed and a retry clears again. Background draining resumes on the next flush
+tick. A close that misses the deadline is one of the failures `stop()` rejects with;
+an injected backend is still never closed. A timer cannot interrupt the synchronous SQLite driver,
+so the deadline only takes effect for asynchronous backends such as File or an injected backend.
+Size it for shutdown. `stop(timeoutMs)` splits its budget using one start time: the buffer flush
+and the owned-backend close each get `min(persistenceWriteTimeout, floor(timeoutMs / 3))`, and the
+wait for admitted requests, resets and the watcher teardown gets the rest. The CLI passes 14000 ms
+at the default 30000 ms deadline, which at the default 5000 ms timeout is 4668 ms of waiting,
+4666 ms of flush and 4666 ms of close. A wait that ends early leaves its unused time to the flush.
+A longer timeout no longer stretches shutdown: each phase
+stops at its own deadline. `stop()` with no argument keeps the unbounded wait and flush. A
+`timeoutMs` that is not above 0 and at most 2147483647 rejects with a `RangeError` before anything
+changes.
 
 `persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
 unacknowledged, counting writes that failed terminally. At the limit a thought is rejected with
 `PERSISTENCE_BACKLOG_FULL` before any history, branch, edge, outcome or suspension state changes, so
-the same call can be retried with the same thought id. Other sessions are unaffected. Each rejection
-also retries the retained failures in the background, so a retry succeeds once the backend is back.
+the same call can be retried with the same thought id. Other sessions are unaffected. A thought write
+that fails terminally holds every later write of its session until it succeeds or the session is
+reset, so durable history keeps accepted order. Each rejection retries the retained failures at once,
+and timer and size-triggered drains retry them on a backoff capped at one minute, so the backlog clears
+once the backend is back.
 
 ## Transports
 
@@ -235,11 +272,13 @@ Set `TRACELATTICE_TRANSPORT_TYPE` to pick one:
 
 The Streamable HTTP endpoint defaults to `POST /mcp` for JSON-RPC requests and supports stateful sessions via the `Mcp-Session-Id` header. `GET /mcp` is not allowed. The library also exposes `HttpTransport` for stateless JSON-RPC over HTTP, but the CLI does not select it with `TRACELATTICE_TRANSPORT_TYPE`.
 
-Streamable HTTP also serves `GET /health` (liveness) and `GET /ready` (readiness). Both answer after Host validation and the shutting-down 503 but ahead of the per-client rate limiter, so an orchestrator polling them neither spends nor is rejected by the client budget. They still apply CORS origin validation and headers. With persistence disabled, `/ready` is `ok` with no components. With persistence enabled it probes the backend under a one second deadline: concurrent polls share one probe, a probe that timed out is joined until it settles, and a settled result is reused for one second. `/ready` answers 503 when the probe fails or times out, or when persistence is globally quarantined after a failed global reset. Otherwise it answers 200 and lists the quarantined session count, retained write failure count and pending thought count in the `persistenceBacklog` component details. Those counts do not make the instance unready, because nothing retries retained failures until an explicit drain.
+Streamable HTTP also serves `GET /health` (liveness) and `GET /ready` (readiness). Both answer after Host validation and the shutting-down 503 but ahead of the per-client rate limiter, so an orchestrator polling them neither spends nor is rejected by the client budget. They still apply CORS origin validation and headers. With persistence disabled, `/ready` is `ok` with no components. With persistence enabled it probes the backend under a one second deadline: concurrent polls share one probe, a probe that timed out is joined until it settles, and a settled result is reused for one second. `/ready` answers 503 when the probe fails or times out, or when persistence is globally quarantined after a failed global reset. Otherwise it answers 200 and lists the quarantined session count, blocked session count, retained write failure count and pending thought count in the `persistenceBacklog` component details. A blocked session has later writes held behind a failed thought write. Those counts do not make the instance unready, because timer drains keep retrying retained failures on a capped backoff.
 
 Set all three transport-session retention variables or leave all three unset. Each must be a positive safe integer; the two timing values use milliseconds. With none set, transport sessions remain unbounded and live until shutdown. Retention settings are rejected with `TRACELATTICE_STREAMABLE_HTTP_STATEFUL=false`. At capacity, a request that would create a new session receives HTTP 503 with JSON-RPC code `-32000`. After an idle session is swept, a request using its header receives HTTP 404 with code `-32001`; the client must re-initialize without the old `Mcp-Session-Id`. Sweeps skip sessions with accepted POSTs still in flight and don't change thought sessions (`session_id`), their history, ownership, or TTL handling.
 
 In Streamable HTTP mode, the port and retention values accept only unsigned decimal integers without leading zeros (except `0`), signs, whitespace, or trailing characters, and must be safe integers. `TRACELATTICE_STREAMABLE_HTTP_PORT` accepts 0 through 65535 and defaults to 9007. `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` must be at most 2147483647, the largest timer delay Node and Bun honor. Invalid values, a partial retention set, or an unknown `TRACELATTICE_TRANSPORT_TYPE` stop CLI startup with exit code 1. Stdio ignores HTTP-only variables.
+
+`TRACELATTICE_SHUTDOWN_DEADLINE_MS` is parsed for stdio and Streamable HTTP alike. It accepts a positive safe integer of at most 2147483647; zero, a malformed value, an empty string, or a larger value stops CLI startup with exit code 1 after stopping the already initialized server. On SIGINT, SIGTERM, or stdin end (stdio) the CLI gives the transport half of the budget as its stop timeout, then always stops the server with a fixed budget: the deadline minus that half and minus a reserve of a tenth of the deadline (at most 1000 ms), so 14000 ms at the default 30000, even when the transport stopped at once. The server splits it into waiting, flush and close phases as described under `persistenceWriteTimeout`; the flush drains buffered writes and the close releases the File backend's writer lock. A phase that runs past its deadline is reported with a typed error. `SERVER_STOP_TIMEOUT` with `phase` `operations` means an admitted request or reset was still running; it is abandoned and can no longer change sessions or queue writes. `phase` `discovery` means the watcher stops or an accepted discovery refresh were still running. `phase` `flush` means writes were still queued, and no further write is sent. A close past its deadline is `PERSISTENCE_WRITE_TIMEOUT`. The flush and the close still run after an operations or discovery overrun, so writes already accepted from other sessions are saved and the lock is released, and the CLI exits with code 1 and those errors before the total deadline. A transport still waiting on an accepted request at that point is abandoned with a `TRANSPORT_STOP_TIMEOUT` failure. Every failure is reported and exits with code 1; a server stop that still outlives the total budget fails with `CLI_SHUTDOWN_TIMEOUT` at the deadline. A clean stop exits with code 0. Set the budget below your process supervisor's kill timeout.
 
 ### Session model
 
@@ -278,7 +317,7 @@ export async function startHttpTransport(mcpServer: McpServer): Promise<ITranspo
 }
 ```
 
-Call and await `transport.stop()` during application shutdown.
+Call and await `transport.stop(timeout)` during application shutdown. It joins accepted requests for up to `timeout` milliseconds (default 30000). At the timeout it force-closes connections and settles from its own timer: it rejects with an error whose `code` is `TRANSPORT_STOP_TIMEOUT`, carrying `timeoutMs` and `abandonedRequests`, while accepted requests are still running, and resolves otherwise. A later `stop()` call starts a new bounded join. The package root also exports the typed errors its public API rejects with (`SequentialThinkingError`, `TransportStopTimeoutError`, `PersistenceWriteTimeoutError`, `PersistenceDrainError`, `SessionLifecycleClosedError`, `ServerStopTimeoutError`), plus `ERROR_CODES`, `isErrorCode`, and the `ErrorCode` and `ServerStopPhase` types. Test a rejection with `error instanceof TransportStopTimeoutError`, or compare `error.code` with `ERROR_CODES.TRANSPORT_STOP_TIMEOUT` (or call `isErrorCode(error, ERROR_CODES.TRANSPORT_STOP_TIMEOUT)`).
 
 ## Current v2 contract
 

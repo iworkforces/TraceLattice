@@ -36,14 +36,28 @@ import type {
 import type { SchemaOutput } from '../schema.js';
 import type * as PublicApi from '../lib.js';
 import {
+	ERROR_CODES,
 	HttpTransport,
+	PersistenceDrainError,
+	PersistenceWriteTimeoutError,
+	ServerStopTimeoutError,
+	SessionLifecycleClosedError,
 	ToolAwareSequentialThinkingServer,
+	TransportStopTimeoutError,
 	createHttpTransport,
 	createServer,
 	initializeServer,
+	isErrorCode,
+	type ErrorCode,
 	type HttpTransportOptions,
 	type IToolAwareSequentialThinkingServer,
 	type ITransport,
+	type PersistenceCallOutcome,
+	type PersistenceTimedOutCall,
+	type PersistenceWorkFailure,
+	type SequentialThinkingError,
+	type ServerStopPhase,
+	type SessionLifecycleClosedPhase,
 	type TransportKind,
 	type TransportOptions,
 } from '../lib.js';
@@ -223,12 +237,50 @@ const _exactInterfaceDiscoveryRefresh: _Exact<
 const _exactClassDiscoveryRefresh: _Exact<_ClassDiscoveryRefresh, _ExpectedDiscoveryRefresh> = true;
 
 type _ForbiddenRootExports = Extract<
-	'Container' | 'ServerConfig' | 'ToolRegistry' | 'SkillRegistry',
+	'Container' | 'ServerConfig' | 'ToolRegistry' | 'SkillRegistry' | 'CliShutdownTimeoutError',
 	keyof typeof PublicApi
 >;
 type _AssertNever<T extends never> = T;
 type _NoForbiddenRootExports = _AssertNever<_ForbiddenRootExports>;
 const _noForbiddenRootExports: [_NoForbiddenRootExports] extends [never] ? true : false = true;
+
+// ─── 6. Package-root error API ─────────────────────────────────────────────
+//
+// Library callers narrow rejections from stop(), resetSession() and resetAll()
+// through the root exports alone, and every field type they read is nameable.
+
+function _classifyRootError(caught: unknown): readonly unknown[] {
+	if (caught instanceof TransportStopTimeoutError) {
+		const base: SequentialThinkingError = caught;
+		const code: ErrorCode = caught.code;
+		const abandoned: number | null = caught.abandonedRequests;
+		return [base, code, caught.timeoutMs, abandoned];
+	}
+	if (caught instanceof PersistenceWriteTimeoutError) {
+		const call: PersistenceTimedOutCall = caught.call;
+		const lateOutcome: Promise<PersistenceCallOutcome> = caught.lateOutcome;
+		return [call, lateOutcome, caught.timeoutMs];
+	}
+	if (caught instanceof PersistenceDrainError) {
+		const failures: readonly PersistenceWorkFailure[] = caught.failures;
+		return [failures];
+	}
+	if (caught instanceof SessionLifecycleClosedError) {
+		const phase: SessionLifecycleClosedPhase = caught.phase;
+		const sessionId: SessionId | undefined = caught.sessionId;
+		return [phase, sessionId];
+	}
+	if (caught instanceof ServerStopTimeoutError) {
+		const phase: ServerStopPhase = caught.phase;
+		const pending: number | null = caught.pending;
+		return [phase, pending, caught.timeoutMs];
+	}
+	if (isErrorCode(caught, ERROR_CODES.TRANSPORT_STOP_TIMEOUT)) {
+		const narrowed: SequentialThinkingError & { readonly code: 'TRANSPORT_STOP_TIMEOUT' } = caught;
+		return [narrowed];
+	}
+	return [];
+}
 
 void _classTransport;
 void _factoryTransport;
@@ -239,3 +291,4 @@ void _serverInitializer;
 void _exactInterfaceDiscoveryRefresh;
 void _exactClassDiscoveryRefresh;
 void _noForbiddenRootExports;
+void _classifyRootError;

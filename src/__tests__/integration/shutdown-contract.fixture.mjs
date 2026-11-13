@@ -83,37 +83,53 @@ function cleanConfig(ServerConfig, dataDir) {
 	});
 }
 
-async function runDeadline() {
+const DEADLINE_MS = 40;
+
+function flattenFailures(error) {
+	if (!(error instanceof AggregateError)) return [error];
+	return error.errors.flatMap(flattenFailures);
+}
+
+function describeFailure(error) {
+	return {
+		name: error.name,
+		code: error.code,
+		timeoutMs: error.timeoutMs,
+		abandonedRequests: error.abandonedRequests,
+	};
+}
+
+async function runStuckTransport(holdServerStop) {
 	const { CliLifecycle, createCliShutdownHandler } = await import('../../../dist/CliLifecycle.js');
 	const transportGate = deferred();
-	const serverStopped = deferred();
+	const serverGate = deferred();
 	let transportStops = 0;
 	let serverStops = 0;
+	let transportTimeoutArgument = null;
 	let reportCount = 0;
-	let reportedError;
+	let causes = [];
 	const exits = [];
 	const lifecycle = new CliLifecycle(
 		{
 			stop: async () => {
 				serverStops++;
-				serverStopped.resolve();
+				if (holdServerStop) await serverGate.promise;
 			},
 		},
-		{ deadlineMs: 25 }
+		{ deadlineMs: DEADLINE_MS }
 	);
 	lifecycle.attachTransport({
-		stop: async () => {
+		stop: async (timeoutMs) => {
 			transportStops++;
+			transportTimeoutArgument = timeoutMs;
 			await transportGate.promise;
 		},
 	});
 	const handler = createCliShutdownHandler(lifecycle, {
 		reportFailure: (error) => {
 			reportCount++;
-			reportedError = error;
-			process.stderr.write(
-				`${JSON.stringify({ code: error.code, message: error.message, name: error.name, timeoutMs: error.timeoutMs })}\n`
-			);
+			causes = flattenFailures(error).map(describeFailure);
+			process.stderr.write(`${JSON.stringify(causes)}\n`);
 		},
 		exit: (code) => {
 			exits.push(code);
@@ -127,19 +143,15 @@ async function runDeadline() {
 		event: 'deadline-observed',
 		transportStops,
 		serverStops,
+		transportTimeoutArgument,
 		samePromise: first === repeated,
 		reportCount,
 		exits,
-		error: {
-			name: reportedError.name,
-			code: reportedError.code,
-			message: reportedError.message,
-			timeoutMs: reportedError.timeoutMs,
-		},
+		causes,
 	});
 	await nextControl('release-transport');
 	transportGate.resolve();
-	await serverStopped.promise;
+	serverGate.resolve();
 	await nextTurn();
 	await finish(1, {
 		event: 'deadline-final',
@@ -530,10 +542,82 @@ async function runResetShutdownRace() {
 	}
 }
 
+const OPERATION_HANG_DEADLINE_MS = 3000;
+
+function describeStopFailure(error) {
+	return { name: error.name, code: error.code, phase: error.phase };
+}
+
+async function startHeldOperation(dataDir) {
+	const [lifecycleModule, libModule, configModule] = await Promise.all([
+		import('../../../dist/CliLifecycle.js'),
+		import('../../../dist/lib.js'),
+		import('../../../dist/ServerConfig.js'),
+	]);
+	const server = await libModule.createServer({
+		config: cleanConfig(configModule.ServerConfig, dataDir),
+		autoDiscover: false,
+		loadFromPersistence: false,
+	});
+	await server.processThought({
+		thought: 'accepted before the hang', thought_number: 1, total_thoughts: 1,
+		next_thought_needed: false, session_id: 'operation-hang-other',
+	});
+	const lifecycle = server.getContainer().resolve('sessionLifecycle');
+	const originalRun = lifecycle.runOperation.bind(lifecycle);
+	const holdGate = deferred();
+	const admitted = deferred();
+	lifecycle.runOperation = (candidate, operation) => originalRun(candidate, async () => {
+		if (candidate === 'operation-hang-held') {
+			admitted.resolve();
+			await holdGate.promise;
+		}
+		return operation();
+	});
+	const held = server.processThought({
+		thought: 'held inside processing', thought_number: 1, total_thoughts: 1,
+		next_thought_needed: false, session_id: 'operation-hang-held',
+	});
+	await admitted.promise;
+	return { lifecycleModule, server, holdGate, held };
+}
+
+async function runOperationHang() {
+	const configured = await nextControl('configure');
+	const dataDir = requireControlString(configured, 'dataDir');
+	const hang = await startHeldOperation(dataDir);
+	const exits = [];
+	let causes = [];
+	const owner = new hang.lifecycleModule.CliLifecycle(hang.server, {
+		deadlineMs: OPERATION_HANG_DEADLINE_MS,
+	});
+	const handler = hang.lifecycleModule.createCliShutdownHandler(owner, {
+		reportFailure: (error) => {
+			causes = flattenFailures(error).map(describeStopFailure);
+		},
+		exit: (code) => {
+			exits.push(code);
+			process.exitCode = code;
+		},
+	});
+	await send({ event: 'operation-held' });
+	await handler();
+	hang.holdGate.resolve();
+	const heldResult = await hang.held;
+	await nextTurn();
+	await finish(1, {
+		event: 'operation-hang-final', exits, causes, heldRejected: heldResult.isError === true,
+		unhandledRejections, uncaughtExceptions,
+	});
+}
+
 async function main() {
 	switch (mode) {
 		case 'deadline':
-			await runDeadline();
+			await runStuckTransport(false);
+			return;
+		case 'server-overrun':
+			await runStuckTransport(true);
 			return;
 		case 'cleanup-rejection':
 			await runCleanupRejection();
@@ -546,6 +630,9 @@ async function main() {
 			return;
 		case 'reset-shutdown-race':
 			await runResetShutdownRace();
+			return;
+		case 'operation-hang':
+			await runOperationHang();
 			return;
 		default:
 			throw new TypeError(`unknown shutdown contract fixture mode: ${String(mode)}`);

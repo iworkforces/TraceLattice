@@ -36,6 +36,7 @@ import {
 	LifecycleFailureReporter,
 	PreDispatchTracker,
 	ResponseFinalizer,
+	boundStop,
 	type PreDispatchLease,
 } from './HttpRequestLifecycle.js';
 
@@ -429,14 +430,21 @@ export class HttpTransport extends BaseTransport implements ITransport {
 
 	/**
 	 * Stops transport server.
+	 *
+	 * Accepted work is joined until the timeout. At the timeout the transport's own timer force-closes
+	 * connections and settles: it rejects with `TransportStopTimeoutError` while accepted work is
+	 * still pending and resolves otherwise. A later `stop()` starts a new bounded join.
+	 *
+	 * @param timeout - Maximum time to join accepted work and server close (default: 30s)
 	 */
-	stop(): Promise<void> {
+	stop(timeout = 30000): Promise<void> {
 		if (this._stopPromise) return this._stopPromise;
 		this._isShuttingDown = true;
 		this._preDispatch.closeAdmission('shutdown');
 		this._stopRateLimitCleanup();
 
 		const server = this._server;
+		const needsDeadline = server.listening || this._acceptedWork.size > 0;
 		const serverClosed = server.listening
 			? new Promise<void>((resolve, reject) => {
 					server.close((error) => {
@@ -448,12 +456,22 @@ export class HttpTransport extends BaseTransport implements ITransport {
 					});
 				})
 			: Promise.resolve();
-		const stopPromise = Promise.all([
+		const joined = Promise.all([
 			serverClosed,
 			this._preDispatch.join().then(() => this._acceptedWork.join()),
 		]).then(() => {
 			this.log('info', 'HTTP transport stopped');
 		});
+		const stopPromise = needsDeadline
+			? boundStop(joined, {
+					timeoutMs: timeout,
+					acceptedWork: this._acceptedWork,
+					forceClose: () => {
+						this.log('warn', 'HTTP transport force-closing after timeout');
+						server.closeAllConnections();
+					},
+				})
+			: joined;
 		this._stopPromise = stopPromise;
 		void stopPromise.catch(() => {
 			if (this._stopPromise === stopPromise) this._stopPromise = null;

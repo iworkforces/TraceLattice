@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from 'tmcp';
-import { CliLifecycle, createCliShutdownHandler } from './CliLifecycle.js';
+import { CliLifecycle, createCliShutdownHandler, stopWithin } from './CliLifecycle.js';
 import { parseCliTransportConfig } from './config/CliTransportConfig.js';
 import type { CliHttpTransportConfig } from './config/CliTransportConfig.js';
 import type { ToolAwareSequentialThinkingServer } from './lib.js';
@@ -53,9 +53,12 @@ async function main() {
 	);
 
 	const thinkingServer = await initializeServer();
-	const lifecycle = new CliLifecycle(thinkingServer);
+	let lifecycle: CliLifecycle | null = null;
 	try {
 		const transportConfig = parseCliTransportConfig(process.env);
+		lifecycle = new CliLifecycle(thinkingServer, {
+			deadlineMs: transportConfig.shutdownDeadlineMs,
+		});
 		server.tool(
 			{
 				name: 'sequentialthinking_tools',
@@ -74,7 +77,7 @@ async function main() {
 		}
 		registerShutdownHandlers(lifecycle, thinkingServer, transportConfig.kind === 'stdio');
 	} catch (error) {
-		await lifecycle.rollbackStartup(error);
+		await (lifecycle ?? new CliLifecycle(thinkingServer)).rollbackStartup(error);
 	}
 }
 /**
@@ -126,7 +129,9 @@ async function startStdioTransport(
 		sigterm: new Set(process.listeners('SIGTERM')),
 		stdinEnd: new Set(process.stdin.listeners('end')),
 	};
-	lifecycle.attachTransport({ stop: () => transport.close() });
+	lifecycle.attachTransport({
+		stop: (timeoutMs) => stopWithin(() => transport.close(), timeoutMs),
+	});
 	transport.listen();
 	for (const listener of process.listeners('SIGINT')) {
 		if (!processListeners.sigint.has(listener)) process.off('SIGINT', listener);

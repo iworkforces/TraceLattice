@@ -113,6 +113,15 @@ export interface ServerConfigOptions {
 	persistenceMaxPendingThoughtsPerSession?: number;
 
 	/**
+	 * Deadline in milliseconds for each persistence backend write and for closing a
+	 * server-owned backend at shutdown. Must be above 0 and at most 2147483647, the
+	 * largest timer delay Node and Bun honor. A timer cannot interrupt the synchronous
+	 * SQLite driver. YAML/JSON only; no environment override.
+	 * @default 5000
+	 */
+	persistenceWriteTimeout?: number;
+
+	/**
 	 * Feature flag overrides. Missing fields are filled with defaults (all ON,
 	 * reasoningStrategy='sequential').
 	 */
@@ -200,6 +209,9 @@ export class ServerConfig {
 	/** Maximum unacknowledged thought and backtrack writes per session. */
 	public persistenceMaxPendingThoughtsPerSession: number;
 
+	/** Deadline in milliseconds for each persistence backend write and owned-backend close. */
+	public persistenceWriteTimeout: number;
+
 	/** Feature flag toggles. */
 	public features: FeatureFlags;
 
@@ -243,6 +255,9 @@ export class ServerConfig {
 		this.persistenceMaxRetries = this.validatePersistenceMaxRetries(options.persistenceMaxRetries);
 		this.persistenceMaxPendingThoughtsPerSession = this.validatePersistenceMaxPendingThoughts(
 			options.persistenceMaxPendingThoughtsPerSession
+		);
+		this.persistenceWriteTimeout = this.validatePersistenceWriteTimeout(
+			options.persistenceWriteTimeout
 		);
 		this.features = this.validateFeatures(options.features);
 		this.toolInterleaveTtlMs = this.validatePositiveMs(
@@ -482,6 +497,30 @@ export class ServerConfig {
 	}
 
 	/**
+	 * Validates the persistence write timeout.
+	 * @param value - The value to validate
+	 * @returns The validated value or default (5000)
+	 * @private
+	 */
+	private validatePersistenceWriteTimeout(value?: number): number {
+		const defaultValue = 5000;
+		const maximum = 2_147_483_647;
+		if (value === undefined || value === null) return defaultValue;
+		if (typeof value !== 'number' || !Number.isFinite(value)) {
+			throw new ConfigurationError(`persistenceWriteTimeout must be a finite number, got ${value}`);
+		}
+		if (value <= 0) {
+			throw new ConfigurationError(`persistenceWriteTimeout must be greater than 0, got ${value}`);
+		}
+		if (value > maximum) {
+			throw new ConfigurationError(
+				`persistenceWriteTimeout must not exceed ${maximum}, got ${value}`
+			);
+		}
+		return value;
+	}
+
+	/**
 	 * Validates feature flags and fills defaults for missing fields.
 	 * @param value - Partial feature flag overrides
 	 * @returns Fully populated FeatureFlags with defaults applied
@@ -577,6 +616,7 @@ export class ServerConfig {
 			persistenceFlushInterval: this.persistenceFlushInterval,
 			persistenceMaxRetries: this.persistenceMaxRetries,
 			persistenceMaxPendingThoughtsPerSession: this.persistenceMaxPendingThoughtsPerSession,
+			persistenceWriteTimeout: this.persistenceWriteTimeout,
 			features: this.features,
 			toolInterleaveTtlMs: this.toolInterleaveTtlMs,
 			toolInterleaveSweepMs: this.toolInterleaveSweepMs,

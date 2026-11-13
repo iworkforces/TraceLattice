@@ -27,10 +27,12 @@ export type RunningProcess = {
 
 export type FixtureMode =
 	| 'deadline'
+	| 'server-overrun'
 	| 'cleanup-rejection'
 	| 'streamable-file'
 	| 'reload-file'
-	| 'reset-shutdown-race';
+	| 'reset-shutdown-race'
+	| 'operation-hang';
 
 export type FixtureEvent = Readonly<{ event: string } & Record<string, unknown>>;
 
@@ -119,7 +121,12 @@ export function spawnCli(environment: NodeJS.ProcessEnv): RunningProcess {
 	return captureChild(
 		spawn(process.execPath, [builtCli], {
 			cwd: repositoryRoot,
-			env: { ...process.env, TRACELATTICE_PRETTY_LOG: 'false', ...environment },
+			env: {
+				...process.env,
+				TRACELATTICE_PRETTY_LOG: 'false',
+				TRACELATTICE_SHUTDOWN_DEADLINE_MS: undefined,
+				...environment,
+			},
 			stdio: ['pipe', 'pipe', 'pipe'] as const,
 		})
 	);

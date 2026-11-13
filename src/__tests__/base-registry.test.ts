@@ -939,6 +939,97 @@ describe('BaseRegistry', () => {
 			expect(count).toBe(0);
 		});
 
+		describe('directory retention after a failed rescan', () => {
+			function serveFiles(files: readonly string[]): void {
+				mockReaddir.mockResolvedValue(
+					files.map((name) => ({ name: `${name}.test.md`, isFile: () => true })) as never
+				);
+				mockReadFile.mockImplementation((path: unknown) => {
+					const name = String(path).split('/').pop()?.replace('.test.md', '') ?? '';
+					return Promise.resolve(`name:${name}`) as never;
+				});
+			}
+
+			beforeEach(() => {
+				mockExistsSync.mockReturnValue(true);
+			});
+
+			function createNamedRegistry(searchDirs: string[]): TestRegistry {
+				const created = createRegistry({ searchDirs });
+				created.setParseFrontmatter((content: string) => ({ name: content.replace('name:', '') }));
+				return created;
+			}
+
+			it.each(['./skills', 'skills/', '/abs/skills/', 'skills'])(
+				'keeps last known items for the configured spelling %s',
+				async (spelling) => {
+					// Given
+					registry = createNamedRegistry([spelling]);
+					serveFiles(['alpha', 'beta']);
+					expect(await registry.discoverAsync()).toBe(2);
+					mockReaddir.mockRejectedValue(new Error('EACCES'));
+
+					// When
+					const count = await registry.refreshAsync();
+
+					// Then
+					expect(count).toBe(2);
+					expect(registry.has('alpha')).toBe(true);
+					expect(registry.has('beta')).toBe(true);
+				}
+			);
+
+			it('drops the items of a directory that no longer exists', async () => {
+				// Given
+				registry = createNamedRegistry(['./skills']);
+				serveFiles(['alpha']);
+				expect(await registry.discoverAsync()).toBe(1);
+				mockExistsSync.mockReturnValue(false);
+
+				// When
+				const count = await registry.refreshAsync();
+
+				// Then
+				expect(count).toBe(0);
+				expect(registry.has('alpha')).toBe(false);
+			});
+
+			it('returns zero for the first scan of a missing directory', async () => {
+				// Given
+				registry = createNamedRegistry(['./skills/']);
+				mockExistsSync.mockReturnValue(false);
+
+				// When/Then
+				expect(await registry.discoverAsync()).toBe(0);
+				expect(mockReaddir).not.toHaveBeenCalled();
+			});
+
+			it('retains only the unreadable directory and rescans its healthy sibling', async () => {
+				// Given
+				registry = createNamedRegistry(['./a/', './b/']);
+				mockReaddir.mockImplementation(((dir: unknown) =>
+					Promise.resolve([
+						{ name: `${String(dir).includes('a') ? 'alpha' : 'beta'}.test.md`, isFile: () => true },
+					])) as never);
+				mockReadFile.mockImplementation((path: unknown) =>
+					Promise.resolve(`name:${String(path).split('/').pop()?.replace('.test.md', '')}`) as never
+				);
+				expect(await registry.discoverAsync()).toBe(2);
+				mockReaddir.mockImplementation(((dir: unknown) =>
+					String(dir).includes('a')
+						? Promise.reject(new Error('EACCES'))
+						: Promise.resolve([])) as never);
+
+				// When
+				const count = await registry.refreshAsync();
+
+				// Then
+				expect(count).toBe(1);
+				expect(registry.has('alpha')).toBe(true);
+				expect(registry.has('beta')).toBe(false);
+			});
+		});
+
 		it('handles _buildItem returning null', async () => {
 			registry = createRegistry({ searchDirs: ['/test/dir'] });
 			registry.setParseFrontmatter(() => ({ name: 'null-item', value: 0 }));

@@ -87,6 +87,8 @@ export interface HistoryManagerConfig {
 	persistenceMaxRetries?: number;
 	/** Per-session limit on unacknowledged thought writes, terminal failures included. @default 10000 */
 	persistenceMaxPendingThoughtsPerSession?: number;
+	/** Deadline per backend write in ms. @default undefined (no deadline) */
+	persistenceWriteTimeout?: number;
 	persistenceHistorySize?: number;
 	persistBranches?: boolean;
 	eventEmitter?: PersistenceEventEmitter;
@@ -191,6 +193,7 @@ export class HistoryManager implements IHistoryManager {
 				flushInterval: config.persistenceFlushInterval ?? 1000,
 				maxRetries: config.persistenceMaxRetries ?? 3,
 				maxPendingThoughtsPerSession: config.persistenceMaxPendingThoughtsPerSession ?? 10_000,
+				writeTimeout: config.persistenceWriteTimeout,
 				durableHistorySize: config.persistenceHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
 				persistBranches: config.persistBranches ?? true,
 				eventEmitter: this._eventEmitter,
@@ -204,6 +207,8 @@ export class HistoryManager implements IHistoryManager {
 				: { persistence: this._persistence, barrier: this._persistenceBuffer };
 		this._resetCoordinator = new SessionResetCoordinator({
 			...resetDurability,
+			persistenceWriteTimeout: config.persistenceWriteTimeout,
+			runLiveReplacement: (sessionId, replace) => this._lifecycle.runMutation(sessionId, replace),
 			edgeStore: this._edgeStore,
 			summaryStore: this._summaryStore,
 			sessions: this._sessions,
@@ -1049,11 +1054,17 @@ export class HistoryManager implements IHistoryManager {
 		});
 	}
 
-	/** Stops timers and drains writes while the caller owns global shutdown. */
-	public async shutdownWithinLifecycle(): Promise<void> {
+	/**
+	 * Stops timers, stages restore-branch reconciliation, then seals the persistence buffer and
+	 * drains it while the caller owns global shutdown.
+	 *
+	 * @param flushTimeoutMs - Optional bound for the drain; omitted, the drain is unbounded.
+	 */
+	public async shutdownWithinLifecycle(flushTimeoutMs?: number): Promise<void> {
 		this._stopFlushTimer();
 		this._sessionManager.stopCleanupTimer();
-		await this._flushBuffer();
+		this._stageAllRestoreBranchReconciliation();
+		await this._persistenceBuffer?.closeForShutdown(flushTimeoutMs);
 	}
 
 	/** Clears non-durable state after every shutdown resource has closed successfully. */

@@ -1,6 +1,9 @@
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
+import { FILE_WRITER_LOCK_NAME } from '../../persistence/FileWriter.js';
 import { INITIALIZE_PARAMS } from './ProtocolHarness.js';
 import {
 	cleanupShutdownFixtures,
@@ -52,10 +55,13 @@ async function startAdmittedRace(order: 'reset-first' | 'shutdown-first' | 'clea
 	return { running, dataDir };
 }
 
-async function reloadRaceHistory(dataDir: string): Promise<readonly { readonly thought: string }[]> {
+async function reloadRaceHistory(
+	dataDir: string,
+	sessionId = 'shutdown-race-session'
+): Promise<readonly { readonly thought: string }[]> {
 	const reload = spawnFixture('reload-file');
 	try {
-		await reload.send('configure', { dataDir, sessionId: 'shutdown-race-session' });
+		await reload.send('configure', { dataDir, sessionId });
 		const result = await reload.nextEvent();
 		expect(result.event).toBe('reload-final');
 		expect(await reload.exited).toEqual({ code: 0, signal: null });
@@ -168,9 +174,15 @@ describe('built CLI shutdown contract', () => {
 });
 
 describe('built shutdown lifecycle evidence fixtures', () => {
-	it('reports a typed outer deadline without abandoning late ordered cleanup', async () => {
+	it('starts the server stop at the transport slice while the transport never settles', async () => {
 		// Given
 		const running = spawnFixture('deadline');
+		const transportTimeout = {
+			name: 'TransportStopTimeoutError',
+			code: 'TRANSPORT_STOP_TIMEOUT',
+			timeoutMs: 20,
+			abandonedRequests: null,
+		};
 
 		try {
 			// When
@@ -180,20 +192,15 @@ describe('built shutdown lifecycle evidence fixtures', () => {
 			expect(deadline).toEqual({
 				event: 'deadline-observed',
 				transportStops: 1,
-				serverStops: 0,
+				serverStops: 1,
+				transportTimeoutArgument: 20,
 				samePromise: true,
 				reportCount: 1,
 				exits: [1],
-				error: {
-					name: 'CliShutdownTimeoutError',
-					code: 'CLI_SHUTDOWN_TIMEOUT',
-					message: 'CLI shutdown timed out after 25ms',
-					timeoutMs: 25,
-				},
+				causes: [transportTimeout],
 			});
 			await running.send('release-transport');
-			const final = await running.nextEvent();
-			expect(final).toEqual({
+			expect(await running.nextEvent()).toEqual({
 				event: 'deadline-final',
 				transportStops: 1,
 				serverStops: 1,
@@ -204,9 +211,53 @@ describe('built shutdown lifecycle evidence fixtures', () => {
 			});
 			expect(await running.exited).toEqual({ code: 1, signal: null });
 			expect(running.stdout()).toBe('');
-			expect(running.stderr()).toBe(
-				'{"code":"CLI_SHUTDOWN_TIMEOUT","message":"CLI shutdown timed out after 25ms","name":"CliShutdownTimeoutError","timeoutMs":25}\n'
-			);
+			expect(running.stderr()).toBe(`${JSON.stringify([transportTimeout])}\n`);
+		} finally {
+			await stopChild(running);
+		}
+	});
+
+	it('fails with the typed total deadline when the server stop outlives the remaining budget', async () => {
+		// Given
+		const running = spawnFixture('server-overrun');
+		const causes = [
+			{
+				name: 'TransportStopTimeoutError',
+				code: 'TRANSPORT_STOP_TIMEOUT',
+				timeoutMs: 20,
+				abandonedRequests: null,
+			},
+			{ name: 'CliShutdownTimeoutError', code: 'CLI_SHUTDOWN_TIMEOUT', timeoutMs: 40 },
+		];
+
+		try {
+			// When
+			const deadline = await running.nextEvent();
+
+			// Then
+			expect(deadline).toEqual({
+				event: 'deadline-observed',
+				transportStops: 1,
+				serverStops: 1,
+				transportTimeoutArgument: 20,
+				samePromise: true,
+				reportCount: 1,
+				exits: [1],
+				causes,
+			});
+			await running.send('release-transport');
+			expect(await running.nextEvent()).toEqual({
+				event: 'deadline-final',
+				transportStops: 1,
+				serverStops: 1,
+				reportCount: 1,
+				exits: [1],
+				unhandledRejections: [],
+				uncaughtExceptions: [],
+			});
+			expect(await running.exited).toEqual({ code: 1, signal: null });
+			expect(running.stdout()).toBe('');
+			expect(running.stderr()).toBe(`${JSON.stringify(causes)}\n`);
 		} finally {
 			await stopChild(running);
 		}
@@ -403,5 +454,41 @@ describe('admitted thought versus global reset and shutdown', () => {
 		} finally {
 			await stopChild(running);
 		}
+	}, 30_000);
+});
+
+describe('operation hung inside thought processing at shutdown', () => {
+	it('reports the operations overrun before the total deadline, flushes and unlocks', async () => {
+		// Given
+		const dataDir = await createTemporaryDirectory('tracelattice-operation-hang-');
+		const running = spawnFixture('operation-hang');
+		try {
+			await running.send('configure', { dataDir });
+			expect(await running.nextEvent()).toEqual({ event: 'operation-held' });
+
+			// When
+			const final = await running.nextEvent();
+
+			// Then
+			expect(final).toEqual({
+				event: 'operation-hang-final',
+				exits: [1],
+				causes: [
+					{ name: 'ServerStopTimeoutError', code: 'SERVER_STOP_TIMEOUT', phase: 'operations' },
+				],
+				heldRejected: true,
+				unhandledRejections: [],
+				uncaughtExceptions: [],
+			});
+			expect(await running.exited).toEqual({ code: 1, signal: null });
+			expect(running.stdout()).toBe('');
+		} finally {
+			await stopChild(running);
+		}
+		expect(existsSync(join(dataDir, FILE_WRITER_LOCK_NAME))).toBe(false);
+		expect(await reloadRaceHistory(dataDir, 'operation-hang-other')).toEqual([
+			{ thought: 'accepted before the hang' },
+		]);
+		expect(await reloadRaceHistory(dataDir, 'operation-hang-held')).toEqual([]);
 	}, 30_000);
 });

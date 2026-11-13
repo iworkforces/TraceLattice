@@ -1,8 +1,9 @@
-import { createServer, request as httpRequest, Server, type ClientRequest } from 'node:http';
+import { createServer, request as httpRequest, type ClientRequest } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asSessionId, type SessionId } from '../../contracts/ids.js';
 import { HistoryManager } from '../../core/HistoryManager.js';
 import type { ThoughtData } from '../../core/thought.js';
+import { TransportStopTimeoutError } from '../../errors.js';
 import { HealthChecker, type HealthCheckResult } from '../../health/HealthChecker.js';
 import type { Logger } from '../../logger/StructuredLogger.js';
 import { NullLogger } from '../../logger/NullLogger.js';
@@ -18,8 +19,10 @@ import {
 } from './ProtocolHarness.js';
 import {
 	activeRequestCount,
+	controlledCallBody,
 	createControlledProtocolServer,
 	createDeferred,
+	getTransportServer,
 	lifecycleReportingFailureCount,
 	makeServerNotReady,
 	nextEventLoopTurn,
@@ -242,15 +245,6 @@ async function startRetainedStreamableLifecycle(
 		started: controlled.started,
 		release: controlled.release,
 	};
-}
-
-function controlledCallBody(): string {
-	return JSON.stringify({
-		jsonrpc: '2.0',
-		id: 'controlled-call',
-		method: 'tools/call',
-		params: { name: 'controlled', arguments: {} },
-	});
 }
 
 function startDelayedBodyRequest(
@@ -977,14 +971,6 @@ describe.each(LIFECYCLE_CASES)('$name late request lifecycle', (transportCase) =
 
 type CloseCallback = (error?: Error) => void;
 
-function getTransportServer(transport: LifecycleTransport): ReturnType<typeof createServer> {
-	const server = Reflect.get(transport, '_server');
-	if (!(server instanceof Server)) {
-		throw new LifecycleFixtureError('Transport server is not initialized');
-	}
-	return server;
-}
-
 function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
 	return new Promise((resolve, reject) => {
 		server.close((error) => {
@@ -1207,6 +1193,130 @@ describe('Streamable HTTP fresh lifecycle repair', () => {
 	});
 });
 
+describe.each(LIFECYCLE_CASES)('$name bounded stop', (transportCase) => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	async function startGatedRequest() {
+		const lifecycle = await startControlledLifecycle(transportCase, false, 120_000);
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const pending = startWireRequest(lifecycle.endpoint, controlledCallBody(), {
+			...lifecycle.headers,
+			connection: 'close',
+		});
+		await lifecycle.started;
+		return { ...lifecycle, pending };
+	}
+
+	function recordSettlement(stopping: Promise<void>): unknown[] {
+		const settled: unknown[] = [];
+		void stopping.then(
+			() => settled.push('resolved'),
+			(error: unknown) => settled.push(error)
+		);
+		return settled;
+	}
+
+	it('rejects from its own timer with the abandoned count even when closeAllConnections tears nothing down', async () => {
+		// Given
+		const gated = await startGatedRequest();
+		const server = getTransportServer(gated.transport);
+		const forceClose = vi.spyOn(server, 'closeAllConnections').mockImplementation(() => undefined);
+		const stopping = gated.transport.stop(5_000);
+		const settled = recordSettlement(stopping);
+
+		// When
+		await vi.advanceTimersByTimeAsync(4_999);
+		const settledBeforeTimeout = [...settled];
+		await vi.advanceTimersByTimeAsync(1);
+		await stopping.catch(() => undefined);
+
+		// Then
+		expect(settledBeforeTimeout).toEqual([]);
+		expect(settled).toHaveLength(1);
+		expect(settled[0]).toBeInstanceOf(TransportStopTimeoutError);
+		expect(settled[0]).toMatchObject({
+			code: 'TRANSPORT_STOP_TIMEOUT',
+			timeoutMs: 5_000,
+			abandonedRequests: 1,
+		});
+		expect(forceClose).toHaveBeenCalledTimes(1);
+		expect(outstandingWorkCount(gated.transport)).toBe(1);
+		forceClose.mockRestore();
+		gated.release();
+		await gated.pending.outcome;
+		server.closeAllConnections();
+		await gated.transport.stop(1_000);
+	});
+
+	it('lets a later stop() start a new bounded join that settles once the abandoned work does', async () => {
+		// Given
+		const gated = await startGatedRequest();
+		const first = gated.transport.stop(5_000);
+		const firstOutcome = first.then(
+			() => null,
+			(error: unknown) => error
+		);
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(await firstOutcome).toBeInstanceOf(TransportStopTimeoutError);
+		expect(await gated.pending.outcome).toEqual({ kind: 'closed' });
+
+		// When
+		const second = gated.transport.stop(5_000);
+		const settled = recordSettlement(second);
+		await vi.advanceTimersByTimeAsync(4_999);
+		const settledBeforeRelease = [...settled];
+		gated.release();
+		await second;
+
+		// Then
+		expect(second).not.toBe(first);
+		expect(settledBeforeRelease).toEqual([]);
+		expect(settled).toEqual(['resolved']);
+		expect(outstandingWorkCount(gated.transport)).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('joins accepted work that finishes inside the timeout without force-closing', async () => {
+		// Given
+		const gated = await startGatedRequest();
+		const forceClose = vi.spyOn(getTransportServer(gated.transport), 'closeAllConnections');
+		const stopping = gated.transport.stop(5_000);
+
+		// When
+		await vi.advanceTimersByTimeAsync(4_999);
+		gated.release();
+		await stopping;
+
+		// Then
+		expect(forceClose).not.toHaveBeenCalled();
+		expect(outstandingWorkCount(gated.transport)).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+		expect(await gated.pending.outcome).toMatchObject({ kind: 'response', status: 200 });
+	});
+
+	it('defaults to a 30000 ms timeout when stop() receives no argument', async () => {
+		// Given
+		const gated = await startGatedRequest();
+		const stopping = gated.transport.stop();
+		const settled = recordSettlement(stopping);
+
+		// When
+		await vi.advanceTimersByTimeAsync(29_999);
+		const settledBeforeDefault = [...settled];
+		await vi.advanceTimersByTimeAsync(1);
+		await stopping.catch(() => undefined);
+
+		// Then
+		expect(settledBeforeDefault).toEqual([]);
+		expect(settled[0]).toMatchObject({ timeoutMs: 30_000, abandonedRequests: 1 });
+		gated.release();
+		await gated.pending.outcome;
+		await gated.transport.stop(1_000);
+	});
+});
+
 class ControlledPersistence extends MemoryPersistence {
 	public probe: () => Promise<boolean> = async () => true;
 	public failThoughtWrites = false;
@@ -1266,7 +1376,7 @@ describe.each(LIFECYCLE_CASES)('$name readiness from persistence state', (transp
 		return { history, ready };
 	}
 
-	it('stays ready and counts a quarantined session, a retained failure and pending work', async () => {
+	it('stays ready and counts a quarantined session, a blocked session, a retained failure and pending work', async () => {
 		// Given
 		const persistence = new ControlledPersistence();
 		const { history, ready } = await startReady(persistence);
@@ -1290,7 +1400,7 @@ describe.each(LIFECYCLE_CASES)('$name readiness from persistence state', (transp
 		expect(body.components['persistenceBacklog']).toEqual({
 			name: 'persistenceBacklog',
 			healthy: true,
-			details: 'quarantined sessions: 1, retained failures: 1, pending thoughts: 2',
+			details: 'quarantined sessions: 1, blocked sessions: 1, retained failures: 1, pending thoughts: 2',
 		});
 	});
 

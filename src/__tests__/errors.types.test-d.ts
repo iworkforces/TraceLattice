@@ -44,6 +44,9 @@ import type { ERROR_CODES, ErrorCode } from '../errors.js';
  *  - InvalidBacktrackError     → INVALID_BACKTRACK
  *  - UnknownToolError          → UNKNOWN_TOOL
  *  - LockTimeoutError          → LOCK_TIMEOUT
+ *  - CliShutdownTimeoutError   → CLI_SHUTDOWN_TIMEOUT
+ *  - TransportStopTimeoutError → TRANSPORT_STOP_TIMEOUT
+ *  - ServerStopTimeoutError    → SERVER_STOP_TIMEOUT
  *  - SessionAccessDeniedError  → SESSION_ACCESS_DENIED
  *  - PersistenceOwnershipError → PERSISTENCE_OWNERSHIP
  *  - PersistenceCorruptionError → PERSISTENCE_CORRUPTION
@@ -54,6 +57,7 @@ import type { ERROR_CODES, ErrorCode } from '../errors.js';
  *  - PersistenceSessionBarrierReentrancyError → PERSISTENCE_SESSION_BARRIER_REENTRANCY
  *  - PersistenceBacklogFullError → PERSISTENCE_BACKLOG_FULL
  *  - PersistenceUnavailableError → PERSISTENCE_UNAVAILABLE
+ *  - PersistenceWriteTimeoutError → PERSISTENCE_WRITE_TIMEOUT
  *
  * Direct `SequentialThinkingError` usages (no dedicated subclass):
  *  - DUPLICATE_SUMMARY (thrown by `core/compression/InMemorySummaryStore.ts`)
@@ -83,6 +87,8 @@ type _AllSubclassCodes =
 	| 'UNKNOWN_TOOL'
 	| 'LOCK_TIMEOUT'
 	| 'CLI_SHUTDOWN_TIMEOUT'
+	| 'TRANSPORT_STOP_TIMEOUT'
+	| 'SERVER_STOP_TIMEOUT'
 	| 'SESSION_ACCESS_DENIED'
 	| 'SESSION_EXPIRED'
 	| 'SESSION_LIFECYCLE_CLOSED'
@@ -97,7 +103,8 @@ type _AllSubclassCodes =
 	| 'PERSISTENCE_UNAVAILABLE'
 	| 'PERSISTENCE_COMPATIBILITY'
 	| 'PERSISTENCE_BACKLOG_FULL'
-	| 'DUPLICATE_SUMMARY';
+	| 'DUPLICATE_SUMMARY'
+	| 'PERSISTENCE_WRITE_TIMEOUT';
 
 type _ErrorCodeValues = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 type _Equal<Left, Right> = [Left] extends [Right] ? ([Right] extends [Left] ? true : false) : false;

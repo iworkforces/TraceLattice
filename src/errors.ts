@@ -55,6 +55,8 @@ export const ERROR_CODES = {
 	UNKNOWN_TOOL: 'UNKNOWN_TOOL',
 	LOCK_TIMEOUT: 'LOCK_TIMEOUT',
 	CLI_SHUTDOWN_TIMEOUT: 'CLI_SHUTDOWN_TIMEOUT',
+	TRANSPORT_STOP_TIMEOUT: 'TRANSPORT_STOP_TIMEOUT',
+	SERVER_STOP_TIMEOUT: 'SERVER_STOP_TIMEOUT',
 	SESSION_ACCESS_DENIED: 'SESSION_ACCESS_DENIED',
 	SESSION_EXPIRED: 'SESSION_EXPIRED',
 	SESSION_LIFECYCLE_CLOSED: 'SESSION_LIFECYCLE_CLOSED',
@@ -69,6 +71,7 @@ export const ERROR_CODES = {
 	PERSISTENCE_UNAVAILABLE: 'PERSISTENCE_UNAVAILABLE',
 	PERSISTENCE_COMPATIBILITY: 'PERSISTENCE_COMPATIBILITY',
 	PERSISTENCE_BACKLOG_FULL: 'PERSISTENCE_BACKLOG_FULL',
+	PERSISTENCE_WRITE_TIMEOUT: 'PERSISTENCE_WRITE_TIMEOUT',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -707,6 +710,56 @@ export class CliShutdownTimeoutError extends SequentialThinkingError {
 		super(`CLI shutdown timed out after ${timeoutMs}ms`, ERROR_CODES.CLI_SHUTDOWN_TIMEOUT);
 		this.name = 'CliShutdownTimeoutError';
 		this.timeoutMs = timeoutMs;
+	}
+}
+
+/**
+ * Error thrown when a transport's stop timeout elapses before its accepted work settles.
+ * `abandonedRequests` is null when the stopper does not track requests.
+ */
+export class TransportStopTimeoutError extends SequentialThinkingError {
+	public readonly timeoutMs: number;
+	public readonly abandonedRequests: number | null;
+
+	constructor(timeoutMs: number, abandonedRequests: number | null) {
+		super(
+			abandonedRequests === null
+				? `Transport stop timed out after ${timeoutMs}ms`
+				: `Transport stop timed out after ${timeoutMs}ms with ${abandonedRequests} accepted request(s) still running`,
+			ERROR_CODES.TRANSPORT_STOP_TIMEOUT
+		);
+		this.name = 'TransportStopTimeoutError';
+		this.timeoutMs = timeoutMs;
+		this.abandonedRequests = abandonedRequests;
+	}
+}
+
+/** Server stop phase whose deadline elapsed. */
+export type ServerStopPhase = 'operations' | 'discovery' | 'flush';
+
+/**
+ * Error thrown when one phase of a bounded server stop overruns its deadline. `pending` counts the
+ * work still outstanding at the deadline: admitted operations plus maintenance owners for
+ * `operations`, undrained writes for `flush`, and null for `discovery`. `detail` breaks the count
+ * down in the message only.
+ */
+export class ServerStopTimeoutError extends SequentialThinkingError {
+	public readonly phase: ServerStopPhase;
+	public readonly timeoutMs: number;
+	public readonly pending: number | null;
+
+	constructor(phase: ServerStopPhase, timeoutMs: number, pending: number | null, detail?: string) {
+		const suffix = detail === undefined ? '' : ` (${detail})`;
+		super(
+			pending === null
+				? `Server stop timed out in the ${phase} phase after ${timeoutMs}ms`
+				: `Server stop timed out in the ${phase} phase after ${timeoutMs}ms with ${pending} still pending${suffix}`,
+			ERROR_CODES.SERVER_STOP_TIMEOUT
+		);
+		this.name = 'ServerStopTimeoutError';
+		this.phase = phase;
+		this.timeoutMs = timeoutMs;
+		this.pending = pending;
 	}
 }
 

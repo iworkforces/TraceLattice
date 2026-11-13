@@ -12,7 +12,16 @@ import type { Summary } from './core/compression/Summary.js';
 import type { SequentialThinkingSchema } from './schema.js';
 import { SEQUENTIAL_THINKING_TOOL } from './schema.js';
 import type { IDisposable } from './types/disposable.js';
-import { getErrorMessage } from './errors.js';
+import {
+	ERROR_CODES,
+	SequentialThinkingError,
+	ServerStopTimeoutError,
+	TransportStopTimeoutError,
+	getErrorMessage,
+	isErrorCode,
+	type ErrorCode,
+	type ServerStopPhase,
+} from './errors.js';
 import { assertNever } from './utils.js';
 
 // New component imports
@@ -29,10 +38,27 @@ import { Calibrator } from './core/evaluator/Calibrator.js';
 import { OutcomeRecorder } from './core/reasoning/OutcomeRecorder.js';
 import { createReasoningStrategy } from './core/reasoning/strategies/StrategyFactory.js';
 import { ThoughtFormatter } from './core/ThoughtFormatter.js';
+import { callWithinDeadline, type PersistenceCallOutcome } from './core/PersistenceCallDeadline.js';
+import {
+	PersistenceDrainError,
+	PersistenceWriteTimeoutError,
+	type PersistenceTimedOutCall,
+} from './core/PersistenceBufferErrors.js';
 import { ThoughtProcessor, type CallToolResult } from './core/ThoughtProcessor.js';
 import { SessionLock } from './core/SessionLock.js';
-import { SessionLifecycleClosedError } from './core/SessionErrors.js';
-import { SessionLifecycleCoordinator } from './core/SessionLifecycleCoordinator.js';
+import {
+	SessionLifecycleClosedError,
+	type SessionLifecycleClosedPhase,
+} from './core/SessionErrors.js';
+import {
+	SessionLifecycleCoordinator,
+	type ShutdownIdleOutcome,
+} from './core/SessionLifecycleCoordinator.js';
+import {
+	remainingUntil,
+	serverStopDeadlines,
+	type ServerStopDeadlines,
+} from './core/ServerStopBudget.js';
 import { Container } from './di/Container.js';
 import { StructuredLogger } from './logger/StructuredLogger.js';
 import { Metrics } from './metrics/metrics.impl.js';
@@ -52,9 +78,30 @@ import { HttpTransport, createHttpTransport } from './transport/HttpTransport.js
 import type { HttpTransportOptions } from './transport/HttpTransport.js';
 import type { TransportOptions } from './transport/BaseTransport.js';
 import type { ITransport, TransportKind } from './contracts/transport.js';
+import type { PersistenceWorkFailure } from './contracts/persistence-work.js';
 
-export { HttpTransport, createHttpTransport };
+/** Largest delay `setTimeout` honours; a larger stop budget would clamp to 1 ms. */
+const MAX_STOP_TIMEOUT_MS = 2_147_483_647;
+
+export {
+	HttpTransport,
+	createHttpTransport,
+	SequentialThinkingError,
+	TransportStopTimeoutError,
+	PersistenceWriteTimeoutError,
+	PersistenceDrainError,
+	SessionLifecycleClosedError,
+	ServerStopTimeoutError,
+	ERROR_CODES,
+	isErrorCode,
+};
 export type {
+	ErrorCode,
+	ServerStopPhase,
+	PersistenceWorkFailure,
+	PersistenceTimedOutCall,
+	PersistenceCallOutcome,
+	SessionLifecycleClosedPhase,
 	HttpTransportOptions,
 	TransportOptions,
 	ITransport,
@@ -201,8 +248,14 @@ export interface IToolAwareSequentialThinkingServer extends IDisposable {
 
 	/**
 	 * Stop the server and clean up watchers, suspension stores, and persistence.
+	 *
+	 * @param timeoutMs - Optional stop budget in milliseconds, above 0 and at most 2147483647;
+	 * omitted, the idle wait and the flush are unbounded. The first valid call wins: later calls
+	 * with a valid budget return its promise whatever they pass.
+	 * @returns A promise that rejects with a `RangeError` for an invalid budget, before anything
+	 * changes: admission stays open and a later valid `stop()` works.
 	 */
-	stop(): Promise<void>;
+	stop(timeoutMs?: number): Promise<void>;
 
 	/** Awaitably reset one session and all matching auxiliary state. */
 	resetSession(sessionId: string): Promise<void>;
@@ -306,6 +359,7 @@ export class ToolAwareSequentialThinkingServer
 	private _acceptingDiscoveryRefreshes = true;
 	private _refreshPromise: Promise<{ tools: number; skills: number }> | null = null;
 	private _stopPromise: Promise<void> | null = null;
+	private _discoveryTeardown: Promise<unknown[]> | null = null;
 	private _disposePromise: Promise<void> | null = null;
 
 	// Public manager properties (recommended API)
@@ -379,8 +433,21 @@ export class ToolAwareSequentialThinkingServer
 
 		// Initialize watchers if enabled
 		if (options.enableWatcher) {
-			this._skillWatcher = new SkillWatcher(this.skills, this._logger, this.config.skillDirs);
-			this._toolWatcher = new ToolWatcher(this.tools, this._logger, this.config.toolDirs);
+			const reportFault = (fault: { error: Error; directory: string }): void => {
+				this.emit('discoveryError', { directory: fault.directory, error: fault.error });
+			};
+			this._skillWatcher = new SkillWatcher(
+				this.skills,
+				this._logger,
+				this.config.skillDirs,
+				reportFault
+			);
+			this._toolWatcher = new ToolWatcher(
+				this.tools,
+				this._logger,
+				this.config.toolDirs,
+				reportFault
+			);
 		}
 	}
 
@@ -543,6 +610,7 @@ export class ToolAwareSequentialThinkingServer
 				persistenceFlushInterval: cfg.persistenceFlushInterval,
 				persistenceMaxRetries: cfg.persistenceMaxRetries,
 				persistenceMaxPendingThoughtsPerSession: cfg.persistenceMaxPendingThoughtsPerSession,
+				persistenceWriteTimeout: cfg.persistenceWriteTimeout,
 				persistenceHistorySize:
 					cfg.persistence.options?.maxHistorySize ?? ABSOLUTE_MAX_HISTORY_SIZE,
 				persistBranches: cfg.persistence.options?.persistBranches ?? true,
@@ -737,89 +805,198 @@ export class ToolAwareSequentialThinkingServer
 	/**
 	 * Stop the server and clean up watchers.
 	 * Closes persistence backend gracefully to ensure data is flushed.
+	 *
+	 * With `timeoutMs` (B) and `persistenceWriteTimeout` (T), deadlines come from one start time:
+	 * flush and close each get `min(T, floor(B / 3))` and the idle wait plus discovery teardown get
+	 * the rest. A phase that overruns is reported as `ServerStopTimeoutError` (phase `operations`,
+	 * `discovery` or `flush`) or, for the close, `PersistenceWriteTimeoutError`. Without
+	 * `timeoutMs` the idle wait and flush are unbounded and the close is bounded by T. Memoized:
+	 * the first valid call's promise is returned to every later valid call.
+	 *
+	 * @param timeoutMs - Optional stop budget in milliseconds, above 0 and at most 2147483647.
+	 * @returns A promise that rejects with a `RangeError` for any other value, before anything
+	 * changes: the call is not memoized, admission stays open and a later valid `stop()` works.
 	 */
-	public stop(): Promise<void> {
+	public stop(timeoutMs?: number): Promise<void> {
+		if (timeoutMs !== undefined && !(timeoutMs > 0 && timeoutMs <= MAX_STOP_TIMEOUT_MS)) {
+			return Promise.reject(
+				new RangeError(
+					`stop timeoutMs must be above 0 and at most ${MAX_STOP_TIMEOUT_MS}, got ${timeoutMs}`
+				)
+			);
+		}
 		this._acceptingDiscoveryRefreshes = false;
 		if (this._stopPromise) return this._stopPromise;
+		const deadlines =
+			timeoutMs === undefined
+				? null
+				: serverStopDeadlines(Date.now(), timeoutMs, this._config.persistenceWriteTimeout);
 		const acceptedRefresh = this._refreshPromise;
-		this._stopPromise = this._container.resolve('sessionLifecycle').shutdown(async () => {
-			const failures: unknown[] = [];
-			const [skillWatcherResult, toolWatcherResult, refreshResult] = await Promise.allSettled([
-				this._skillWatcher?.stop() ?? Promise.resolve(),
-				this._toolWatcher?.stop() ?? Promise.resolve(),
-				acceptedRefresh ?? Promise.resolve(),
-			]);
-			for (const result of [skillWatcherResult, toolWatcherResult]) {
-				switch (result.status) {
-					case 'fulfilled':
-						break;
-					case 'rejected':
-						appendCleanupFailure(failures, result.reason);
-						this._logger.error('Error stopping watcher', {
-							error: getErrorMessage(result.reason),
-						});
-						break;
-					default:
-						assertNever(result);
-				}
-			}
-			switch (refreshResult.status) {
-				case 'fulfilled':
-					break;
-				case 'rejected':
-					appendCleanupFailure(failures, refreshResult.reason);
-					this._logger.error('Error refreshing discovery during shutdown', {
-						error: getErrorMessage(refreshResult.reason),
-					});
-					break;
-				default:
-					assertNever(refreshResult);
-			}
-
-			// Stop suspension store sweeper if registered
-			if (this._config.features.toolInterleave && this._container.has('suspensionStore')) {
-				try {
-					const suspensionStore = this._container.resolve('suspensionStore');
-					suspensionStore.stop();
-				} catch (error) {
-					appendCleanupFailure(failures, error);
-					this._logger.error('Error stopping suspension store', {
-						error: getErrorMessage(error),
-					});
-				}
-			}
-
-			// Flush any buffered writes before closing persistence
-			try {
-				await this._historyManager.shutdownWithinLifecycle();
-			} catch (error) {
-				appendCleanupFailure(failures, error);
-				this._logger.error('Error flushing write buffer during shutdown', {
-					error: getErrorMessage(error),
-				});
-			}
-
-			// Close persistence backend if available
-			const persistence = this._container.resolve('Persistence');
-			if (persistence && persistence !== this._borrowedPersistence) {
-				try {
-					await persistence.close();
-					this._logger.info('Persistence backend closed');
-				} catch (error) {
-					appendCleanupFailure(failures, error);
-					this._logger.error('Error closing persistence backend', {
-						error: getErrorMessage(error),
-					});
-				}
-			}
-
-			if (failures.length > 0) {
-				throw new AggregateError(failures, 'Failed to stop server cleanly');
-			}
-			this._historyManager.clearLiveStateAfterShutdown();
-			this._logger.info('Server stopped, watchers cleaned up');
-		});
+		this._stopPromise = this._container
+			.resolve('sessionLifecycle')
+			.shutdown((idle) => this._shutdownOwnedResources(idle, deadlines), {
+				idleTimeoutMs: deadlines?.idleMs,
+				onAdmissionClosed: () => this._startDiscoveryTeardown(acceptedRefresh),
+			});
 		return this._stopPromise;
+	}
+
+	private async _shutdownOwnedResources(
+		idle: ShutdownIdleOutcome,
+		deadlines: ServerStopDeadlines | null
+	): Promise<void> {
+		const failures: unknown[] = [];
+		await this._collectDiscoveryTeardown(failures, idle, deadlines);
+		this._stopSuspensionStore(failures);
+		await this._flushWithinDeadline(failures, deadlines);
+		await this._closeOwnedPersistenceWithinDeadline(failures, deadlines);
+
+		if (failures.length > 0) {
+			throw new AggregateError(failures, 'Failed to stop server cleanly');
+		}
+		// Operations abandoned at the idle bound may still hold live state.
+		if (idle.timedOut) return;
+		this._historyManager.clearLiveStateAfterShutdown();
+		this._logger.info('Server stopped, watchers cleaned up');
+	}
+
+	/** Starts the watcher stops and joins the accepted refresh; the promise never rejects. */
+	private _startDiscoveryTeardown(
+		acceptedRefresh: Promise<{ tools: number; skills: number }> | null
+	): Promise<void> {
+		const teardown = this._stopDiscovery(acceptedRefresh).catch((error: unknown) => [error]);
+		this._discoveryTeardown = teardown;
+		return teardown.then(() => undefined);
+	}
+
+	private async _stopDiscovery(
+		acceptedRefresh: Promise<{ tools: number; skills: number }> | null
+	): Promise<unknown[]> {
+		const failures: unknown[] = [];
+		const [skillWatcherResult, toolWatcherResult, refreshResult] = await Promise.allSettled([
+			this._skillWatcher?.stop() ?? Promise.resolve(),
+			this._toolWatcher?.stop() ?? Promise.resolve(),
+			acceptedRefresh ?? Promise.resolve(),
+		]);
+		for (const result of [skillWatcherResult, toolWatcherResult]) {
+			this._collectSettledFailure(failures, result, 'Error stopping watcher');
+		}
+		this._collectSettledFailure(
+			failures,
+			refreshResult,
+			'Error refreshing discovery during shutdown'
+		);
+		return failures;
+	}
+
+	private _collectSettledFailure(
+		failures: unknown[],
+		result: PromiseSettledResult<unknown>,
+		message: string
+	): void {
+		switch (result.status) {
+			case 'fulfilled':
+				return;
+			case 'rejected':
+				appendCleanupFailure(failures, result.reason);
+				this._logger.error(message, { error: getErrorMessage(result.reason) });
+				return;
+			default:
+				assertNever(result);
+		}
+	}
+
+	/**
+	 * Reports the teardown's own failures once it settled; when the idle bound elapsed first, it
+	 * reports the `discovery` timeout and leaves the teardown (which never rejects) running.
+	 */
+	private async _collectDiscoveryTeardown(
+		failures: unknown[],
+		idle: ShutdownIdleOutcome,
+		deadlines: ServerStopDeadlines | null
+	): Promise<void> {
+		const teardown = this._discoveryTeardown;
+		if (teardown === null) return;
+		if (!idle.admissionClosedSettled && deadlines !== null) {
+			const timeout = new ServerStopTimeoutError('discovery', deadlines.idleMs, null);
+			failures.push(timeout);
+			this._logger.error('Discovery teardown overran the stop budget', {
+				error: getErrorMessage(timeout),
+			});
+			return;
+		}
+		failures.push(...(await teardown));
+	}
+
+	private _stopSuspensionStore(failures: unknown[]): void {
+		if (!this._config.features.toolInterleave || !this._container.has('suspensionStore')) return;
+		try {
+			this._container.resolve('suspensionStore').stop();
+		} catch (error) {
+			appendCleanupFailure(failures, error);
+			this._logger.error('Error stopping suspension store', {
+				error: getErrorMessage(error),
+			});
+		}
+	}
+
+	private async _flushWithinDeadline(
+		failures: unknown[],
+		deadlines: ServerStopDeadlines | null
+	): Promise<void> {
+		try {
+			if (deadlines === null) await this._historyManager.shutdownWithinLifecycle();
+			else
+				await this._historyManager.shutdownWithinLifecycle(
+					remainingUntil(deadlines.flushDeadline, Date.now())
+				);
+		} catch (error) {
+			appendCleanupFailure(failures, error);
+			this._logger.error('Error flushing write buffer during shutdown', {
+				error: getErrorMessage(error),
+			});
+		}
+	}
+
+	/**
+	 * Closes a server-owned backend within `persistenceWriteTimeout`, or within what is left of the
+	 * close deadline when that is shorter; an injected one stays open.
+	 */
+	private async _closeOwnedPersistenceWithinDeadline(
+		failures: unknown[],
+		deadlines: ServerStopDeadlines | null
+	): Promise<void> {
+		const persistence = this._container.resolve('Persistence');
+		if (!persistence || persistence === this._borrowedPersistence) return;
+
+		const writeTimeoutMs = this._config.persistenceWriteTimeout;
+		const timeoutMs =
+			deadlines === null
+				? writeTimeoutMs
+				: Math.min(writeTimeoutMs, remainingUntil(deadlines.closeDeadline, Date.now()));
+		const outcome = await callWithinDeadline(() => persistence.close(), timeoutMs);
+		let failure: unknown;
+		switch (outcome.kind) {
+			case 'fulfilled':
+				this._logger.info('Persistence backend closed');
+				return;
+			case 'rejected':
+				failure = outcome.reason;
+				break;
+			case 'timedOut':
+				failure = new PersistenceWriteTimeoutError(
+					timeoutMs,
+					{ kind: 'close' },
+					outcome.lateOutcome
+				);
+				break;
+			default:
+				assertNever(outcome);
+		}
+		appendCleanupFailure(failures, failure);
+		this._logger.error('Error closing persistence backend', {
+			error: getErrorMessage(failure),
+		});
 	}
 
 	/** Awaitably resets one session and matching processor-owned state. */

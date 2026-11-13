@@ -14,6 +14,7 @@ describe('ServerConfig', () => {
 			expect(config.persistenceBufferSize).toBe(100);
 			expect(config.persistenceFlushInterval).toBe(1000);
 			expect(config.persistenceMaxRetries).toBe(3);
+			expect(config.persistenceWriteTimeout).toBe(5000);
 			expect(config.discoveryCache).toEqual({ ttl: 300000, maxSize: 100 });
 			expect(config.persistence).toEqual({ enabled: false, backend: 'memory' });
 			expect(config.skillDirs).toHaveLength(4);
@@ -280,6 +281,54 @@ describe('ServerConfig', () => {
 		});
 	});
 
+	describe('persistenceWriteTimeout validation', () => {
+		it('should default to 5000 when undefined', () => {
+			expect(new ServerConfig().persistenceWriteTimeout).toBe(5000);
+		});
+
+		it.each([0.5, 1, 30_000, 2_147_483_647])('should accept %s milliseconds', (value) => {
+			expect(new ServerConfig({ persistenceWriteTimeout: value }).persistenceWriteTimeout).toBe(
+				value
+			);
+		});
+
+		it.each([0, -1])('should throw for %s', (value) => {
+			expect(() => new ServerConfig({ persistenceWriteTimeout: value })).toThrow(
+				ConfigurationError
+			);
+			expect(() => new ServerConfig({ persistenceWriteTimeout: value })).toThrow(
+				`persistenceWriteTimeout must be greater than 0, got ${value}`
+			);
+		});
+
+		it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+			'should throw for non-finite value %s',
+			(value) => {
+				expect(() => new ServerConfig({ persistenceWriteTimeout: value })).toThrow(
+					'persistenceWriteTimeout must be a finite number'
+				);
+			}
+		);
+
+		it('should throw for values above 2147483647', () => {
+			expect(() => new ServerConfig({ persistenceWriteTimeout: 2_147_483_648 })).toThrow(
+				'persistenceWriteTimeout must not exceed 2147483647, got 2147483648'
+			);
+		});
+
+		it('should throw for a non-number value', () => {
+			const options = JSON.parse('{"persistenceWriteTimeout":"5000"}');
+			expect(() => new ServerConfig(options)).toThrow(ConfigurationError);
+		});
+
+		it('should be reported by toJSON', () => {
+			expect(
+				new ServerConfig({ persistenceWriteTimeout: 2500 }).toJSON().persistenceWriteTimeout
+			).toBe(2500);
+			expect(new ServerConfig().toJSON().persistenceWriteTimeout).toBe(5000);
+		});
+	});
+
 	describe('skillDirs', () => {
 		it('should use provided skillDirs', () => {
 			const config = new ServerConfig({ skillDirs: ['/a', '/b'] });
@@ -411,6 +460,7 @@ describe('ServerConfig', () => {
 			expect(json.persistenceBufferSize).toBeDefined();
 			expect(json.persistenceFlushInterval).toBeDefined();
 			expect(json.persistenceMaxRetries).toBeDefined();
+			expect(json.persistenceWriteTimeout).toBe(5000);
 		});
 	});
 
@@ -427,6 +477,7 @@ describe('ServerConfig', () => {
 				persistenceBufferSize: 50,
 				persistenceFlushInterval: 500,
 				persistenceMaxRetries: 5,
+				persistenceWriteTimeout: 2500,
 			});
 
 			expect(config.maxHistorySize).toBe(500);
@@ -440,6 +491,7 @@ describe('ServerConfig', () => {
 			expect(config.persistenceBufferSize).toBe(50);
 			expect(config.persistenceFlushInterval).toBe(500);
 			expect(config.persistenceMaxRetries).toBe(5);
+			expect(config.persistenceWriteTimeout).toBe(2500);
 		});
 	});
 });

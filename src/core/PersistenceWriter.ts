@@ -7,11 +7,20 @@
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
 import type { PersistenceWork, PersistenceWorkFailure } from '../contracts/persistence-work.js';
 import { assertNever } from '../utils.js';
+import { callWithinDeadline, type PersistenceCallOutcome } from './PersistenceCallDeadline.js';
+import { PersistenceWriteTimeoutError } from './PersistenceBufferErrors.js';
 
 const DEFAULT_RETRY_DELAYS = [100, 500, 2000] as const;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** Async scheduler used between persistence attempts. */
 export type PersistenceDelay = (milliseconds: number) => Promise<void>;
+
+/**
+ * Answer to a retry admission: `true` admits, `false` refuses, and a promise means the answer is
+ * not known yet and the writer asks again once it settles.
+ */
+export type PersistenceRetryAdmission = boolean | Promise<void>;
 
 /** Immutable dependencies and retry policy for {@link PersistenceWriter}. */
 export type PersistenceWriterConfig = {
@@ -19,10 +28,24 @@ export type PersistenceWriterConfig = {
 	readonly maxRetries: number;
 	readonly retryDelays?: readonly number[];
 	readonly delay?: PersistenceDelay;
+	/** Per-call deadline in milliseconds; `undefined` waits on every call without a deadline. */
+	readonly writeTimeout?: number;
+	/**
+	 * Consulted after each retry delay, never before the first attempt. On `true` the retry is
+	 * dispatched in the same synchronous step as the answer, so nothing runs between the decision
+	 * and the backend call. `false` ends the write without another dispatch: the failure keeps the
+	 * attempts made and the cause of the last real attempt. A promise makes the writer wait and ask
+	 * again. `undefined` admits every retry without an extra await.
+	 */
+	readonly admitRetry?: () => PersistenceRetryAdmission;
 };
 
 /** Allocation-free success sentinel or an attributable terminal failure. */
 export type PersistenceWriteResult = true | PersistenceWorkFailure;
+
+type AttemptOutcome =
+	| PersistenceCallOutcome
+	| { readonly kind: 'timedOut'; readonly error: PersistenceWriteTimeoutError };
 
 function defaultDelay(milliseconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -33,6 +56,14 @@ function defaultDelay(milliseconds: number): Promise<void> {
  *
  * The writer owns no queue or generation state. Each call preserves the work
  * coordinates and delegates retention or error aggregation to its caller.
+ *
+ * With `writeTimeout`, an attempt that has not settled by the deadline ends the write:
+ * the failure's cause is a {@link PersistenceWriteTimeoutError} whose `lateOutcome`
+ * reports the same backend call, and no further attempt is dispatched.
+ *
+ * With `admitRetry`, every retry attempt is admitted after its delay and dispatched in the same
+ * synchronous step as the admission; a refused retry ends the write as a failure of the attempts
+ * already made.
  *
  * @example
  * ```ts
@@ -46,22 +77,31 @@ export class PersistenceWriter {
 	private readonly _maxRetries: number;
 	private readonly _retryDelays: readonly number[];
 	private readonly _delay: PersistenceDelay;
+	private readonly _writeTimeout: number | undefined;
+	private readonly _admitRetry: (() => PersistenceRetryAdmission) | undefined;
 
 	/**
 	 * Creates a bounded writer.
 	 *
-	 * @param config - Persistence dependency, retry bound, cadence, and delay scheduler.
-	 * @throws {RangeError} When `maxRetries` is not a non-negative safe integer.
+	 * @param config - Persistence dependency, retry bound, cadence, delay scheduler, and deadline.
+	 * @throws {RangeError} When `maxRetries` is not a non-negative safe integer, or when
+	 * `writeTimeout` is not a finite number above 0 and at most 2147483647.
 	 */
 	public constructor(config: PersistenceWriterConfig) {
 		if (!Number.isSafeInteger(config.maxRetries) || config.maxRetries < 0) {
 			throw new RangeError('maxRetries must be a non-negative safe integer');
+		}
+		const timeout = config.writeTimeout;
+		if (timeout !== undefined && !(timeout > 0 && timeout <= MAX_TIMER_DELAY_MS)) {
+			throw new RangeError(`writeTimeout must be above 0 and at most ${MAX_TIMER_DELAY_MS}`);
 		}
 
 		this._persistence = config.persistence;
 		this._maxRetries = config.maxRetries;
 		this._retryDelays = [...(config.retryDelays ?? DEFAULT_RETRY_DELAYS)];
 		this._delay = config.delay ?? defaultDelay;
+		this._writeTimeout = timeout;
+		this._admitRetry = config.admitRetry;
 	}
 
 	/**
@@ -71,18 +111,45 @@ export class PersistenceWriter {
 	 * @returns `true` on success, or the exact attributable failure after exhaustion.
 	 */
 	public async write(work: PersistenceWork): Promise<PersistenceWriteResult> {
+		const admitRetry = this._admitRetry;
 		let finalCause: unknown;
 
 		for (let attemptIndex = 0; attemptIndex <= this._maxRetries; attemptIndex++) {
 			if (attemptIndex > 0) {
 				await this._delay(this._retryDelay(attemptIndex - 1));
+				if (admitRetry !== undefined) {
+					// No await may sit between a `true` answer and the dispatch below.
+					let admission = admitRetry();
+					while (typeof admission !== 'boolean') {
+						await admission;
+						admission = admitRetry();
+					}
+					if (!admission) return this._failure(work, attemptIndex, finalCause);
+				}
 			}
 
-			try {
-				await this._dispatch(work);
-				return true;
-			} catch (cause) {
-				finalCause = cause;
+			const timeoutMs = this._writeTimeout;
+			if (timeoutMs === undefined) {
+				try {
+					await this._dispatch(work);
+					return true;
+				} catch (cause) {
+					finalCause = cause;
+				}
+				continue;
+			}
+
+			const outcome = await this._attemptWithinDeadline(work, timeoutMs);
+			switch (outcome.kind) {
+				case 'fulfilled':
+					return true;
+				case 'rejected':
+					finalCause = outcome.reason;
+					break;
+				case 'timedOut':
+					return this._failure(work, attemptIndex + 1, outcome.error);
+				default:
+					return assertNever(outcome);
 			}
 		}
 
@@ -91,6 +158,24 @@ export class PersistenceWriter {
 
 	private _retryDelay(retryIndex: number): number {
 		return this._retryDelays[retryIndex] ?? this._retryDelays.at(-1) ?? 0;
+	}
+
+	private async _attemptWithinDeadline(
+		work: PersistenceWork,
+		timeoutMs: number
+	): Promise<AttemptOutcome> {
+		const outcome = await callWithinDeadline(() => this._dispatch(work), timeoutMs);
+		if (outcome.kind !== 'timedOut') return outcome;
+		const call = {
+			kind: 'work',
+			operation: work.kind,
+			token: work.token,
+			sessionId: work.sessionId,
+		} as const;
+		return {
+			kind: 'timedOut',
+			error: new PersistenceWriteTimeoutError(timeoutMs, call, outcome.lateOutcome),
+		};
 	}
 
 	private async _dispatch(work: PersistenceWork): Promise<void> {

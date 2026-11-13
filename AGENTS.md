@@ -17,7 +17,7 @@ MCP sequential-thinking server (`@iworkforces/tracelattice`). TypeScript ESM + V
 ├── src/CliLifecycle.ts   # SIGINT/SIGTERM + stdin-end shutdown
 ├── src/schema.ts         # Valibot SSOT + TOOL_DESCRIPTION
 ├── src/ServerConfig.ts   # Validated config + 7 feature flags
-├── src/errors.ts         # SequentialThinkingError + ERROR_CODES (38)
+├── src/errors.ts         # SequentialThinkingError + ERROR_CODES (42)
 ├── src/core/             # Pipeline + session/persistence coordinators
 ├── src/persistence/      # File v2 / SQLite v2 / Memory sinks
 ├── src/contracts/        # Cross-module interfaces (no barrels)
@@ -47,25 +47,25 @@ MCP sequential-thinking server (`@iworkforces/tracelattice`). TypeScript ESM + V
 
 Refs = production `.ts` files containing the identifier (tests excluded). LSP is not configured; there is no codegraph. Sentrux DSM: 1345 edges, 277 nodes, 0 inversions.
 
-| Symbol                              | Type   | Location                                   | Refs | Role                                                                      |
-| ----------------------------------- | ------ | ------------------------------------------ | ---- | ------------------------------------------------------------------------- |
-| `asSessionId`                       | fn     | `src/contracts/ids.ts`                     | 36   | Only validated SessionId constructor; rejects retired `__global__`        |
-| `SequentialThinkingError`           | class  | `src/errors.ts`                            | 10   | ERROR_CODES hub (38). Module `errors.ts` is imported much more widely     |
+| Symbol                              | Type   | Location                                   | Refs | Role                                                                       |
+| ----------------------------------- | ------ | ------------------------------------------ | ---- | -------------------------------------------------------------------------- |
+| `asSessionId`                       | fn     | `src/contracts/ids.ts`                     | 36   | Only validated SessionId constructor; rejects retired `__global__`         |
+| `SequentialThinkingError`           | class  | `src/errors.ts`                            | 10   | ERROR_CODES hub (42). Module `errors.ts` is imported much more widely      |
 | `ThoughtData` / `ValidatedThought`  | type   | `src/core/thought.ts`                      | 56   | Branded schema output. `ValidatedThought` is 7 arms over 11 `ThoughtType`s |
-| `PersistenceBackend`                | iface  | `src/contracts/PersistenceBackend.ts`      | 22   | Session-scoped sink contract                                              |
-| `SequentialThinkingSchema`          | schema | `src/schema.ts`                            | 9    | Thought input SSOT (11 `thought_type` values)                             |
-| `HistoryManager`                    | class  | `src/core/HistoryManager.ts`               | 20   | Session maps + mutation coordinator (~1019L)                              |
-| `IHistoryManager`                   | iface  | `src/core/IHistoryManager.ts`              | 10   | Stays in core                                                             |
-| `ThoughtProcessor`                  | class  | `src/core/ThoughtProcessor.ts`             | 15   | Ingest seam (~893L)                                                       |
-| `ToolAwareSequentialThinkingServer` | class  | `src/lib.ts`                               | 9    | Public server; wires 20 DI keys (~866L)                                   |
-| `createServer` / `initializeServer` | fn     | `src/lib.ts`                               | 8/4  | Library factory / CLI convenience                                         |
-| `ServiceRegistry`                   | iface  | `src/di/ServiceRegistry.ts`                | 5    | 20 typed keys incl. `sessionLifecycle`                                    |
-| `IReasoningStrategy`                | iface  | `src/contracts/strategy.ts`                | 6    | `decide` / `shouldBranch` / `shouldTerminate`                             |
-| `EdgeEmitter`                       | class  | `src/core/graph/EdgeEmitter.ts`            | 2    | DAG writes; `dagEdges` gates this path                                    |
-| `PersistenceBuffer`                 | class  | `src/core/PersistenceBuffer.ts`            | 4    | Barriers (~652L). Queue is `PersistenceWorkQueue` (~617L)                 |
-| `SessionLifecycleCoordinator`       | class  | `src/core/SessionLifecycleCoordinator.ts`  | 6    | Admission + exclusive reset/evict                                         |
-| `createPersistenceBackend`          | fn     | `src/persistence/PersistenceFactory.ts`    | 3    | file / sqlite / memory, or `null` when disabled                           |
-| `StreamableHttpTransport`           | class  | `src/transport/StreamableHttpTransport.ts` | 6    | Production HTTP MCP path (~847L); not a lib export                        |
+| `PersistenceBackend`                | iface  | `src/contracts/PersistenceBackend.ts`      | 22   | Session-scoped sink contract                                               |
+| `SequentialThinkingSchema`          | schema | `src/schema.ts`                            | 9    | Thought input SSOT (11 `thought_type` values)                              |
+| `HistoryManager`                    | class  | `src/core/HistoryManager.ts`               | 20   | Session maps + mutation coordinator (~1092L)                               |
+| `IHistoryManager`                   | iface  | `src/core/IHistoryManager.ts`              | 10   | Stays in core                                                              |
+| `ThoughtProcessor`                  | class  | `src/core/ThoughtProcessor.ts`             | 15   | Ingest seam (~920L)                                                        |
+| `ToolAwareSequentialThinkingServer` | class  | `src/lib.ts`                               | 9    | Public server; wires 20 DI keys (~1089L)                                   |
+| `createServer` / `initializeServer` | fn     | `src/lib.ts`                               | 8/4  | Library factory / CLI convenience                                          |
+| `ServiceRegistry`                   | iface  | `src/di/ServiceRegistry.ts`                | 5    | 20 typed keys incl. `sessionLifecycle`                                     |
+| `IReasoningStrategy`                | iface  | `src/contracts/strategy.ts`                | 6    | `decide` / `shouldBranch` / `shouldTerminate`                              |
+| `EdgeEmitter`                       | class  | `src/core/graph/EdgeEmitter.ts`            | 2    | DAG writes; `dagEdges` gates this path                                     |
+| `PersistenceBuffer`                 | class  | `src/core/PersistenceBuffer.ts`            | 4    | Barriers (~1035L). Queue is `PersistenceWorkQueue` (~740L)                 |
+| `SessionLifecycleCoordinator`       | class  | `src/core/SessionLifecycleCoordinator.ts`  | 6    | Admission + exclusive reset/evict                                          |
+| `createPersistenceBackend`          | fn     | `src/persistence/PersistenceFactory.ts`    | 3    | file / sqlite / memory, or `null` when disabled                            |
+| `StreamableHttpTransport`           | class  | `src/transport/StreamableHttpTransport.ts` | 6    | Production HTTP MCP path (~875L); not a lib export                         |
 
 ## CONVENTIONS
 
@@ -105,8 +105,8 @@ Refs = production `.ts` files containing the identifier (tests excluded). LSP is
 - Sentrux caps are CC 25 and 100 lines; `check_rules` passes with no violations. Split long or branchy functions (scripts and tests included) instead of raising the caps.
 - Layers: types → crosscutting → config → core → domain → infrastructure → di → app → cli. `contracts/` and `utils.ts` are unlayered.
 - `ConnectionPool` is off CLI/DI. `HttpTransport` is a **library export**; CLI never selects it. `cluster/` does not exist (still a sentrux boundary).
-- `maxHistorySize` default and cap are **10000**. Persistence buffer size, flush interval, and retries are file-only (no `TRACELATTICE_*` override).
-- Large files: `HistoryManager` 1019, `ThoughtProcessor` 893, `StreamableHttpTransport` 847, `lib` 866, `schema` 794, `errors` 831, `PersistenceBuffer` 652, `ConnectionPool` 633, `PersistenceWorkQueue` 617.
+- `maxHistorySize` default and cap are **10000**. Persistence buffer size, flush interval, retries, and write timeout are file-only (no `TRACELATTICE_*` override).
+- Large files: `HistoryManager` 1092, `ThoughtProcessor` 920, `StreamableHttpTransport` 875, `lib` 1089, `schema` 802, `errors` 886, `PersistenceBuffer` 1035, `ConnectionPool` 633, `PersistenceWorkQueue` 740.
 - Tests: `src/__tests__/` mirrors source; flags via constructor; all three local `*.eval.ts` suites run by default in `npm test`, `npm run test:coverage`, and `npm run verify:release`.
 
 ## COMMANDS
