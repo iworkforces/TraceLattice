@@ -16,8 +16,11 @@ import { EdgeStore } from '../../core/graph/EdgeStore.js';
 import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 import { runWithContext } from '../../context/RequestContext.js';
 import { createServer } from '../../lib.js';
+import { StructuredLogger } from '../../logger/StructuredLogger.js';
 import { ServerConfig } from '../../ServerConfig.js';
-import { createTestThought } from '../helpers/factories.js';
+import { createTestThought, SignalingLogger } from '../helpers/factories.js';
+import { StallingPersistence } from '../helpers/StallingPersistence.js';
+import { advanceTimeAsync } from '../helpers/timers.js';
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -672,5 +675,279 @@ describe('session lifecycle integration', () => {
 		expect(server.history.getWriteBufferLength()).toBe(0);
 		expect(await persistence?.loadSummaries(sessionId)).toEqual([]);
 		await server.dispose();
+	});
+});
+
+describe('session lifecycle recovery from eviction_failed', () => {
+	const RETRY_SESSION = asSessionId('eviction-retry');
+	const SERVER_SESSION = asSessionId('server-eviction-failed');
+	const STALE_SWEEP_MS = SESSION_TTL_MS + CLEANUP_INTERVAL_MS;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+	});
+
+	afterEach(() => {
+		vi.clearAllTimers();
+		vi.useRealTimers();
+	});
+
+	interface RecordingLogger {
+		readonly logger: StructuredLogger;
+		readonly messages: string[];
+		next(message: string): Promise<void>;
+	}
+
+	function recordingLogger(): RecordingLogger {
+		const logger = new StructuredLogger({ level: 'debug' });
+		const messages: string[] = [];
+		const waiters = new Map<string, Array<() => void>>();
+		const record = (message: string): void => {
+			messages.push(message);
+			for (const resolve of waiters.get(message) ?? []) resolve();
+			waiters.delete(message);
+		};
+		for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+			vi.spyOn(logger, level).mockImplementation(record);
+		}
+		return {
+			logger,
+			messages,
+			next(message) {
+				const signal = Promise.withResolvers<void>();
+				waiters.set(message, [...(waiters.get(message) ?? []), signal.resolve]);
+				return signal.promise;
+			},
+		};
+	}
+
+	function serverThought(number: number, fields: Record<string, unknown> = {}) {
+		return {
+			thought: `server thought ${number}`,
+			thought_number: number,
+			total_thoughts: 5,
+			next_thought_needed: true,
+			session_id: SERVER_SESSION,
+			...fields,
+		};
+	}
+
+	function errorCode(result: { content: Array<{ text?: string }> }): unknown {
+		return JSON.parse(result.content[0]?.text ?? '{}').code;
+	}
+
+	async function serverWithFailedEviction(owner: string) {
+		const backend = new StallingPersistence();
+		backend.holdWrites = true;
+		const logs = recordingLogger();
+		const server = await createServer({
+			config: new ServerConfig({
+				persistenceFlushInterval: 60_000,
+				persistenceMaxRetries: 0,
+				persistenceWriteTimeout: 2_147_483_647,
+			}),
+			persistenceBackend: backend,
+			logger: logs.logger,
+			autoDiscover: false,
+			loadFromPersistence: false,
+		});
+		const asOwner = <T>(work: () => T): T => runWithContext({ requestId: owner, owner }, work);
+		const seeded = await asOwner(() => server.processThought(serverThought(1)));
+		expect(seeded.isError).toBeFalsy();
+		await advanceTimeAsync(STALE_SWEEP_MS);
+		const evictionFailed = logs.next('Session cleanup failed');
+		backend.holdWrites = false;
+		backend.releaseHeldCall(new Error('slow disk'));
+		await evictionFailed;
+		const lifecycle = server.getContainer().resolve('sessionLifecycle');
+		expect(lifecycle.phaseFor(SERVER_SESSION)).toBe('eviction_failed');
+		return { backend, logs, server, lifecycle, asOwner };
+	}
+
+	it('skips retries during an outage, then retries a session that no longer looks stale', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		persistence.down = true;
+		const errors: Error[] = [];
+		const logger = new SignalingLogger();
+		const lifecycle = new SessionLifecycleCoordinator();
+		const flushIntervalMs = 36 * 60 * 1000;
+		const manager = new HistoryManager({
+			persistence,
+			logger,
+			lifecycleCoordinator: lifecycle,
+			persistenceFlushInterval: flushIntervalMs,
+			persistenceMaxRetries: 0,
+			eventEmitter: {
+				emit: (_event, payload) => errors.push(payload.error) > 0,
+			},
+		});
+		manager.addThought(thought(RETRY_SESSION, 1));
+		const evictionFailed = logger.next('Session cleanup failed');
+		await advanceTimeAsync(STALE_SWEEP_MS);
+		await evictionFailed;
+		const attemptsAtFailure = persistence.thoughtAttempts;
+		const errorsAtFailure = errors.length;
+
+		// When
+		await advanceTimeAsync(7 * CLEANUP_INTERVAL_MS - 1);
+		const attemptsDuringOutage = persistence.thoughtAttempts;
+		const errorsDuringOutage = errors.length;
+		const phaseDuringOutage = lifecycle.phaseFor(RETRY_SESSION);
+		const admissionDuringOutage = (() => {
+			try {
+				manager.addThought(thought(RETRY_SESSION, 2));
+			} catch (error) {
+				return error;
+			}
+			return undefined;
+		})();
+		manager.getHistory(RETRY_SESSION);
+		persistence.down = false;
+		const retried = logger.next('Retried failed session eviction');
+		await advanceTimeAsync(2 * CLEANUP_INTERVAL_MS);
+		await retried;
+
+		// Then
+		expect(attemptsAtFailure).toBe(1);
+		expect(errorsAtFailure).toBe(1);
+		expect(attemptsDuringOutage).toBe(2);
+		expect(errorsDuringOutage).toBe(1);
+		expect(phaseDuringOutage).toBe('eviction_failed');
+		expect(admissionDuringOutage).toMatchObject({
+			code: 'SESSION_LIFECYCLE_CLOSED',
+			phase: 'eviction_failed',
+		});
+		expect(manager.getSessionIds()).not.toContain(RETRY_SESSION);
+		expect(lifecycle.phaseFor(RETRY_SESSION)).toBe('open');
+		expect(() => manager.addThought(thought(RETRY_SESSION, 3))).toThrow(
+			expect.objectContaining({ code: 'SESSION_EXPIRED' })
+		);
+		expect(await persistence.loadHistoryForSession(RETRY_SESSION)).toHaveLength(1);
+		await manager.shutdown();
+	});
+
+	it('admits an authorized resetSession from eviction_failed and denies a foreign owner first', async () => {
+		// Given
+		const { backend, server, lifecycle, asOwner } = await serverWithFailedEviction('alice');
+		const blocked = await asOwner(() => server.processThought(serverThought(2)));
+
+		// When
+		const foreign = runWithContext({ requestId: 'bob', owner: 'bob' }, () =>
+			server.resetSession(SERVER_SESSION)
+		);
+		await expect(foreign).rejects.toMatchObject({ code: 'SESSION_ACCESS_DENIED' });
+		const phaseAfterDenial = lifecycle.phaseFor(SERVER_SESSION);
+		await asOwner(() => server.resetSession(SERVER_SESSION));
+		const resumed = await asOwner(() => server.processThought(serverThought(1)));
+
+		// Then
+		expect(errorCode(blocked)).toBe('SESSION_LIFECYCLE_CLOSED');
+		expect(phaseAfterDenial).toBe('eviction_failed');
+		expect(backend.clearCalls).toBe(1);
+		expect(resumed.isError).toBeFalsy();
+		expect(lifecycle.phaseFor(SERVER_SESSION)).toBe('open');
+		expect(server.history.getPersistenceBacklogView()).toMatchObject({
+			quarantinedSessionCount: 0,
+			evictionRetrySessionCount: 0,
+			retainedFailureCount: 0,
+		});
+		await server.dispose();
+	});
+
+	it('admits a reset_state replacement from eviction_failed; a failed one stops the sweep retrying', async () => {
+		// Given
+		const { backend, logs, server, lifecycle, asOwner } = await serverWithFailedEviction('alice');
+		backend.failClear = true;
+
+		// When
+		const failed = await asOwner(() =>
+			server.processThought(serverThought(1, { reset_state: true }))
+		);
+		const viewAfterFailure = server.history.getPersistenceBacklogView();
+		await advanceTimeAsync(2 * CLEANUP_INTERVAL_MS);
+		const phaseAfterSweeps = lifecycle.phaseFor(SERVER_SESSION);
+		backend.failClear = false;
+		const replaced = await asOwner(() =>
+			server.processThought(serverThought(1, { reset_state: true }))
+		);
+
+		// Then
+		expect(failed.isError).toBe(true);
+		expect(viewAfterFailure).toMatchObject({
+			quarantinedSessionCount: 1,
+			evictionRetrySessionCount: 0,
+		});
+		expect(phaseAfterSweeps).toBe('reset_failed');
+		expect(logs.messages).not.toContain('Retried failed session eviction');
+		expect(logs.messages.filter((message) => message === 'Session cleanup failed')).toHaveLength(1);
+		expect(replaced.isError).toBeFalsy();
+		expect(lifecycle.phaseFor(SERVER_SESSION)).toBe('open');
+		expect(server.history.getHistory(SERVER_SESSION)).toHaveLength(1);
+		await server.dispose();
+	});
+
+	it('leaves an invalid reset_state replacement from eviction_failed in reset_failed', async () => {
+		// Given
+		const { backend, server, lifecycle, asOwner } = await serverWithFailedEviction('alice');
+
+		// When
+		const invalid = await asOwner(() =>
+			server.processThought(
+				serverThought(2, { reset_state: true, thought_type: 'backtrack', backtrack_target: 1 })
+			)
+		);
+
+		// Then
+		expect(invalid.isError).toBe(true);
+		expect(backend.clearCalls).toBe(0);
+		expect(lifecycle.phaseFor(SERVER_SESSION)).toBe('reset_failed');
+		expect(server.history.getPersistenceBacklogView()).toMatchObject({
+			quarantinedSessionCount: 1,
+			evictionRetrySessionCount: 0,
+		});
+		await asOwner(() => server.resetSession(SERVER_SESSION));
+		expect(lifecycle.phaseFor(SERVER_SESSION)).toBe('open');
+		await server.dispose();
+	});
+
+	it('admits a reset of a session that capacity eviction left in eviction_failed', async () => {
+		// Given
+		const lifecycle = new SessionLifecycleCoordinator();
+		const persistence = new StallingPersistence();
+		const clearAuxiliaryState = vi.fn<(sessionId: SessionId) => void>();
+		clearAuxiliaryState.mockImplementationOnce(() => {
+			throw new Error('auxiliary cleanup failed');
+		});
+		const manager = new HistoryManager({
+			persistence,
+			persistenceFlushInterval: 60_000,
+			maxSessionsPerOwner: 1,
+			lifecycleCoordinator: lifecycle,
+			clearSessionAuxiliaryState: clearAuxiliaryState,
+		});
+		const asOwner = (work: () => void): void =>
+			runWithContext({ requestId: 'owner', owner: 'owner' }, work);
+		asOwner(() => manager.addThought(thought('capacity-victim', 1)));
+		await manager.drainSession(asSessionId('capacity-victim'));
+		vi.setSystemTime(1);
+		expect(() => asOwner(() => manager.addThought(thought('capacity-newcomer', 1)))).toThrow(
+			'auxiliary cleanup failed'
+		);
+		const viewAfterFailure = manager.getPersistenceBacklogView();
+
+		// When
+		await runWithContext({ requestId: 'owner', owner: 'owner' }, () =>
+			manager.resetSession('capacity-victim')
+		);
+
+		// Then
+		expect(viewAfterFailure).toMatchObject({ evictionRetrySessionCount: 1 });
+		expect(persistence.clearCalls).toBe(1);
+		expect(lifecycle.phaseFor(asSessionId('capacity-victim'))).toBe('open');
+		expect(manager.getHistory('capacity-victim')).toEqual([]);
+		expect(manager.getPersistenceBacklogView()).toMatchObject({ evictionRetrySessionCount: 0 });
+		await manager.shutdown();
 	});
 });

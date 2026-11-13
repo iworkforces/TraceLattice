@@ -204,6 +204,7 @@ interface HarnessOptions {
 	readonly maxPendingThoughtsPerSession?: number;
 	readonly logger?: Logger;
 	readonly clock?: PersistenceClock;
+	readonly writeTimeout?: number;
 }
 
 const activeBuffers: PersistenceBuffer[] = [];
@@ -230,6 +231,7 @@ function createHarness(options: HarnessOptions): Harness {
 		maxPendingThoughtsPerSession: options.maxPendingThoughtsPerSession,
 		logger: options.logger,
 		clock: options.clock,
+		writeTimeout: options.writeTimeout,
 	});
 	activeBuffers.push(buffer);
 	return { buffer };
@@ -2211,6 +2213,7 @@ describe('PersistenceBuffer backlog view', () => {
 	const EMPTY_VIEW = {
 		globalQuarantined: false,
 		quarantinedSessionCount: 0,
+		evictionRetrySessionCount: 0,
 		blockedSessionCount: 0,
 		retainedFailureCount: 0,
 		pendingThoughtCount: 0,
@@ -2559,7 +2562,8 @@ describe('PersistenceBuffer ordered durable writes', () => {
 		]);
 		expect(recoveredView).toEqual({
 			globalQuarantined: false,
-			quarantinedSessionCount: 1,
+			quarantinedSessionCount: 0,
+			evictionRetrySessionCount: 1,
 			blockedSessionCount: 0,
 			retainedFailureCount: 0,
 			pendingThoughtCount: 0,
@@ -2567,7 +2571,10 @@ describe('PersistenceBuffer ordered durable writes', () => {
 		expect(stateAfterRecovery).toBe('failed');
 		expect(admissionError).toMatchObject({ name: 'PersistenceSessionAdmissionClosedError' });
 		expect(harness.buffer.sessionEvictionState(ORDER_A)).toBe('quiescent');
-		expect(harness.buffer.getBacklogView().quarantinedSessionCount).toBe(0);
+		expect(harness.buffer.getBacklogView()).toMatchObject({
+			quarantinedSessionCount: 0,
+			evictionRetrySessionCount: 0,
+		});
 	});
 
 	it('discards held work and its retry state when a blocked session is reset', async () => {
@@ -2637,5 +2644,136 @@ describe('PersistenceBuffer ordered durable writes', () => {
 		expect(backgroundAttempts).toBe(4);
 		expect(backgroundErrors).toBe(1);
 		expect(errors).toHaveLength(2);
+	});
+});
+
+describe('PersistenceBuffer eviction retry after a failed eviction', () => {
+	const RETRIED = asSessionId('retry-evicted');
+	const FAILING = asSessionId('retry-other-failing');
+
+	function errorRecorder(errors: Error[]): PersistenceEventEmitter {
+		return {
+			emit(_event, payload) {
+				errors.push(payload.error);
+				return true;
+			},
+		};
+	}
+
+	it('retries with background selection and resends no retained write before its backoff', async () => {
+		// Given
+		const errors: Error[] = [];
+		const persistence = new RecordingPersistence({
+			thought: async ({ sessionId }) => {
+				if (sessionId === FAILING) throw new ExpectedWriteError('other session down');
+			},
+		});
+		const harness = createHarness({ persistence, eventEmitter: errorRecorder(errors) });
+		harness.buffer.quarantineFailedSession(RETRIED, 'eviction_failed');
+		acceptThought(harness, FAILING, 1);
+		await settle(drain(harness.buffer));
+		const writesBeforeRetry = persistence.thoughtWrites.length;
+		const errorsBeforeRetry = errors.length;
+		const cleanup = vi.fn(async () => undefined);
+
+		// When
+		const ready = harness.buffer.canRetryEviction(RETRIED);
+		await harness.buffer.withSessionEvictionBarrier(RETRIED, cleanup, { retry: true });
+
+		// Then
+		expect(ready).toBe(true);
+		expect(cleanup).toHaveBeenCalledOnce();
+		expect(persistence.thoughtWrites).toHaveLength(writesBeforeRetry);
+		expect(errors).toHaveLength(errorsBeforeRetry);
+		expect(harness.buffer.getBacklogView()).toMatchObject({
+			evictionRetrySessionCount: 0,
+			retainedFailureCount: 1,
+		});
+	});
+
+	it('defers a retry while the session holds a retained failure, never lifted by background recovery', async () => {
+		// Given
+		let down = true;
+		const persistence = new RecordingPersistence({
+			thought: async () => {
+				if (down) throw new ExpectedWriteError('backend down');
+			},
+		});
+		const harness = createHarness({ persistence, flushInterval: 100 });
+		acceptThought(harness, RETRIED, 1);
+		const evicted = await settle(
+			harness.buffer.withSessionEvictionBarrier(RETRIED, async () => undefined)
+		);
+		const readyDuringOutage = harness.buffer.canRetryEviction(RETRIED);
+
+		// When
+		down = false;
+		harness.buffer.startFlushTimer();
+		await vi.advanceTimersByTimeAsync(100);
+
+		// Then
+		expect(evicted.status).toBe('rejected');
+		expect(readyDuringOutage).toBe(false);
+		expect(harness.buffer.canRetryEviction(RETRIED)).toBe(true);
+		expect(harness.buffer.getBacklogView()).toMatchObject({
+			evictionRetrySessionCount: 1,
+			retainedFailureCount: 0,
+		});
+		expect(harness.buffer.sessionEvictionState(RETRIED)).toBe('failed');
+	});
+
+	it('defers a retry of every session while a timed-out backend call is pending', async () => {
+		// Given
+		const stalled = createDeferred();
+		const persistence = new RecordingPersistence({
+			thought: async ({ sessionId }) => {
+				if (sessionId === FAILING) await stalled.promise;
+			},
+		});
+		const harness = createHarness({ persistence, writeTimeout: 100 });
+		harness.buffer.quarantineFailedSession(RETRIED, 'eviction_failed');
+		acceptThought(harness, FAILING, 1);
+		const drained = settle(drain(harness.buffer));
+
+		// When
+		await vi.advanceTimersByTimeAsync(100);
+		const readyWhileStalled = harness.buffer.canRetryEviction(RETRIED);
+		stalled.resolve();
+		await drained;
+		await vi.advanceTimersByTimeAsync(0);
+
+		// Then
+		expect(readyWhileStalled).toBe(false);
+		expect(harness.buffer.canRetryEviction(RETRIED)).toBe(true);
+	});
+
+	it('counts a session also quarantined by a failed reset as reset-quarantined only', async () => {
+		// Given
+		const evictionOnly = asSessionId('retry-eviction-only');
+		const both = asSessionId('retry-both');
+		const harness = createHarness({ persistence: new RecordingPersistence() });
+		harness.buffer.quarantineFailedSession(evictionOnly, 'eviction_failed');
+		harness.buffer.quarantineFailedSession(both, 'eviction_failed');
+
+		// When
+		const beforeReset = harness.buffer.getBacklogView();
+		await settle(
+			harness.buffer.withSessionResetBarrier(both, async () => {
+				throw new ExpectedWriteError('clear failed');
+			})
+		);
+
+		// Then
+		expect(beforeReset).toMatchObject({ quarantinedSessionCount: 0, evictionRetrySessionCount: 2 });
+		expect(harness.buffer.getBacklogView()).toMatchObject({
+			quarantinedSessionCount: 1,
+			evictionRetrySessionCount: 1,
+		});
+		expect(harness.buffer.canRetryEviction(both)).toBe(false);
+		await harness.buffer.withSessionResetBarrier(both, async () => undefined);
+		expect(harness.buffer.getBacklogView()).toMatchObject({
+			quarantinedSessionCount: 0,
+			evictionRetrySessionCount: 1,
+		});
 	});
 });

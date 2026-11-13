@@ -222,10 +222,17 @@ export class HistoryManager implements IHistoryManager {
 			logger: this._logger,
 		});
 
+		const buffer = this._persistenceBuffer;
+		if (buffer !== null) {
+			this._lifecycle.onSessionExclusiveFailed((sessionId, phase) =>
+				buffer.quarantineFailedSession(sessionId, phase)
+			);
+		}
 		this._sessionManager.startCleanupTimer(
 			this._sessions,
 			(sessionId) => this._isTtlEvictionEligible(sessionId),
-			(sessionIds) => this._evictSessions(sessionIds)
+			(sessionIds) => this._evictSessions(sessionIds),
+			() => this._evictionRetryCandidates()
 		);
 	}
 
@@ -394,18 +401,38 @@ export class HistoryManager implements IHistoryManager {
 		if (failures.length > 0) throw new AggregateError(failures, 'Session eviction failed');
 	}
 
-	private _evictSession(sessionId: SessionId): Promise<void> {
-		return this._lifecycle.withSessionEviction(sessionId, async () => {
-			if (this._persistenceBuffer === null) {
-				this._removeLiveSession(sessionId);
-				return;
-			}
-			const session = this._sessions.get(sessionId);
-			if (session !== undefined) this._stageRestoreBranchReconciliation(sessionId, session);
-			await this._persistenceBuffer.withSessionEvictionBarrier(sessionId, async () => {
-				this._removeLiveSession(sessionId);
-			});
-		});
+	/**
+	 * Sessions whose eviction failed, retried on every sweep tick whether or not they still look
+	 * stale. A session is skipped while its persistence could only fail again or resend writes
+	 * outside their backoff; one a failed reset left `reset_failed` is never selected.
+	 */
+	private _evictionRetryCandidates(): readonly SessionId[] {
+		if (this._lifecycle.globalPhase !== 'open') return [];
+		return this._lifecycle
+			.sessionsInPhase('eviction_failed')
+			.filter((sessionId) => this._persistenceBuffer?.canRetryEviction(sessionId) ?? true);
+	}
+
+	private async _evictSession(sessionId: SessionId): Promise<void> {
+		const retry = this._lifecycle.phaseFor(sessionId) === 'eviction_failed';
+		await this._lifecycle.withSessionEviction(
+			sessionId,
+			async () => {
+				if (this._persistenceBuffer === null) {
+					this._removeLiveSession(sessionId);
+					return;
+				}
+				const session = this._sessions.get(sessionId);
+				if (session !== undefined) this._stageRestoreBranchReconciliation(sessionId, session);
+				await this._persistenceBuffer.withSessionEvictionBarrier(
+					sessionId,
+					async () => this._removeLiveSession(sessionId),
+					{ retry }
+				);
+			},
+			{ retryFailed: retry }
+		);
+		if (retry) this.log('Retried failed session eviction', { sessionId });
 	}
 
 	private _removeLiveSession(sessionId: SessionId): void {

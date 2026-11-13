@@ -8,8 +8,16 @@
 export interface PersistenceBacklogView {
 	/** A global reset failed, so every session is refused admission until a reset succeeds. */
 	readonly globalQuarantined: boolean;
-	/** Sessions refused admission after a failed reset or eviction barrier. */
+	/**
+	 * Sessions refused admission after a failed reset, including those whose eviction had failed
+	 * before. Only another reset recovers them.
+	 */
 	readonly quarantinedSessionCount: number;
+	/**
+	 * Sessions whose eviction failed and that a later sweep tick retries, or that an authorized
+	 * reset recovers. Disjoint from {@link quarantinedSessionCount}.
+	 */
+	readonly evictionRetrySessionCount: number;
 	/**
 	 * Sessions with a retained thought or backtrack failure. Every write such a session accepted
 	 * later is held until that write succeeds or the session is reset.

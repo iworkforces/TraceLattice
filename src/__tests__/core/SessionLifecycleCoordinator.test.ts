@@ -698,3 +698,106 @@ describe('SessionLifecycleCoordinator admission-closed callback', () => {
 		await held;
 	});
 });
+
+describe('SessionLifecycleCoordinator eviction_failed recovery', () => {
+	async function failEviction(
+		coordinator: SessionLifecycleCoordinator,
+		sessionId: ReturnType<typeof asSessionId>
+	): Promise<void> {
+		await expect(
+			coordinator.withSessionEviction(sessionId, async () =>
+				Promise.reject(new Error('eviction barrier failed'))
+			)
+		).rejects.toThrow('eviction barrier failed');
+	}
+
+	it('admits a reset from eviction_failed and reopens the session on success', async () => {
+		// Given
+		const sessionId = asSessionId('reset-after-eviction');
+		const coordinator = new SessionLifecycleCoordinator();
+		await failEviction(coordinator, sessionId);
+
+		// When
+		const reset = coordinator.withSessionReset(sessionId, async () => 'reset');
+
+		// Then
+		expect(coordinator.phaseFor(sessionId)).toBe('resetting');
+		await expect(reset).resolves.toBe('reset');
+		expect(coordinator.phaseFor(sessionId)).toBe('open');
+		await expect(coordinator.runOperation(sessionId, async () => 'admitted')).resolves.toBe(
+			'admitted'
+		);
+	});
+
+	it('admits a reset of a session that capacity eviction left in eviction_failed', async () => {
+		// Given
+		const sessionId = asSessionId('capacity-failed');
+		const coordinator = new SessionLifecycleCoordinator();
+		expect(() =>
+			coordinator.tryEvictIdleSessions([sessionId], () => {
+				throw new Error('capacity cleanup failed');
+			})
+		).toThrow('capacity cleanup failed');
+
+		// When
+		await coordinator.withSessionReset(sessionId, async () => undefined);
+
+		// Then
+		expect(coordinator.phaseFor(sessionId)).toBe('open');
+	});
+
+	it('leaves a failed reset of an eviction_failed session in reset_failed for reset only', async () => {
+		// Given
+		const sessionId = asSessionId('reset-fails-after-eviction');
+		const coordinator = new SessionLifecycleCoordinator();
+		await failEviction(coordinator, sessionId);
+
+		// When
+		await expect(
+			coordinator.withSessionReset(sessionId, async () => Promise.reject(new Error('clear failed')))
+		).rejects.toThrow('clear failed');
+		const evictionRetry = rejectionOf(
+			coordinator.withSessionEviction(sessionId, async () => undefined, { retryFailed: true })
+		);
+
+		// Then
+		expect(await evictionRetry).toMatchObject({
+			code: 'SESSION_LIFECYCLE_CLOSED',
+			phase: 'reset_failed',
+		});
+		expect(coordinator.sessionsInPhase('eviction_failed')).toEqual([]);
+		expect(coordinator.sessionsInPhase('reset_failed')).toEqual([sessionId]);
+		await coordinator.withSessionReset(sessionId, async () => undefined);
+		expect(coordinator.phaseFor(sessionId)).toBe('open');
+	});
+
+	it('notifies failure listeners for every session a failed exclusive leaves behind', async () => {
+		// Given
+		const coordinator = new SessionLifecycleCoordinator();
+		const listener = vi.fn();
+		coordinator.onSessionExclusiveFailed(listener);
+		const evicted = asSessionId('listener-evicted');
+		const capacityA = asSessionId('listener-capacity-a');
+		const capacityB = asSessionId('listener-capacity-b');
+
+		// When
+		await failEviction(coordinator, evicted);
+		await rejectionOf(
+			coordinator.withSessionReset(evicted, async () => Promise.reject(new Error()))
+		);
+		expect(() =>
+			coordinator.tryEvictIdleSessions([capacityA, capacityB], () => {
+				throw new Error('capacity cleanup failed');
+			})
+		).toThrow('capacity cleanup failed');
+
+		// Then
+		expect(listener.mock.calls).toEqual([
+			[evicted, 'eviction_failed'],
+			[evicted, 'reset_failed'],
+			[capacityA, 'eviction_failed'],
+			[capacityB, 'eviction_failed'],
+		]);
+		expect(coordinator.sessionsInPhase('eviction_failed')).toEqual([capacityA, capacityB]);
+	});
+});

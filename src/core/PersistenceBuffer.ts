@@ -20,6 +20,8 @@ import {
 import { ServerStopTimeoutError } from '../errors.js';
 import { callWithinDeadline, type PersistenceCallOutcome } from './PersistenceCallDeadline.js';
 import { SessionLifecycleClosedError } from './SessionErrors.js';
+import type { SessionFailurePhase } from './SessionLifecycleCoordinator.js';
+import { PersistenceQuarantine } from './PersistenceQuarantine.js';
 import {
 	PersistenceWriteGate,
 	timedOutClearCall,
@@ -51,6 +53,17 @@ export interface PersistenceEventEmitter {
 
 /** Observable persistence state relevant to safe in-memory session eviction. */
 export type SessionEvictionState = 'quiescent' | 'pending' | 'failed' | 'barrier';
+
+/** Options for {@link PersistenceBuffer.withSessionEvictionBarrier}. */
+export interface SessionEvictionBarrierOptions {
+	/**
+	 * Retry of a failed eviction: waits for the session's work with background selection, so it
+	 * sends nothing outside the retry backoff, and rejects while the session holds any retained
+	 * failure.
+	 * @default false
+	 */
+	readonly retry?: boolean;
+}
 
 /** Time source for background retry backoff. */
 export interface PersistenceClock {
@@ -157,8 +170,7 @@ export class PersistenceBuffer {
 	private readonly _sessionBarriers = new Map<SessionId, SessionBarrierState>();
 	private readonly _sessionBarrierOwnership = new AsyncLocalStorage<ReadonlySet<SessionId>>();
 	private readonly _sessionProgressWaiters = new Map<SessionId, Set<() => void>>();
-	private readonly _quarantinedSessions = new Set<SessionId>();
-	private readonly _evictionQuarantinedSessions = new Set<SessionId>();
+	private readonly _quarantine = new PersistenceQuarantine();
 	private _globalResetTail: Promise<void> = Promise.resolve();
 	private _globalResetOwners = 0;
 	private _globalQuarantined = false;
@@ -434,8 +446,7 @@ export class PersistenceBuffer {
 		if (
 			this._globalQuarantined ||
 			this._queue.hasSessionTerminalFailure(sessionId) ||
-			this._quarantinedSessions.has(sessionId) ||
-			this._evictionQuarantinedSessions.has(sessionId)
+			this._quarantine.has(sessionId)
 		) {
 			return 'failed';
 		}
@@ -443,20 +454,48 @@ export class PersistenceBuffer {
 	}
 
 	/**
+	 * Whether a sweep may retry the failed eviction of `sessionId` now. Not while the session
+	 * holds a retained write failure, a timed-out backend call is pending or a reset clear is in
+	 * flight, a barrier or reset owns it, or a failed reset quarantined it: a retry then could
+	 * only fail again or resend writes outside their backoff.
+	 */
+	public canRetryEviction(sessionId: SessionId): boolean {
+		return !(
+			this._shutdownSealed ||
+			this._dispatchBlocked() ||
+			this._globalResetOwners > 0 ||
+			this._globalQuarantined ||
+			this._sessionBarriers.has(sessionId) ||
+			this._quarantine.hasResetFailure(sessionId) ||
+			this._queue.hasSessionTerminalFailure(sessionId)
+		);
+	}
+
+	/**
+	 * Quarantines a session that its lifecycle exclusive left failed, also when the failure
+	 * happened before any barrier of this buffer ran: an invalid reset, or capacity eviction.
+	 */
+	public quarantineFailedSession(sessionId: SessionId, phase: SessionFailurePhase): void {
+		if (phase === 'reset_failed') this._quarantine.addResetFailure(sessionId);
+		else this._quarantine.addEvictionFailure(sessionId);
+	}
+
+	/**
 	 * Drains accepted session work before ordinary in-memory eviction cleanup.
 	 *
 	 * Unlike reset barriers, this operation never clears durable state or discards
-	 * accepted work. Failure retains admission quarantine until a later explicit
-	 * invocation successfully drains and completes cleanup.
+	 * accepted work. Failure retains admission quarantine until a later invocation
+	 * successfully drains and completes cleanup, or a reset succeeds.
 	 */
 	public withSessionEvictionBarrier<T>(
 		sessionId: SessionId,
-		operation: () => Promise<T>
+		operation: () => Promise<T>,
+		options: SessionEvictionBarrierOptions = {}
 	): Promise<T> {
 		if (
 			this._globalResetOwners > 0 ||
 			this._globalQuarantined ||
-			this._quarantinedSessions.has(sessionId)
+			this._quarantine.hasResetFailure(sessionId)
 		) {
 			return Promise.reject(new PersistenceSessionAdmissionClosedError(sessionId));
 		}
@@ -475,13 +514,16 @@ export class PersistenceBuffer {
 
 		const result = state.tail.then(async () => {
 			try {
-				await this._awaitSessionQuiescence(sessionId);
+				await this._awaitSessionQuiescence(
+					sessionId,
+					options.retry === true ? 'background' : 'explicit'
+				);
 				const value = await this._sessionBarrierOwnership.run(operationOwnership, operation);
 				this._queue.forgetQuiescentSession(sessionId);
-				this._evictionQuarantinedSessions.delete(sessionId);
+				this._quarantine.liftEvictionFailure(sessionId);
 				return value;
 			} catch (error) {
-				this._evictionQuarantinedSessions.add(sessionId);
+				this._quarantine.addEvictionFailure(sessionId);
 				throw error;
 			} finally {
 				state.pendingOwners -= 1;
@@ -590,12 +632,11 @@ export class PersistenceBuffer {
 					() => this._sessionBarrierOwnership.run(operationOwnership, operation),
 					() => {
 						this._queue.discardSession(sessionId);
-						this._quarantinedSessions.delete(sessionId);
-						this._evictionQuarantinedSessions.delete(sessionId);
+						this._quarantine.lift(sessionId);
 					}
 				);
 			} catch (error) {
-				this._quarantinedSessions.add(sessionId);
+				this._quarantine.addResetFailure(sessionId);
 				throw error;
 			} finally {
 				state.pendingOwners -= 1;
@@ -624,8 +665,7 @@ export class PersistenceBuffer {
 				this._assertWriteGateOpen();
 				return await this._runResetOperation(undefined, operation, () => {
 					this._queue.discardAll();
-					this._quarantinedSessions.clear();
-					this._evictionQuarantinedSessions.clear();
+					this._quarantine.liftAll();
 					this._globalQuarantined = false;
 				});
 			} catch (error) {
@@ -644,13 +684,10 @@ export class PersistenceBuffer {
 
 	/** @returns A frozen point-in-time view of quarantine and unflushed work for readiness probes. */
 	public getBacklogView(): PersistenceBacklogView {
-		const quarantinedSessions = new Set<SessionId>([
-			...this._quarantinedSessions,
-			...this._evictionQuarantinedSessions,
-		]);
 		return Object.freeze({
 			globalQuarantined: this._globalQuarantined,
-			quarantinedSessionCount: quarantinedSessions.size,
+			quarantinedSessionCount: this._quarantine.resetFailedCount,
+			evictionRetrySessionCount: this._quarantine.evictionRetryCount,
 			blockedSessionCount: this._queue.blockedSessionCount,
 			retainedFailureCount: this._queue.currentFailures().length,
 			pendingThoughtCount: this._queue.pendingThoughtCount,
@@ -946,8 +983,11 @@ export class PersistenceBuffer {
 		return { kind: 'resolved' };
 	}
 
-	private async _awaitSessionQuiescence(sessionId: SessionId): Promise<void> {
-		const generation = this._joinOrStart('explicit');
+	private async _awaitSessionQuiescence(
+		sessionId: SessionId,
+		mode: PersistenceSelectionMode = 'explicit'
+	): Promise<void> {
+		const generation = this._joinOrStart(mode);
 		void generation.promise.catch(() => undefined);
 		while (true) {
 			this._assertNotSealed(sessionId);
@@ -980,7 +1020,11 @@ export class PersistenceBuffer {
 			return { kind: 'pending' };
 		}
 
-		const failures = this._queue.currentFailures(generation.selectedTokens, sessionId);
+		// A background generation skips failures still in backoff, so it counts every retained one.
+		const failures = this._queue.currentFailures(
+			generation.mode === 'background' ? undefined : generation.selectedTokens,
+			sessionId
+		);
 		if (failures.length > 0)
 			return { kind: 'rejected', reason: new PersistenceDrainError(failures) };
 		const blocking = this._queue.blockingFailure(sessionId);
@@ -1015,8 +1059,7 @@ export class PersistenceBuffer {
 			this._globalResetOwners > 0 ||
 			this._globalQuarantined ||
 			this._sessionBarriers.has(sessionId) ||
-			this._quarantinedSessions.has(sessionId) ||
-			this._evictionQuarantinedSessions.has(sessionId)
+			this._quarantine.has(sessionId)
 		) {
 			throw new PersistenceSessionAdmissionClosedError(sessionId);
 		}
