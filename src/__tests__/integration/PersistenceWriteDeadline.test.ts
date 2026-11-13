@@ -267,6 +267,48 @@ describe('server behaviour while a timed-out write is pending', () => {
 		expect(persistence.maxConcurrentWrites).toBe(1);
 	});
 
+	it('settles stop behind a reset whose clear was issued before the stuck write deadline', async () => {
+		// Given
+		const resetSession = 'write-deadline-reset';
+		const persistence = new StallingPersistence();
+		const server = await createDeadlineServer(persistence);
+		await server.processThought(thoughtInput(1, resetSession));
+		await server.history.drainSession(asSessionId(resetSession));
+		persistence.holdWrites = true;
+		persistence.holdClears = true;
+		await server.processThought(thoughtInput(1));
+		void server.history.drainSession(asSessionId(SESSION_ID)).catch(() => undefined);
+		await vi.advanceTimersByTimeAsync(0);
+		const reset = server.resetSession(resetSession).then(
+			() => undefined,
+			(error: unknown) => error
+		);
+		await vi.advanceTimersByTimeAsync(0);
+		const clearsBeforeDeadline = persistence.clearCalls;
+
+		// When
+		const stopping = trackStop(server);
+		await vi.advanceTimersByTimeAsync(TIMEOUT_MS - 1);
+		const settledBeforeDeadline = stopping.isSettled();
+		await vi.advanceTimersByTimeAsync(1);
+		const settledAtDeadline = stopping.isSettled();
+		const errors = settledAtDeadline ? aggregatedErrors(await stopping.result) : [];
+
+		// Then
+		expect(clearsBeforeDeadline).toBe(1);
+		expect(settledBeforeDeadline).toBe(false);
+		expect(settledAtDeadline).toBe(true);
+		expect(await reset).toMatchObject({
+			code: 'PERSISTENCE_WRITE_TIMEOUT',
+			call: { kind: 'clearSession', sessionId: resetSession },
+		});
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(PersistenceWriteTimeoutError);
+		expect(errors[0]).toMatchObject({ call: { kind: 'work', sessionId: SESSION_ID } });
+		expect(persistence.closeCalls).toBe(0);
+		expect(persistence.maxConcurrentWrites).toBe(1);
+	});
+
 	it.each(['owned', 'injected'] as const)(
 		'settles stop with aggregated failures when an %s backend never settles any call',
 		async (ownership) => {

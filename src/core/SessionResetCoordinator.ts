@@ -3,6 +3,12 @@ import type { IEdgeStore } from '../contracts/interfaces.js';
 import type { SessionId } from '../contracts/ids.js';
 import type { ISummaryStore } from '../contracts/summary.js';
 import type { Logger } from '../logger/StructuredLogger.js';
+import { assertNever } from '../utils.js';
+import {
+	PersistenceWriteTimeoutError,
+	type PersistenceTimedOutCall,
+} from './PersistenceBufferErrors.js';
+import { callWithinDeadline } from './PersistenceCallDeadline.js';
 interface ResetBarrier {
 	withSessionResetBarrier(sessionId: SessionId, operation: () => Promise<void>): Promise<void>;
 	withGlobalResetBarrier(operation: () => Promise<void>): Promise<void>;
@@ -16,7 +22,11 @@ interface SessionResetCoordinatorBaseConfig<SessionState> {
 	readonly assertReplacementCapacity: (sessionId: SessionId, owner: string | undefined) => void;
 	readonly admitReplacement: (sessionId: SessionId, owner: string | undefined) => void;
 	readonly logger: Logger;
+	/** Deadline for `clearSession` / `clearAll` in milliseconds; `undefined` waits without one. */
+	readonly persistenceWriteTimeout?: number;
 }
+
+type ClearCall = Extract<PersistenceTimedOutCall, { kind: 'clearSession' | 'clearAll' }>;
 
 type ResetDurability =
 	| { readonly persistence: null; readonly barrier: null }
@@ -32,6 +42,7 @@ export class SessionResetCoordinator<SessionState> {
 	private readonly _sessions: Map<SessionId, SessionState>;
 	private readonly _createSessionState: (owner: string | undefined) => SessionState;
 	private readonly _logger: Logger;
+	private readonly _clearTimeoutMs: number | undefined;
 	private readonly _assertReplacementCapacity: SessionResetCoordinatorBaseConfig<SessionState>['assertReplacementCapacity'];
 	private readonly _admitReplacement: SessionResetCoordinatorBaseConfig<SessionState>['admitReplacement'];
 
@@ -42,6 +53,7 @@ export class SessionResetCoordinator<SessionState> {
 		this._sessions = config.sessions;
 		this._createSessionState = config.createSessionState;
 		this._logger = config.logger;
+		this._clearTimeoutMs = config.persistenceWriteTimeout;
 		this._assertReplacementCapacity = config.assertReplacementCapacity;
 		this._admitReplacement = config.admitReplacement;
 	}
@@ -59,7 +71,9 @@ export class SessionResetCoordinator<SessionState> {
 			return;
 		}
 		await durability.barrier.withSessionResetBarrier(sessionId, async () => {
-			await durability.persistence.clearSession(sessionId);
+			await this._clearWithinDeadline({ kind: 'clearSession', sessionId }, () =>
+				durability.persistence.clearSession(sessionId)
+			);
 			this._replaceLiveSession(sessionId, preservedOwner);
 			clearAuxiliaryState?.();
 		});
@@ -73,10 +87,33 @@ export class SessionResetCoordinator<SessionState> {
 			return;
 		}
 		await durability.barrier.withGlobalResetBarrier(async () => {
-			await durability.persistence.clearAll();
+			await this._clearWithinDeadline({ kind: 'clearAll' }, () =>
+				durability.persistence.clearAll()
+			);
 			this._clearAllLiveState();
 			clearAuxiliaryState?.();
 		});
+	}
+
+	/**
+	 * Bounds the backend clear alone, so live state is never replaced after a reset that was
+	 * reported failed. The abandoned call's `lateOutcome` never rejects.
+	 */
+	private async _clearWithinDeadline(call: ClearCall, clear: () => Promise<void>): Promise<void> {
+		const timeoutMs = this._clearTimeoutMs;
+		if (timeoutMs === undefined) return await clear();
+		const outcome = await callWithinDeadline(clear, timeoutMs);
+		switch (outcome.kind) {
+			case 'fulfilled':
+				return;
+			case 'rejected':
+				throw outcome.reason;
+			case 'timedOut':
+				this._logger.warn('Persistence reset clear timed out', { ...call, timeoutMs });
+				throw new PersistenceWriteTimeoutError(timeoutMs, call, outcome.lateOutcome);
+			default:
+				return assertNever(outcome);
+		}
 	}
 
 	private _replaceLiveSession(sessionId: SessionId, owner: string | undefined): void {

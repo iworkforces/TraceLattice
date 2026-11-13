@@ -82,12 +82,18 @@ export type PersistenceTimedOutCall =
 			readonly token: PersistenceWorkToken;
 			readonly sessionId: SessionId;
 	  }
+	| { readonly kind: 'clearSession'; readonly sessionId: SessionId }
+	| { readonly kind: 'clearAll' }
 	| { readonly kind: 'close' };
 
 function describeTimedOutCall(call: PersistenceTimedOutCall): string {
 	switch (call.kind) {
 		case 'work':
 			return `${call.operation} write ${call.token} for session '${call.sessionId}'`;
+		case 'clearSession':
+			return `clearSession for session '${call.sessionId}'`;
+		case 'clearAll':
+			return 'clearAll';
 		case 'close':
 			return 'backend close';
 		default:
