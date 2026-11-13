@@ -811,7 +811,7 @@ export class ToolAwareSequentialThinkingServer
 	 * the rest. A phase that overruns is reported as `ServerStopTimeoutError` (phase `operations`,
 	 * `discovery` or `flush`) or, for the close, `PersistenceWriteTimeoutError`. Without
 	 * `timeoutMs` the idle wait and flush are unbounded and the close is bounded by T. Memoized:
-	 * the first call's promise is returned to every later call.
+	 * the first valid call's promise is returned to every later valid call.
 	 *
 	 * @param timeoutMs - Optional stop budget in milliseconds, above 0 and at most 2147483647.
 	 * @returns A promise that rejects with a `RangeError` for any other value, before anything
