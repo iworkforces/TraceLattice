@@ -48,11 +48,14 @@ function faultDirectory(error: Error, directories: readonly string[]): string {
 /**
  * Owns one chokidar instance at a time. A fault retires the instance and schedules a single
  * replacement with capped exponential backoff; events from retired instances are ignored.
+ * A replacement that misses the ready bound is reported and refreshed but stays live: closing it
+ * could hang, and a restart per backoff period would leak one chokidar instance each time.
  */
 export class RecoverableWatcher {
 	private _watcher: FSWatcher | null = null;
 	private _restartTimer: ReturnType<typeof setTimeout> | undefined;
 	private _readyTimer: ReturnType<typeof setTimeout> | undefined;
+	private _replacementTimer: ReturnType<typeof setTimeout> | undefined;
 	private _backoffMs = RESTART_BASE_DELAY_MS;
 	private _stopPromise: Promise<void> | null = null;
 	private readonly _readyPromise: Promise<void>;
@@ -80,6 +83,7 @@ export class RecoverableWatcher {
 		if (this._stopPromise) return this._stopPromise;
 		clearTimeout(this._restartTimer);
 		this._restartTimer = undefined;
+		this._clearReplacementTimer();
 		this._settleReady();
 		const watcher = this._watcher;
 		this._watcher = null;
@@ -101,6 +105,12 @@ export class RecoverableWatcher {
 		}
 		watcher.on('error', (error) => this._onError(watcher, error));
 		watcher.on('ready', () => this._onReady(watcher, replacement));
+		if (replacement) {
+			this._replacementTimer = setTimeout(
+				() => this._onReplacementBound(watcher),
+				READY_TIMEOUT_MS
+			);
+		}
 	}
 
 	private _isLive(watcher: FSWatcher): boolean {
@@ -116,8 +126,30 @@ export class RecoverableWatcher {
 		if (!this._isLive(watcher)) return;
 		this._settleReady();
 		if (!replacement) return;
+		this._clearReplacementTimer();
 		this._backoffMs = RESTART_BASE_DELAY_MS;
 		this._config.onRecovered();
+	}
+
+	private _onReplacementBound(watcher: FSWatcher): void {
+		if (!this._isLive(watcher)) return;
+		this._replacementTimer = undefined;
+		const { label, directories, logger } = this._config;
+		logger.warn(`${label} replacement watcher not ready; continuing degraded`, {
+			timeoutMs: READY_TIMEOUT_MS,
+			directories,
+		});
+		// Schedule the refresh first so a fault listener that stops the watcher joins it.
+		this._config.onRecovered();
+		this._notify({
+			error: new Error(`${label} watcher replacement not ready within ${READY_TIMEOUT_MS} ms`),
+			directory: directories[0] ?? '',
+		});
+	}
+
+	private _clearReplacementTimer(): void {
+		clearTimeout(this._replacementTimer);
+		this._replacementTimer = undefined;
 	}
 
 	private _onError(watcher: FSWatcher, error: unknown): void {
@@ -127,6 +159,7 @@ export class RecoverableWatcher {
 	// Only the live instance or a failed open reaches here, so no restart timer can be pending.
 	private _fault(error: Error): void {
 		const { label, directories, logger } = this._config;
+		this._clearReplacementTimer();
 		const delay = this._backoffMs;
 		const directory = faultDirectory(error, directories);
 		logger.warn(`${label} watcher fault; restarting`, {

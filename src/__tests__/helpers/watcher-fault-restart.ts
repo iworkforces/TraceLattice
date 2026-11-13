@@ -25,7 +25,7 @@ export function describeRestart(subject: WatcherSubject): void {
 			[...DIRS],
 			expect.objectContaining({ ignoreInitial: true })
 		);
-		expect(vi.getTimerCount()).toBe(0);
+		expect(vi.getTimerCount()).toBe(1);
 	});
 
 	it('restarts even when the failed instance never finishes closing', () => {
