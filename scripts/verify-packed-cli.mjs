@@ -70,6 +70,7 @@ function createReceipt(context) {
 		protocolCheck: runtime.protocol,
 		shutdownCheck: runtime.shutdown,
 		sqliteCheck: runtime.sqliteCheck,
+		fileLockCheck: runtime.fileLockCheck,
 		cleanup: { tempRootsRemoved: true, outputPreserved: preserved },
 	};
 }

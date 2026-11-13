@@ -154,6 +154,18 @@ function validateSqliteCheck(sqliteCheck) {
 	}
 }
 
+function validateFileLockCheck(fileLockCheck) {
+	if (
+		fileLockCheck.durableWrite !== true ||
+		fileLockCheck.lockHeld !== true ||
+		fileLockCheck.liveOwnerRejected !== true ||
+		fileLockCheck.killedOwnerReclaimed !== true ||
+		fileLockCheck.restoredThought !== true
+	) {
+		fail('fileLockCheck failed');
+	}
+}
+
 function validateReceiptContract(receipt, expectedSourceSha) {
 	if (!isRecord(receipt)) fail('receipt must be an object');
 	const {
@@ -163,6 +175,7 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 		protocolCheck,
 		shutdownCheck,
 		sqliteCheck,
+		fileLockCheck,
 		cleanup,
 		manifest,
 	} = receipt;
@@ -173,6 +186,7 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 		protocolCheck,
 		shutdownCheck,
 		sqliteCheck,
+		fileLockCheck,
 		cleanup,
 		manifest,
 	];
@@ -183,6 +197,7 @@ function validateReceiptContract(receipt, expectedSourceSha) {
 	validateTarballMetadata(tarball, version);
 	validateRuntimeChecks(receipt, version);
 	validateSqliteCheck(sqliteCheck);
+	validateFileLockCheck(fileLockCheck);
 	return { version, tarball };
 }
 

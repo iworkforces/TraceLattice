@@ -28,14 +28,42 @@ const cleanupModuleUrl = new URL('../../../scripts/packed-cli-cleanup.mjs', impo
 const temporaryRoots: string[] = [];
 const cliBody = `#!/usr/bin/env bun
 import { createInterface } from 'node:readline';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 const config = process.env.TRACELATTICE_CONFIG ? JSON.parse(readFileSync(process.env.TRACELATTICE_CONFIG, 'utf8')) : {};
 const dbPath = config.persistence?.options?.dbPath;
 const stored = dbPath && existsSync(dbPath) ? JSON.parse(readFileSync(dbPath, 'utf8')) : [];
+const dataDir = config.persistence?.backend === 'file' ? config.persistence.options.dataDir : undefined;
+const snapshotPath = dataDir ? dataDir + '/snapshot.json' : undefined;
+const lockPath = dataDir ? acquireFileLock(dataDir) : undefined;
+function ownerAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
+}
+function acquireFileLock(directory) {
+  mkdirSync(directory, { recursive: true });
+  const lock = realpathSync(directory) + '/.tracelattice-writer.lock';
+  if (existsSync(lock)) {
+    const owner = JSON.parse(readFileSync(lock + '/owner.json', 'utf8'));
+    if (ownerAlive(owner.pid)) {
+      console.error("already has an active writer (lock '" + lock + "', owner pid " + owner.pid + ')');
+      process.exit(1);
+    }
+  } else mkdirSync(lock);
+  writeFileSync(lock + '/owner.json', JSON.stringify({ pid: process.pid }));
+  return lock;
+}
+function writeSnapshot() {
+  const sessions = [...new Set(stored.map((entry) => entry.session_id))];
+  const thoughts = sessions.map((sessionId) => ({ sessionId, thoughts: stored.filter((entry) => entry.session_id === sessionId) }));
+  writeFileSync(snapshotPath, JSON.stringify({ version: 2, thoughts }));
+}
+if (snapshotPath && existsSync(snapshotPath)) stored.push(...JSON.parse(readFileSync(snapshotPath, 'utf8')).thoughts.flatMap((record) => record.thoughts));
 if (process.argv.includes('--version')) {
   console.log('tracelattice v1.2.3');
 } else {
   const lines = createInterface({ input: process.stdin });
+  lines.on('close', () => {
+    if (lockPath) rmSync(lockPath, { recursive: true, force: true });
+  });
   lines.on('line', (line) => {
     const request = JSON.parse(line);
     if (request.method === 'notifications/initialized') return;
@@ -49,6 +77,10 @@ if (process.argv.includes('--version')) {
       if (validSession && targetExists && dbPath) {
         stored.push(input);
         writeFileSync(dbPath, JSON.stringify(stored));
+      }
+      if (validSession && targetExists && snapshotPath) {
+        stored.push(input);
+        writeSnapshot();
       }
       const errorText = validSession ? 'verification_target ' + input.verification_target + ' is missing in session history' : 'invalid session';
       result = validSession && targetExists
@@ -311,6 +343,33 @@ const cases: readonly FixtureCase[] = [
 					"const stored = dbPath && existsSync(dbPath) ? JSON.parse(readFileSync(dbPath, 'utf8')) : [];",
 					'const stored = [];'
 				)
+			),
+	},
+	{
+		label: 'File backend refusing to reclaim a killed owner lock',
+		code: 'PACKED_FILE_LOCK_FAILED',
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/cli.js'),
+				cliBody.replace("return error.code !== 'ESRCH';", 'return true;')
+			),
+	},
+	{
+		label: 'File backend admitting a second writer beside a live owner',
+		code: 'PACKED_FILE_LOCK_FAILED',
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/cli.js'),
+				cliBody.replace('if (ownerAlive(owner.pid)) {', 'if (false) {')
+			),
+	},
+	{
+		label: 'File live-owner rejection without the owner pid',
+		code: 'PACKED_FILE_LOCK_FAILED',
+		mutate: async (root) =>
+			writeFile(
+				join(root, 'dist/cli.js'),
+				cliBody.replace(`"', owner pid " + owner.pid + ')'`, `"')"`)
 			),
 	},
 	{
@@ -696,6 +755,13 @@ describe('packed CLI artifact contract', () => {
 			write: true,
 			restoredVerification: true,
 			missingTargetRejected: true,
+		});
+		expect(receipt).toHaveProperty('fileLockCheck', {
+			durableWrite: true,
+			lockHeld: true,
+			liveOwnerRejected: true,
+			killedOwnerReclaimed: true,
+			restoredThought: true,
 		});
 	}, 120_000);
 

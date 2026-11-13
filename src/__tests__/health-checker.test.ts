@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HealthChecker } from '../health/HealthChecker.js';
 import type { PersistenceBackend } from '../contracts/PersistenceBackend.js';
 import type { Logger } from '../logger/StructuredLogger.js';
+import { asSessionId } from '../contracts/ids.js';
+import { HistoryManager } from '../core/HistoryManager.js';
+import { createTestThought, SignalingLogger } from './helpers/factories.js';
+import { StallingPersistence } from './helpers/StallingPersistence.js';
+import { advanceTimeAsync, useFakeTimers, useRealTimers } from './helpers/timers.js';
 
 /**
  * Create a mock PersistenceBackend with all methods stubbed.
@@ -646,5 +651,64 @@ describe('HealthChecker bounded shared probe', () => {
 			'latencyMs',
 			'name',
 		]);
+	});
+});
+
+describe('HealthChecker readiness after failed evictions and resets', () => {
+	const STALE_SWEEP_MS = 35 * 60 * 1000;
+	const histories: HistoryManager[] = [];
+
+	afterEach(async () => {
+		for (const history of histories.splice(0)) await history.shutdown();
+		useRealTimers();
+	});
+
+	it('stays ready and prints reset-quarantined and eviction-retry sessions as separate counts', async () => {
+		// Given
+		useFakeTimers();
+		vi.setSystemTime(0);
+		const evicted = asSessionId('ready-eviction-failed');
+		const resetFailed = asSessionId('ready-reset-failed');
+		const persistence = new StallingPersistence();
+		const logger = new SignalingLogger();
+		const history = new HistoryManager({
+			persistence,
+			logger,
+			persistenceFlushInterval: 60_000_000,
+			persistenceMaxRetries: 0,
+		});
+		histories.push(history);
+		const checker = new HealthChecker({ persistence, persistenceBacklog: history });
+		history.addThought(createTestThought({ id: 'reset-1', session_id: resetFailed }));
+		await history.drainSession(resetFailed);
+		persistence.failClear = true;
+		await expect(history.resetSession(resetFailed)).rejects.toThrow('delete failed');
+		history.addThought(createTestThought({ id: 'evict-1', session_id: evicted }));
+		persistence.down = true;
+		const evictionFailed = logger.next('Session cleanup failed');
+		await advanceTimeAsync(STALE_SWEEP_MS);
+		await evictionFailed;
+
+		// When
+		const separate = await checker.checkReadiness();
+		await expect(history.resetSession(evicted)).rejects.toThrow('delete failed');
+		const merged = await checker.checkReadiness();
+
+		// Then
+		expect(separate.status).toBe('ok');
+		expect(separate.components['persistenceBacklog']).toEqual({
+			name: 'persistenceBacklog',
+			healthy: true,
+			details:
+				'quarantined sessions: 1, sessions awaiting eviction retry: 1, blocked sessions: 1, retained failures: 1, pending thoughts: 1',
+		});
+		expect(merged.status).toBe('ok');
+		expect(merged.components['persistenceBacklog']!.details).toBe(
+			'quarantined sessions: 2, sessions awaiting eviction retry: 0, blocked sessions: 1, retained failures: 1, pending thoughts: 1'
+		);
+		persistence.down = false;
+		persistence.failClear = false;
+		await history.resetSession(evicted);
+		await history.resetSession(resetFailed);
 	});
 });

@@ -34,7 +34,7 @@ health/
 
 - `persistenceBacklog` takes a `PersistenceBacklogSource` from `contracts/persistence-backlog.ts`; `HistoryManager` satisfies it. **Never import `HistoryManager` or any `core/` class here.**
 - `null` view (persistence disabled) adds no component.
-- `persistenceBacklog` component is unhealthy only for `globalQuarantined`. Quarantined sessions, blocked sessions (later writes held behind a retained thought failure), retained terminal failures and pending thoughts are counts in `details` (`blocked sessions: N`) and do not make the instance unready: timer drains retry retained failures on a capped backoff and explicit drains retry them at once.
+- `persistenceBacklog` component is unhealthy only for `globalQuarantined`. Quarantined sessions (failed resets), sessions awaiting eviction retry (disjoint; a session with both counts as quarantined), blocked sessions (later writes held behind a retained thought failure), retained terminal failures and pending thoughts are counts in `details` (`blocked sessions: N`) and do not make the instance unready: timer drains retry retained failures on a capped backoff and explicit drains retry them at once.
 
 ## CONSUMERS
 

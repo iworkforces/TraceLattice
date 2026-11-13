@@ -66,16 +66,21 @@ export class SessionManager<S extends SessionLike> {
 	}
 
 	/**
-	 * Starts periodic TTL candidate cleanup and observes every asynchronous rejection.
+	 * Starts periodic TTL candidate cleanup and observes every asynchronous rejection. Each tick
+	 * also hands `cleanup` the `retryCandidates`, which need not be stale.
 	 */
 	public startCleanupTimer(
 		sessions: Map<SessionId, S>,
 		isEligible: SessionEligibility<S>,
-		cleanup: (sessionIds: readonly SessionId[]) => Promise<void>
+		cleanup: (sessionIds: readonly SessionId[]) => Promise<void>,
+		retryCandidates: () => readonly SessionId[] = () => []
 	): void {
 		if (this._cleanupTimer !== null) return;
 		this._cleanupTimer = setInterval(() => {
-			const candidates = this.staleSessionCandidates(sessions, isEligible);
+			const candidates = [
+				...this.staleSessionCandidates(sessions, isEligible),
+				...retryCandidates(),
+			];
 			if (candidates.length === 0) return;
 			void Promise.resolve()
 				.then(() => cleanup(candidates))

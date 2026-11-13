@@ -763,19 +763,34 @@ export class ServerStopTimeoutError extends SequentialThinkingError {
 	}
 }
 
+/**
+ * Error thrown when a File persistence directory's writer lock cannot be acquired or reclaimed.
+ * `ownerPid` is the pid the lock marker records, or undefined when no pid is readable; `reason`
+ * says why the lock was not taken over.
+ */
 export class PersistenceOwnershipError extends SequentialThinkingError {
 	public readonly canonicalDataDir: string;
 	public readonly lockPath: string;
+	public readonly ownerPid: number | undefined;
 	public override readonly cause: unknown;
 
-	constructor(canonicalDataDir: string, lockPath: string, cause: unknown) {
+	constructor(
+		canonicalDataDir: string,
+		lockPath: string,
+		cause: unknown,
+		ownerPid?: number,
+		reason?: string
+	) {
+		const owner = ownerPid === undefined ? 'no readable owner pid' : `owner pid ${ownerPid}`;
+		const detail = reason === undefined ? '' : `: ${reason}`;
 		super(
-			`Persistence directory '${canonicalDataDir}' already has an active writer`,
+			`Persistence directory '${canonicalDataDir}' already has an active writer (lock '${lockPath}', ${owner})${detail}`,
 			ERROR_CODES.PERSISTENCE_OWNERSHIP
 		);
 		this.name = 'PersistenceOwnershipError';
 		this.canonicalDataDir = canonicalDataDir;
 		this.lockPath = lockPath;
+		this.ownerPid = ownerPid;
 		this.cause = cause;
 	}
 }

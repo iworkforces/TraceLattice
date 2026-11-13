@@ -16,7 +16,7 @@ scripts/
 ├── packed-cli-package.mjs         # npm pack + required-file / export / contract checks
 ├── current-contract.mjs           # Source/build/packed bans for retired or implicit contracts
 ├── packed-library-api.mjs         # Installed package-root runtime + declaration consumer
-├── packed-cli-runtime.mjs         # Packed bin: sessions, shutdown, SQLite write + restart restore
+├── packed-cli-runtime.mjs         # Packed bin: sessions, shutdown, SQLite restore, File lock reclaim
 └── packed-cli-cleanup.mjs         # PackedCliError + temp-root removal
 ```
 
@@ -51,6 +51,7 @@ Policy locks live in `src/__tests__/release/` (see that AGENTS.md): pack artifac
 ## NOTES
 
 - `verify:packed` is a hard release gate alongside `verify:library` and `verify:native`.
-- Receipt schemaVersion 1: sourceSha, tarball, packedFiles, version checks, explicit-session protocol checks, shutdown checks, and sqliteCheck (write, restoredVerification, missingTargetRejected).
+- Receipt schemaVersion 1: sourceSha, tarball, packedFiles, version checks, explicit-session protocol checks, shutdown checks, sqliteCheck (write, restoredVerification, missingTargetRejected), and fileLockCheck (durableWrite, lockHeld, liveOwnerRejected, killedOwnerReclaimed, restoredThought).
 - Installed omit-dev Bun CLI checks SQLite restoration across two processes, with a missing verification target as a negative control.
+- File lock check: poll `snapshot.json` (bounded) until the thought is durable, require the lock, require a competitor to exit 1 naming the lock path and the owner pid, SIGKILL the owner, then restart on the same data dir and prove the restored thought.
 - Keep `packed-cli-*.mjs` free of `src/` imports. Tests reach them by filesystem path.

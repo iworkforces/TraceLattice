@@ -172,7 +172,7 @@ describe('built CLI readiness probes', () => {
 			name: 'persistenceBacklog',
 			healthy: true,
 			details:
-				'quarantined sessions: 0, blocked sessions: 0, retained failures: 0, pending thoughts: 0',
+				'quarantined sessions: 0, sessions awaiting eviction retry: 0, blocked sessions: 0, retained failures: 0, pending thoughts: 0',
 		});
 	});
 

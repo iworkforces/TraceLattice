@@ -10,7 +10,7 @@ import {
 	symlink,
 	writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -22,7 +22,7 @@ import {
 } from '../../errors.js';
 import { FilePersistence } from '../../persistence/FilePersistence.js';
 import { parseFileSnapshotV2 } from '../../persistence/FileSnapshotV2.js';
-import { nodeFileWriterOperations } from '../../persistence/FileWriter.js';
+import { FILE_WRITER_MARKER_NAME, nodeFileWriterOperations } from '../../persistence/FileWriter.js';
 import { assertNever } from '../../utils.js';
 import { createTestThought as createBaseTestThought } from '../helpers/factories.js';
 
@@ -46,6 +46,7 @@ function startChildOwner(dataDir: string) {
 			'run',
 			'--config',
 			'vitest.config.ts',
+			'--pool=threads',
 			'src/__tests__/integration/FileWriterOwnership.test.ts',
 		],
 		{
@@ -295,24 +296,44 @@ if (CHILD_DIRECTORY) {
 			}
 		});
 
-		it('rejects a stale lock left by a killed owner process', async () => {
+		it('reclaims the lock after the owner the marker records is killed', async () => {
 			// Given
 			const dataDir = await mkdtemp(join(tmpdir(), 'tracelattice-killed-owner-'));
+			const markerPath = join(
+				await realpath(dataDir),
+				'.tracelattice-writer.lock',
+				FILE_WRITER_MARKER_NAME
+			);
 			const { child, childExit, childReady } = startChildOwner(dataDir);
+			let successor: FilePersistence | undefined;
 
 			try {
 				await childReady;
-				child.kill('SIGKILL');
+				const recorded: unknown = JSON.parse(await readFile(markerPath, 'utf-8'));
+				expect(recorded).toMatchObject({ hostname: hostname(), pid: child.pid });
+				const recordedPid =
+					typeof recorded === 'object' && recorded !== null && 'pid' in recorded
+						? recorded.pid
+						: undefined;
+				if (typeof recordedPid !== 'number') throw new Error('Owner marker records no pid');
+				process.kill(recordedPid, 'SIGKILL');
 				const [exitCode, signal] = await childExit;
 				expect(exitCode).toBeNull();
 				expect(signal).toBe('SIGKILL');
 
-				// When / Then
-				await expect(FilePersistence.create({ dataDir })).rejects.toMatchObject({
-					code: 'PERSISTENCE_OWNERSHIP',
+				// When
+				successor = await FilePersistence.create({ dataDir });
+
+				// Then
+				expect(
+					(await successor.loadHistoryForSession(TEST_SESSION_ID)).map((thought) => thought.thought)
+				).toEqual(['child-owned']);
+				expect(JSON.parse(await readFile(markerPath, 'utf-8'))).toMatchObject({
+					pid: process.pid,
 				});
 			} finally {
 				child.kill('SIGKILL');
+				await successor?.close();
 				await rm(dataDir, { recursive: true, force: true });
 			}
 		});

@@ -69,6 +69,7 @@ interface SettledProbe {
 function describeBacklog(view: PersistenceBacklogView): string {
 	const counts =
 		`quarantined sessions: ${view.quarantinedSessionCount}, ` +
+		`sessions awaiting eviction retry: ${view.evictionRetrySessionCount}, ` +
 		`blocked sessions: ${view.blockedSessionCount}, ` +
 		`retained failures: ${view.retainedFailureCount}, ` +
 		`pending thoughts: ${view.pendingThoughtCount}`;

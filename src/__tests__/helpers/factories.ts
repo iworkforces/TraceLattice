@@ -23,6 +23,39 @@ import { ThoughtReferenceIndex } from '../../core/ThoughtReferenceIndex.js';
 import { resolvedVerificationTarget } from '../../core/evaluator/VerificationLinks.js';
 import type { ThoughtFormatter } from '../../core/ThoughtFormatter.js';
 import { ValidationError } from '../../errors.js';
+import { NullLogger } from '../../logger/NullLogger.js';
+
+/**
+ * Null logger whose {@link SignalingLogger.next} resolves on the next info, warn or error line
+ * with the given message. Subscribe before triggering the logged work.
+ */
+export class SignalingLogger extends NullLogger {
+	private readonly _waiters = new Map<string, Array<() => void>>();
+
+	public next(message: string): Promise<void> {
+		const signal = Promise.withResolvers<void>();
+		this._waiters.set(message, [...(this._waiters.get(message) ?? []), signal.resolve]);
+		return signal.promise;
+	}
+
+	public override info(message: string, _meta?: Record<string, unknown>): void {
+		this._signal(message);
+	}
+
+	public override warn(message: string, _meta?: Record<string, unknown>): void {
+		this._signal(message);
+	}
+
+	public override error(message: string, _meta?: Record<string, unknown>): void {
+		this._signal(message);
+	}
+
+	private _signal(message: string): void {
+		const waiters = this._waiters.get(message) ?? [];
+		this._waiters.delete(message);
+		for (const resolve of waiters) resolve();
+	}
+}
 
 // === Branded ID Helpers ===
 

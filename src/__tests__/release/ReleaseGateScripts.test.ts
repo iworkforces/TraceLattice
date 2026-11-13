@@ -157,6 +157,26 @@ describe('release gate package scripts', () => {
 		expect(returnedReceipt).toBeGreaterThan(validation);
 	});
 
+	it('records and requires the packed File lock check without importing source', async () => {
+		// Given
+		const verifierSource = await readPackedVerifier();
+		const validatorSource = await readReceiptValidator();
+		const runtimeSource = await readFile(
+			resolve(projectRoot, 'scripts/packed-cli-runtime.mjs'),
+			'utf8'
+		);
+		// When
+		const runtimeImports = [...runtimeSource.matchAll(/from\s+'([^']+)'/g)].map(
+			(match) => match[1]
+		);
+		// Then
+		expect(verifierSource).toContain('fileLockCheck: runtime.fileLockCheck');
+		expect(validatorSource).toContain('validateFileLockCheck(fileLockCheck);');
+		expect(runtimeSource).toContain('const fileLockCheck = await verifyFileLockRecovery(artifact)');
+		expect(runtimeImports.length).toBeGreaterThan(0);
+		expect(runtimeImports.every((specifier) => !specifier?.includes('src/'))).toBe(true);
+	});
+
 	it('keeps the shared receipt validator directly executable', async () => {
 		// Given
 		const validatorSource = await readReceiptValidator();

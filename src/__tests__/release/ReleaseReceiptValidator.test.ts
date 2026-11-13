@@ -63,6 +63,13 @@ function createReceipt(tarball: Buffer, receiptSourceSha: string | null = source
 		},
 		shutdownCheck: { exitCode: 0, signal: null, outstandingRequests: 0 },
 		sqliteCheck: { write: true, restoredVerification: true, missingTargetRejected: true },
+		fileLockCheck: {
+			durableWrite: true,
+			lockHeld: true,
+			liveOwnerRejected: true,
+			killedOwnerReclaimed: true,
+			restoredThought: true,
+		},
 		cleanup: { tempRootsRemoved: true, outputPreserved: true },
 	};
 }
@@ -304,6 +311,32 @@ describe('release receipt validator', () => {
 		[
 			'failed SQLite negative control',
 			(receipt: Receipt) => (receipt.sqliteCheck.missingTargetRejected = false),
+		],
+		[
+			'missing File lock section',
+			(receipt: Receipt) => Reflect.deleteProperty(receipt, 'fileLockCheck'),
+		],
+		[
+			'non-object File lock section',
+			(receipt: Receipt) => Object.assign(receipt, { fileLockCheck: true }),
+		],
+		[
+			'failed File durable write',
+			(receipt: Receipt) => (receipt.fileLockCheck.durableWrite = false),
+		],
+		['failed File lock presence', (receipt: Receipt) => (receipt.fileLockCheck.lockHeld = false)],
+		[
+			'failed File live-owner control',
+			(receipt: Receipt) => (receipt.fileLockCheck.liveOwnerRejected = false),
+		],
+		[
+			'failed File killed-owner reclaim',
+			(receipt: Receipt) => (receipt.fileLockCheck.killedOwnerReclaimed = false),
+		],
+		['failed File restore', (receipt: Receipt) => (receipt.fileLockCheck.restoredThought = false)],
+		[
+			'missing File restore field',
+			(receipt: Receipt) => Reflect.deleteProperty(receipt.fileLockCheck, 'restoredThought'),
 		],
 		['wrong schema version', (receipt: Receipt) => (receipt.schemaVersion = 2)],
 		['wrong source SHA', (receipt: Receipt) => (receipt.sourceSha = '1'.repeat(40))],

@@ -15,7 +15,7 @@ Policy locks for CI, CD, the packed CLI, and the SSE resurrection ban. These fil
 | `LegacySseRemoval.test.ts`        | No `SseTransport.ts` and no SSE identifiers on the frozen file list. Streamable HTTP default port stays `9007`.                                                                                                                        |
 | `PackedCliArtifact.test.ts`       | Shebang, pack contents, borrowed persistence runtime contract, SQLite restart restore and rejection gate.                                                                                                                              |
 | `ReleaseGateScripts.test.ts`      | `verify:packed` / `verify:release` / `prepublishOnly`.                                                                                                                                                                                 |
-| `ReleaseReceiptValidator.test.ts` | Receipt schema CD consumes, including required sqliteCheck write/restore/negative-control evidence.                                                                                                                                    |
+| `ReleaseReceiptValidator.test.ts` | Receipt schema CD consumes, including required sqliteCheck write/restore/negative-control evidence and every fileLockCheck field.                                                                                                      |
 | `VitestAuthority.test.ts`         | Sole config is `vitest.config.ts`: floors, 30s timeouts, include list.                                                                                                                                                                 |
 
 ## ANTI-PATTERNS

@@ -18,6 +18,12 @@ export type GlobalLifecyclePhase =
 export type SessionLifecyclePhase =
 	'open' | 'resetting' | 'reset_failed' | 'evicting' | 'eviction_failed';
 
+/** Sticky failure phase a session exclusive can leave behind. */
+export type SessionFailurePhase = 'reset_failed' | 'eviction_failed';
+
+/** Notified synchronously each time a session exclusive leaves a session in a failure phase. */
+export type SessionFailureListener = (sessionId: SessionId, phase: SessionFailurePhase) => void;
+
 /** Options for retrying a failed session eviction. */
 export interface SessionEvictionOptions {
 	readonly retryFailed: boolean;
@@ -66,11 +72,23 @@ type LifecycleContext =
 
 type SessionExclusive = {
 	readonly active: 'resetting' | 'evicting';
-	readonly failed: 'reset_failed' | 'eviction_failed';
+	readonly failed: SessionFailurePhase;
+	/** Failure phases a retry of this exclusive may start from. */
+	readonly retryFrom: readonly SessionFailurePhase[];
 };
 
-const RESET_EXCLUSIVE: SessionExclusive = { active: 'resetting', failed: 'reset_failed' };
-const EVICTION_EXCLUSIVE: SessionExclusive = { active: 'evicting', failed: 'eviction_failed' };
+/** A reset recovers a failed reset and a failed eviction alike. */
+const RESET_EXCLUSIVE: SessionExclusive = {
+	active: 'resetting',
+	failed: 'reset_failed',
+	retryFrom: ['reset_failed', 'eviction_failed'],
+};
+/** An eviction retry never starts from `reset_failed`: only a reset recovers that phase. */
+const EVICTION_EXCLUSIVE: SessionExclusive = {
+	active: 'evicting',
+	failed: 'eviction_failed',
+	retryFrom: ['eviction_failed'],
+};
 
 /**
  * Linearizes operation admission before external session locking and owns lifecycle exclusives.
@@ -90,6 +108,7 @@ export class SessionLifecycleCoordinator {
 	private readonly _liveContexts = new Set<LifecycleContext>();
 	/** Contexts still live when a bounded shutdown overran; they may not mutate again. */
 	private readonly _abandonedContexts = new WeakSet<LifecycleContext>();
+	private readonly _failureListeners = new Set<SessionFailureListener>();
 	private _globalPhase: GlobalLifecyclePhase = 'open';
 	private _activeOperations = 0;
 	private _maintenanceOwners = 0;
@@ -108,6 +127,20 @@ export class SessionLifecycleCoordinator {
 	/** @returns The current phase for a session, defaulting to `open`. */
 	public phaseFor(sessionId: SessionId): SessionLifecyclePhase {
 		return this._sessions.get(sessionId)?.phase ?? 'open';
+	}
+
+	/** @returns Sessions currently in `phase`, in the order the coordinator first tracked them. */
+	public sessionsInPhase(phase: SessionLifecyclePhase): SessionId[] {
+		const sessionIds: SessionId[] = [];
+		for (const [sessionId, state] of this._sessions) {
+			if (state.phase === phase) sessionIds.push(sessionId);
+		}
+		return sessionIds;
+	}
+
+	/** Registers a listener for every session left in `reset_failed` or `eviction_failed`. */
+	public onSessionExclusiveFailed(listener: SessionFailureListener): void {
+		this._failureListeners.add(listener);
 	}
 
 	/** @returns Whether a session is open and has no admitted operation. */
@@ -151,7 +184,10 @@ export class SessionLifecycleCoordinator {
 		}
 	}
 
-	/** Closes one session for reset and permits retry only from `reset_failed`. */
+	/**
+	 * Closes one session for reset. A reset may start from `open`, `reset_failed` or
+	 * `eviction_failed`; it reopens the session on success and leaves it `reset_failed` otherwise.
+	 */
 	public withSessionReset<T>(sessionId: SessionId, operation: () => Promise<T>): Promise<T> {
 		return this._startSessionExclusive(sessionId, RESET_EXCLUSIVE, operation, true);
 	}
@@ -227,7 +263,7 @@ export class SessionLifecycleCoordinator {
 			for (const sessionId of uniqueIds) this._sessions.delete(sessionId);
 			return true;
 		} catch (error) {
-			for (const sessionId of uniqueIds) this._state(sessionId).phase = 'eviction_failed';
+			for (const sessionId of uniqueIds) this._fail(sessionId, 'eviction_failed');
 			throw error;
 		} finally {
 			this._maintenanceOwners -= 1;
@@ -264,7 +300,7 @@ export class SessionLifecycleCoordinator {
 			);
 		}
 		const state = this._state(sessionId);
-		const retrying = state.phase === exclusive.failed && allowFailedRetry;
+		const retrying = allowFailedRetry && exclusive.retryFrom.some((phase) => phase === state.phase);
 		if (this._globalPhase !== 'open') {
 			return Promise.reject(new SessionLifecycleClosedError(sessionId, this._globalPhase));
 		}
@@ -292,7 +328,7 @@ export class SessionLifecycleCoordinator {
 			this._sessions.delete(sessionId);
 			return result;
 		} catch (error) {
-			this._state(sessionId).phase = exclusive.failed;
+			this._fail(sessionId, exclusive.failed);
 			throw error;
 		} finally {
 			this._liveContexts.delete(context);
@@ -406,6 +442,11 @@ export class SessionLifecycleCoordinator {
 		const state = this._sessions.get(sessionId) ?? { phase: 'open', activeOperations: 0 };
 		this._sessions.set(sessionId, state);
 		return state;
+	}
+
+	private _fail(sessionId: SessionId, phase: SessionFailurePhase): void {
+		this._state(sessionId).phase = phase;
+		for (const listener of this._failureListeners) listener(sessionId, phase);
 	}
 
 	private _admissionError(sessionId: SessionId): SessionLifecycleClosedError | undefined {
