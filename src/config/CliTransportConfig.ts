@@ -2,8 +2,13 @@ import { ConfigurationError } from '../errors.js';
 import { parseEnvironmentInteger } from './EnvironmentInteger.js';
 
 export const DEFAULT_STREAMABLE_HTTP_PORT = 9007;
+export const DEFAULT_SHUTDOWN_DEADLINE_MS = 30_000;
 // Node and Bun clamp larger setInterval delays to 1 ms.
 export const MAX_SESSION_SWEEP_INTERVAL_MS = 2_147_483_647;
+// Node and Bun clamp larger setTimeout delays to 1 ms, which would fire the deadline at once.
+export const MAX_SHUTDOWN_DEADLINE_MS = 2_147_483_647;
+
+const SHUTDOWN_DEADLINE_NAME = 'TRACELATTICE_SHUTDOWN_DEADLINE_MS';
 
 export type CliSessionRetention = {
 	readonly maxSessions: number;
@@ -13,6 +18,7 @@ export type CliSessionRetention = {
 
 export type CliHttpTransportConfig = {
 	readonly kind: 'streamable-http';
+	readonly shutdownDeadlineMs: number;
 	readonly port: number;
 	readonly host: string;
 	readonly corsOrigin: string;
@@ -22,7 +28,8 @@ export type CliHttpTransportConfig = {
 	readonly retention: CliSessionRetention | undefined;
 };
 
-export type CliTransportConfig = { readonly kind: 'stdio' } | CliHttpTransportConfig;
+export type CliTransportConfig =
+	{ readonly kind: 'stdio'; readonly shutdownDeadlineMs: number } | CliHttpTransportConfig;
 
 const retentionNames = [
 	'TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS',
@@ -67,9 +74,24 @@ function parseRetention(
 	return retention;
 }
 
+function parseShutdownDeadline(env: NodeJS.ProcessEnv): number {
+	const raw = env[SHUTDOWN_DEADLINE_NAME];
+	if (raw === undefined) return DEFAULT_SHUTDOWN_DEADLINE_MS;
+	const value = parseEnvironmentInteger(SHUTDOWN_DEADLINE_NAME, raw);
+	if (value === 0)
+		throw new ConfigurationError(`${SHUTDOWN_DEADLINE_NAME} must be greater than zero`);
+	if (value > MAX_SHUTDOWN_DEADLINE_MS) {
+		throw new ConfigurationError(
+			`${SHUTDOWN_DEADLINE_NAME} must be at most ${MAX_SHUTDOWN_DEADLINE_MS}`
+		);
+	}
+	return value;
+}
+
 export function parseCliTransportConfig(env: NodeJS.ProcessEnv): CliTransportConfig {
+	const shutdownDeadlineMs = parseShutdownDeadline(env);
 	const kind = env.TRACELATTICE_TRANSPORT_TYPE ?? 'stdio';
-	if (kind === 'stdio') return { kind };
+	if (kind === 'stdio') return { kind, shutdownDeadlineMs };
 	if (kind !== 'streamable-http') {
 		throw new ConfigurationError(
 			`TRACELATTICE_TRANSPORT_TYPE must be one of stdio, streamable-http, got ${kind}`
@@ -84,6 +106,7 @@ export function parseCliTransportConfig(env: NodeJS.ProcessEnv): CliTransportCon
 	const stateful = env.TRACELATTICE_STREAMABLE_HTTP_STATEFUL !== 'false';
 	return {
 		kind,
+		shutdownDeadlineMs,
 		port,
 		host: env.TRACELATTICE_STREAMABLE_HTTP_HOST || 'localhost',
 		corsOrigin: env.TRACELATTICE_CORS_ORIGIN || '*',
