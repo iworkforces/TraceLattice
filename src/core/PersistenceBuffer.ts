@@ -356,13 +356,33 @@ export class PersistenceBuffer {
 	public drainSession(sessionId: SessionId): Promise<void> {
 		const generation = this._joinOrStart('explicit');
 		return generation.promise.catch((reason: unknown) => {
-			if (!(reason instanceof PersistenceDrainError)) throw reason;
-			const failures = reason.failures.filter((failure) => failure.sessionId === sessionId);
-			if (failures.length > 0) throw new PersistenceDrainError(failures);
-			if (generation.stalledWrite !== null && this._queue.hasSessionWork(sessionId)) {
-				throw generation.stalledWrite;
-			}
+			const failure = this._sessionDrainFailure(generation, sessionId, reason);
+			if (failure !== undefined) throw failure;
 		});
+	}
+
+	/**
+	 * Projects a generation's rejection to one session. A write deadline rejects the session only
+	 * while it still has queued or failed work, or while a pending stall belongs to it.
+	 */
+	private _sessionDrainFailure(
+		generation: ActiveDrain,
+		sessionId: SessionId,
+		reason: unknown
+	): unknown {
+		if (reason instanceof PersistenceDrainError) {
+			const failures = reason.failures.filter((failure) => failure.sessionId === sessionId);
+			if (failures.length > 0) return new PersistenceDrainError(failures);
+		} else if (!(reason instanceof PersistenceWriteTimeoutError)) {
+			return reason;
+		}
+		const owned = this._writeGate.oldestErrorOf(sessionId);
+		if (owned !== undefined) return owned;
+		const timeout =
+			reason instanceof PersistenceWriteTimeoutError
+				? reason
+				: (generation.stalledWrite ?? generation.gateError);
+		return timeout !== null && this._queue.hasSessionWork(sessionId) ? timeout : undefined;
 	}
 
 	/** Returns queue-derived persistence state for safe session eviction planning. */

@@ -333,6 +333,33 @@ describe('SessionResetCoordinator clear deadline', () => {
 		expect(await harness.persistence.loadHistoryForSession(SESSION_B)).toHaveLength(1);
 	});
 
+	it.each([
+		{ clear: 'clearSession', otherSession: 'fulfilled' },
+		{ clear: 'clearAll', otherSession: 'rejected' },
+	] as const)(
+		'rejects drainSession for every session a pending $clear stall belongs to',
+		async ({ clear, otherSession }) => {
+			// Given
+			const harness = createDeadlineHarness(TIMEOUT_MS);
+			harness.persistence.holdClears = true;
+			const reset = track(
+				clear === 'clearSession'
+					? harness.coordinator.resetSession(SESSION_A, 'owner-a')
+					: harness.coordinator.resetAll()
+			);
+			await advanceTimeAsync(TIMEOUT_MS);
+
+			// When
+			const resetSession = track(harness.buffer.drainSession(SESSION_A));
+			const other = track(harness.buffer.drainSession(SESSION_B));
+			await advanceTimeAsync(0);
+
+			// Then
+			expect(reasonOf(resetSession())).toBe(reasonOf(reset()));
+			expect(other().status).toBe(otherSession);
+		}
+	);
+
 	it('dispatches no write while a reset clear is held, even a due retry of the reset session', async () => {
 		// Given
 		const harness = createDeadlineHarness(undefined, FLUSH_MS);

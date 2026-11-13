@@ -17,6 +17,7 @@ const TIMEOUT_MS = 1000;
 const FLUSH_MS = 1000;
 const A = createTestSessionId('stall-a');
 const B = createTestSessionId('stall-b');
+const C = createTestSessionId('stall-c');
 
 type Harness = {
 	readonly persistence: StallingPersistence;
@@ -108,6 +109,17 @@ async function stallFirstWrite(harness: Harness, sessionId: SessionId = A): Prom
 	return drained();
 }
 
+/** Joins `drainSession` for A, whose write stalls, and for C, which never had work. */
+function joinDrainSessions(harness: Harness): {
+	readonly stalledSession: () => Outcome;
+	readonly sessionWithoutWork: () => Outcome;
+} {
+	return {
+		stalledSession: track(harness.buffer.drainSession(A)),
+		sessionWithoutWork: track(harness.buffer.drainSession(C)),
+	};
+}
+
 beforeEach(() => {
 	useFakeTimers();
 });
@@ -160,8 +172,8 @@ describe('PersistenceBuffer write deadline gate', () => {
 			track(harness.buffer.drain()),
 			track(harness.buffer.flush()),
 			track(harness.buffer.drainSession(A)),
-			track(harness.buffer.drainSession(B)),
 		];
+		const sessionWithoutWork = track(harness.buffer.drainSession(B));
 		await advanceTimeAsync(0);
 
 		// Then
@@ -169,6 +181,7 @@ describe('PersistenceBuffer write deadline gate', () => {
 			expect(reasonOf(outcome())).toBeInstanceOf(PersistenceWriteTimeoutError);
 			expect(reasonOf(outcome())).toMatchObject({ code: 'PERSISTENCE_WRITE_TIMEOUT' });
 		}
+		expect(sessionWithoutWork().status).toBe('fulfilled');
 		expect(harness.persistence.thoughtAttempts).toBe(1);
 		expect(harness.events).toHaveLength(1);
 	});
@@ -188,6 +201,49 @@ describe('PersistenceBuffer write deadline gate', () => {
 		expect(reasonOf(sessionB())).toBeInstanceOf(PersistenceWriteTimeoutError);
 		expect(await harness.persistence.loadHistoryForSession(B)).toHaveLength(0);
 	});
+
+	it.each([
+		{
+			stall: 'retained',
+			start: async (harness: Harness) => {
+				harness.persistence.holdWrites = true;
+				harness.buffer.bufferThought(A, thought(A, 1));
+				return joinDrainSessions(harness);
+			},
+		},
+		{
+			stall: 'superseded',
+			start: async (harness: Harness) => {
+				harness.persistence.holdWrites = true;
+				harness.buffer.bufferEdges(A, [edge(A, 'v1')]);
+				void track(harness.buffer.drain());
+				await advanceTimeAsync(0);
+				harness.buffer.bufferEdges(A, [edge(A, 'v2')]);
+				return joinDrainSessions(harness);
+			},
+		},
+		{
+			stall: 'rejected at join',
+			start: async (harness: Harness) => {
+				await stallFirstWrite(harness);
+				return joinDrainSessions(harness);
+			},
+		},
+	])(
+		'resolves drainSession for a session without work and rejects it for the stalled session ($stall)',
+		async ({ start }) => {
+			// Given
+			const harness = createHarness();
+
+			// When
+			const { stalledSession, sessionWithoutWork } = await start(harness);
+			await advanceTimeAsync(TIMEOUT_MS);
+
+			// Then
+			expect(sessionWithoutWork().status).toBe('fulfilled');
+			expect(stalledSession().status).toBe('rejected');
+		}
+	);
 
 	it('keeps timer and size triggers inert while the timed-out call is pending', async () => {
 		// Given
