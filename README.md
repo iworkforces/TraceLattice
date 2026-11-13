@@ -248,7 +248,9 @@ wait for admitted requests, resets and the watcher teardown gets the rest. The C
 at the default 30000 ms deadline, which at the default 5000 ms timeout is 4668 ms of waiting,
 4666 ms of flush and 4666 ms of close. A wait that ends early leaves its unused time to the flush.
 A longer timeout no longer stretches shutdown: each phase
-stops at its own deadline. `stop()` with no argument keeps the unbounded wait and flush.
+stops at its own deadline. `stop()` with no argument keeps the unbounded wait and flush. A
+`timeoutMs` that is not above 0 and at most 2147483647 rejects with a `RangeError` before anything
+changes.
 
 `persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
 unacknowledged, counting writes that failed terminally. At the limit a thought is rejected with

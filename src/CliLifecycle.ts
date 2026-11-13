@@ -43,8 +43,9 @@ export function transportStopSliceMs(totalMs: number): number {
  * slice and a reserve of a tenth of the deadline (at most 1000 ms). The total timer is armed before
  * the transport phase and the server's timers only after it, so a budget of `total - slice` could
  * never expire first; the reserve lets a server that honours its budget report its own typed error
- * before the total deadline, and also absorbs event-loop lag on the slice guard. At a deadline of
- * 1 or 2 ms the budget is 1 ms and the total deadline may win the tie.
+ * before the total deadline, and also absorbs event-loop lag on the slice guard. Below roughly
+ * 100 ms the reserve is smaller than timer lag, so the total deadline can win and report
+ * `CLI_SHUTDOWN_TIMEOUT`, as before this budget existed.
  */
 export function serverStopBudgetMs(totalMs: number): number {
 	const reserveMs = Math.min(1000, Math.floor(totalMs / 10));
