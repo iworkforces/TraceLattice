@@ -65,7 +65,7 @@ A thought or backtrack write that exhausts its retries is retained as failed and
 
 The write-behind path keeps at most one backend call, write or clear, in flight. No write is dispatched from the moment a reset's clear starts until that reset has finished with it, and resets of different sessions clear one at a time; a clear can still start while a write of another session is in flight. A timed-out write or clear keeps running. Until every such call settles, no work in any session is dispatched, timer and size-triggered drains do nothing, explicit drains and session, eviction and reset barriers reject with the `PERSISTENCE_WRITE_TIMEOUT` of the oldest pending call, and session and global resets fail through their failed-reset path without calling `clearSession` or `clearAll`, so a retried reset never sends a second clear. A barrier or drain already waiting when the call times out rejects at that moment. `drainSession(sessionId)` rejects for a timeout only while that session still has queued or failed writes or owns a pending call: a write belongs to its session, `clearSession` to the session it clears, and `clearAll` to every session. When a timed-out write settles, its real outcome is applied once through the queue's token and version checks: a late success is acknowledged and never sent again, and a late failure stays retained as one failed attempt for backoff. When a timed-out clear settles, the reset stays failed and quarantined whatever the outcome, and a later retry clears again. Background draining resumes on the flush tick once no timed-out call is pending. Buffering never rejects because of the deadline. A timer cannot interrupt the synchronous SQLite driver.
 
-Session barriers close admission for the affected session, wait for attributable work, perform the exclusive operation, and reopen only after success. Global reset and shutdown close global admission and wait for active operations. Reentrant barrier upgrades are rejected rather than deadlocked.
+Session barriers close admission for the affected session, wait for attributable work, perform the exclusive operation, and reopen only after success. Global reset and shutdown close global admission and wait for active operations; a bounded `stop(timeoutMs)` waits only until its idle deadline. Reentrant barrier upgrades are rejected rather than deadlocked.
 
 ## Lifecycle and Failure Semantics
 
@@ -81,12 +81,14 @@ Branches and revisions may legally reuse thought numbers, but numeric `verificat
 
 `dispose()` is the complete library cleanup operation. It stops admission, drains or reports persistence failure, stops watchers and suspension timers, closes server-owned persistence, and disposes container-owned resources.
 
+`stop()` with no argument waits for admitted operations and resets, the watcher teardown and the flush without a bound, and bounds the owned-backend close by `persistenceWriteTimeout`. `stop(timeoutMs)` takes one start time and derives three deadlines from it: the flush and the close each get `min(persistenceWriteTimeout, floor(timeoutMs / 3))` and the wait gets the rest, every phase at least 1 ms. Operations still admitted at the idle deadline are abandoned: they can no longer mutate sessions, and the persistence buffer, sealed before the flush, refuses their writes with `SESSION_LIFECYCLE_CLOSED`. The settlement then rejects with `SERVER_STOP_TIMEOUT` phase `operations` first. A watcher teardown still running at that deadline is reported as phase `discovery`. A flush still running at its deadline stops dispatching before the close starts and is reported as phase `flush` with the number of writes still queued or failed. A close past its deadline is `PERSISTENCE_WRITE_TIMEOUT`. The flush and the close run after an operations or discovery overrun. Live state is not cleared after an overrun, and an injected backend is never closed. The first `stop()` call wins: later calls return its promise whatever budget they pass.
+
 Lifecycle failures are sticky and fail closed:
 
 - failed session reset leaves that session in `reset_failed`;
 - failed eviction leaves it in `eviction_failed`;
 - failed global reset leaves the server in `reset_failed`;
-- failed shutdown leaves the server in `shutdown_failed`.
+- failed shutdown, including a bounded stop with an overrun phase, leaves the server in `shutdown_failed`.
 
 New work is rejected while the relevant scope is resetting, evicting, shutting down, stopped, or failed. Concurrent shutdown callers share one settlement.
 

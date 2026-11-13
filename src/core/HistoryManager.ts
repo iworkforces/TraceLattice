@@ -1053,11 +1053,17 @@ export class HistoryManager implements IHistoryManager {
 		});
 	}
 
-	/** Stops timers and drains writes while the caller owns global shutdown. */
-	public async shutdownWithinLifecycle(): Promise<void> {
+	/**
+	 * Stops timers, stages restore-branch reconciliation, then seals the persistence buffer and
+	 * drains it while the caller owns global shutdown.
+	 *
+	 * @param flushTimeoutMs - Optional bound for the drain; omitted, the drain is unbounded.
+	 */
+	public async shutdownWithinLifecycle(flushTimeoutMs?: number): Promise<void> {
 		this._stopFlushTimer();
 		this._sessionManager.stopCleanupTimer();
-		await this._flushBuffer();
+		this._stageAllRestoreBranchReconciliation();
+		await this._persistenceBuffer?.closeForShutdown(flushTimeoutMs);
 	}
 
 	/** Clears non-durable state after every shutdown resource has closed successfully. */

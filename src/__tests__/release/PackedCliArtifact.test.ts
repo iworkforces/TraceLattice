@@ -123,6 +123,7 @@ export const ERROR_CODES = Object.freeze({
   PERSISTENCE_WRITE_TIMEOUT: 'PERSISTENCE_WRITE_TIMEOUT',
   PERSISTENCE_DRAIN: 'PERSISTENCE_DRAIN',
   SESSION_LIFECYCLE_CLOSED: 'SESSION_LIFECYCLE_CLOSED',
+  SERVER_STOP_TIMEOUT: 'SERVER_STOP_TIMEOUT',
 });
 export class SequentialThinkingError extends Error {
   constructor(message, code) { super(message); this.code = code; }
@@ -153,6 +154,14 @@ export class SessionLifecycleClosedError extends SequentialThinkingError {
     super('Lifecycle admission closed', ERROR_CODES.SESSION_LIFECYCLE_CLOSED);
     this.sessionId = sessionId;
     this.phase = phase;
+  }
+}
+export class ServerStopTimeoutError extends SequentialThinkingError {
+  constructor(phase, timeoutMs, pending) {
+    super('Server stop timed out', ERROR_CODES.SERVER_STOP_TIMEOUT);
+    this.phase = phase;
+    this.timeoutMs = timeoutMs;
+    this.pending = pending;
   }
 }
 export function isErrorCode(err, code) { return err instanceof SequentialThinkingError && err.code === code; }
@@ -239,6 +248,7 @@ export declare const ERROR_CODES: {
   readonly PERSISTENCE_WRITE_TIMEOUT: 'PERSISTENCE_WRITE_TIMEOUT';
   readonly PERSISTENCE_DRAIN: 'PERSISTENCE_DRAIN';
   readonly SESSION_LIFECYCLE_CLOSED: 'SESSION_LIFECYCLE_CLOSED';
+  readonly SERVER_STOP_TIMEOUT: 'SERVER_STOP_TIMEOUT';
 };
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 export declare class SequentialThinkingError extends Error {
@@ -279,6 +289,13 @@ export declare class SessionLifecycleClosedError extends SequentialThinkingError
   readonly sessionId: SessionId;
   readonly phase: SessionLifecycleClosedPhase;
   constructor(sessionId: SessionId, phase: SessionLifecycleClosedPhase);
+}
+export type ServerStopPhase = 'operations' | 'discovery' | 'flush';
+export declare class ServerStopTimeoutError extends SequentialThinkingError {
+  readonly phase: ServerStopPhase;
+  readonly timeoutMs: number;
+  readonly pending: number | null;
+  constructor(phase: ServerStopPhase, timeoutMs: number, pending: number | null, detail?: string);
 }
 export declare function isErrorCode<C extends ErrorCode>(err: unknown, code: C): err is SequentialThinkingError & { readonly code: C };
 `;
