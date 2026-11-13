@@ -4,8 +4,10 @@ import { asSessionId, type SessionId } from '../../contracts/ids.js';
 import { PersistenceBuffer } from '../../core/PersistenceBuffer.js';
 import { PersistenceWriteTimeoutError } from '../../core/PersistenceBufferErrors.js';
 import { SessionResetCoordinator } from '../../core/SessionResetCoordinator.js';
+import type { ThoughtData } from '../../core/thought.js';
 import { NullLogger } from '../../logger/NullLogger.js';
 import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
+import { createTestThought } from '../helpers/factories.js';
 import { StallingPersistence } from '../helpers/StallingPersistence.js';
 import { advanceTimeAsync, useFakeTimers, useRealTimers } from '../helpers/timers.js';
 
@@ -62,6 +64,7 @@ describe('SessionResetCoordinator', () => {
 
 const TIMEOUT_MS = 1000;
 const SESSION_A = asSessionId('clear-deadline-a');
+const SESSION_B = asSessionId('clear-deadline-b');
 
 type DeadlineHarness = {
 	readonly coordinator: SessionResetCoordinator<TestSessionState>;
@@ -119,6 +122,18 @@ function track(promise: Promise<unknown>): () => Outcome {
 	return () => outcome;
 }
 
+function reasonOf(outcome: Outcome): unknown {
+	return outcome.status === 'rejected' ? outcome.reason : undefined;
+}
+
+function thought(sessionId: SessionId, thoughtNumber: number): ThoughtData {
+	return createTestThought({
+		id: `${sessionId}-${thoughtNumber}`,
+		thought_number: thoughtNumber,
+		session_id: sessionId,
+	});
+}
+
 const hungClears = [
 	{
 		clear: 'clearSession',
@@ -142,7 +157,9 @@ describe('SessionResetCoordinator clear deadline', () => {
 	});
 
 	afterEach(async () => {
-		for (const { persistence } of deadlineHarnesses) {
+		for (const { buffer, persistence } of deadlineHarnesses) {
+			buffer.stopFlushTimer();
+			persistence.holdWrites = false;
 			persistence.holdClears = false;
 			while (persistence.heldCallCount > 0) persistence.releaseHeldCall();
 		}
@@ -187,6 +204,107 @@ describe('SessionResetCoordinator clear deadline', () => {
 			expect(harness.warn).toHaveBeenCalledTimes(1);
 		}
 	);
+
+	it.each(hungClears)(
+		'sends no second $clear while the timed-out one is pending and clears again once it settles',
+		async ({ reset, call }) => {
+			// Given
+			const harness = createDeadlineHarness(TIMEOUT_MS);
+			harness.sessions.set(SESSION_A, { owner: 'owner-a' });
+			harness.persistence.holdClears = true;
+			const first = track(reset(harness, () => undefined));
+			await advanceTimeAsync(TIMEOUT_MS);
+
+			// When
+			const retry = track(reset(harness, () => undefined));
+			await advanceTimeAsync(0);
+			const clearsWhilePending = harness.persistence.clearCalls;
+			harness.persistence.holdClears = false;
+			harness.persistence.releaseHeldCall();
+			await advanceTimeAsync(0);
+			const afterSettle = track(reset(harness, () => undefined));
+			await advanceTimeAsync(0);
+
+			// Then
+			expect(reasonOf(first())).toMatchObject({ code: 'PERSISTENCE_WRITE_TIMEOUT', call });
+			expect(reasonOf(retry())).toBeInstanceOf(PersistenceWriteTimeoutError);
+			expect(reasonOf(retry())).toMatchObject({ call });
+			expect(clearsWhilePending).toBe(1);
+			expect(afterSettle().status).toBe('fulfilled');
+			expect(harness.persistence.clearCalls).toBe(2);
+			expect(harness.buffer.getBacklogView()).toMatchObject({
+				globalQuarantined: false,
+				quarantinedSessionCount: 0,
+			});
+		}
+	);
+
+	it.each([
+		{ late: 'success', failure: undefined },
+		{ late: 'failure', failure: new Error('late clear failure') },
+	])(
+		'keeps the gate closed until a timed-out clear settles and the reset failed after a late $late',
+		async ({ failure }) => {
+			// Given
+			const harness = createDeadlineHarness(TIMEOUT_MS);
+			const original = { owner: 'owner-a' };
+			harness.sessions.set(SESSION_A, original);
+			harness.persistence.holdClears = true;
+			const clearAux = vi.fn();
+			const reset = track(harness.coordinator.resetSession(SESSION_A, 'owner-a', clearAux));
+			await advanceTimeAsync(TIMEOUT_MS);
+
+			// When
+			const drainWhilePending = track(harness.buffer.drain());
+			await advanceTimeAsync(0);
+			harness.persistence.releaseHeldCall(failure);
+			await advanceTimeAsync(0);
+			const drainAfterSettle = track(harness.buffer.drain());
+			await advanceTimeAsync(0);
+
+			// Then
+			expect(reasonOf(reset())).toBeInstanceOf(PersistenceWriteTimeoutError);
+			expect(reasonOf(drainWhilePending())).toBe(reasonOf(reset()));
+			expect(drainAfterSettle().status).toBe('fulfilled');
+			expect(harness.buffer.getBacklogView().quarantinedSessionCount).toBe(1);
+			expect(harness.buffer.sessionEvictionState(SESSION_A)).toBe('failed');
+			expect(harness.sessions.get(SESSION_A)).toBe(original);
+			expect(clearAux).not.toHaveBeenCalled();
+		}
+	);
+
+	it('reports the oldest stall while a write and a clear are both pending and reopens after both', async () => {
+		// Given
+		const harness = createDeadlineHarness(TIMEOUT_MS);
+		harness.persistence.holdWrites = true;
+		harness.persistence.holdClears = true;
+		harness.buffer.bufferThought(SESSION_B, thought(SESSION_B, 1));
+		void harness.buffer.drain().catch(() => undefined);
+		await advanceTimeAsync(0);
+		const reset = track(harness.coordinator.resetSession(SESSION_A, 'owner-a'));
+		await advanceTimeAsync(TIMEOUT_MS);
+
+		// When
+		const withBoth = track(harness.buffer.drain());
+		await advanceTimeAsync(0);
+		harness.persistence.holdWrites = false;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+		const withClear = track(harness.buffer.drain());
+		await advanceTimeAsync(0);
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+		const withNone = track(harness.buffer.drain());
+		await advanceTimeAsync(0);
+
+		// Then
+		expect(harness.persistence.clearCalls).toBe(1);
+		expect(reasonOf(reset())).toMatchObject({ call: { kind: 'clearSession' } });
+		expect(reasonOf(withBoth())).toMatchObject({ call: { kind: 'work', sessionId: SESSION_B } });
+		expect(reasonOf(withClear())).toBe(reasonOf(reset()));
+		expect(withNone().status).toBe('fulfilled');
+		expect(await harness.persistence.loadHistoryForSession(SESSION_B)).toHaveLength(1);
+	});
 
 	it('waits for a held clear and replaces live state when no deadline is configured', async () => {
 		// Given
