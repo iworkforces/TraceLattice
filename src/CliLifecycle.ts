@@ -4,7 +4,8 @@ import { CliShutdownTimeoutError, TransportStopTimeoutError } from './errors.js'
 export const CLI_SHUTDOWN_DEADLINE_MS = DEFAULT_SHUTDOWN_DEADLINE_MS;
 
 export interface CliOwnedResource {
-	stop(): void | Promise<void>;
+	/** Stops within `timeoutMs`, the budget from `serverStopBudgetMs` of the total deadline. */
+	stop(timeoutMs: number): void | Promise<void>;
 }
 
 export interface CliTransportResource {
@@ -35,6 +36,19 @@ const SHUTDOWN_FAILURE_MESSAGE = 'CLI shutdown did not complete cleanly';
 
 export function transportStopSliceMs(totalMs: number): number {
 	return Math.max(1, Math.floor(totalMs / 2));
+}
+
+/**
+ * The server stop's own budget inside a total shutdown deadline: what is left after the transport
+ * slice and a reserve of a tenth of the deadline (at most 1000 ms). The total timer is armed before
+ * the transport phase and the server's timers only after it, so a budget of `total - slice` could
+ * never expire first; the reserve lets a server that honours its budget report its own typed error
+ * before the total deadline, and also absorbs event-loop lag on the slice guard. At a deadline of
+ * 1 or 2 ms the budget is 1 ms and the total deadline may win the tie.
+ */
+export function serverStopBudgetMs(totalMs: number): number {
+	const reserveMs = Math.min(1000, Math.floor(totalMs / 10));
+	return Math.max(1, totalMs - transportStopSliceMs(totalMs) - reserveMs);
 }
 
 function appendFailure(failures: unknown[], failure: unknown): void {
@@ -166,7 +180,8 @@ export class CliLifecycle {
 		expired: Promise<void>
 	): Promise<void> {
 		if (transportRun) await Promise.race([transportRun.settled, expired]);
-		const serverStopped = invoke(() => this._server.stop()).then(
+		const budgetMs = serverStopBudgetMs(this._deadlineMs);
+		const serverStopped = invoke(() => this._server.stop(budgetMs)).then(
 			() => [],
 			(error: unknown) => [error]
 		);
