@@ -81,14 +81,17 @@ type Outcome =
 
 const deadlineHarnesses = new Set<DeadlineHarness>();
 
-function createDeadlineHarness(timeoutMs: number | undefined): DeadlineHarness {
+function createDeadlineHarness(
+	timeoutMs: number | undefined,
+	flushInterval = 60_000
+): DeadlineHarness {
 	const persistence = new StallingPersistence();
 	const logger = new NullLogger();
 	const warn = vi.spyOn(logger, 'warn');
 	const buffer = new PersistenceBuffer({
 		persistence,
 		bufferSize: 100,
-		flushInterval: 60_000,
+		flushInterval,
 		maxRetries: 0,
 		writeTimeout: timeoutMs,
 		logger,
@@ -132,6 +135,30 @@ function thought(sessionId: SessionId, thoughtNumber: number): ThoughtData {
 		thought_number: thoughtNumber,
 		session_id: sessionId,
 	});
+}
+
+const FLUSH_MS = 100;
+
+/**
+ * Retains a failed write for SESSION_A, starts its reset with the clear held, then makes the
+ * backend healthy, accepts a write for SESSION_B and starts the flush timer.
+ *
+ * @returns The reset outcome and the thought attempts made before the clear started.
+ */
+async function holdClearBehindRetainedFailure(
+	harness: DeadlineHarness
+): Promise<{ readonly reset: () => Outcome; readonly attemptsAtClear: number }> {
+	harness.persistence.down = true;
+	harness.buffer.bufferThought(SESSION_A, thought(SESSION_A, 1));
+	await harness.buffer.drain().catch(() => undefined);
+	harness.persistence.holdClears = true;
+	const reset = track(harness.coordinator.resetSession(SESSION_A, 'owner-a'));
+	await advanceTimeAsync(0);
+	const attemptsAtClear = harness.persistence.thoughtAttempts;
+	harness.persistence.down = false;
+	harness.buffer.bufferThought(SESSION_B, thought(SESSION_B, 1));
+	harness.buffer.startFlushTimer();
+	return { reset, attemptsAtClear };
 }
 
 const hungClears = [
@@ -304,6 +331,94 @@ describe('SessionResetCoordinator clear deadline', () => {
 		expect(reasonOf(withClear())).toBe(reasonOf(reset()));
 		expect(withNone().status).toBe('fulfilled');
 		expect(await harness.persistence.loadHistoryForSession(SESSION_B)).toHaveLength(1);
+	});
+
+	it('dispatches no write while a reset clear is held, even a due retry of the reset session', async () => {
+		// Given
+		const harness = createDeadlineHarness(undefined, FLUSH_MS);
+		const { reset, attemptsAtClear } = await holdClearBehindRetainedFailure(harness);
+
+		// When
+		await advanceTimeAsync(20 * FLUSH_MS);
+		const attemptsWhileHeld = harness.persistence.thoughtAttempts;
+		const drainWhileHeld = track(harness.buffer.drain());
+		await advanceTimeAsync(FLUSH_MS);
+		const drainStatusWhileHeld = drainWhileHeld().status;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(FLUSH_MS);
+
+		// Then
+		expect(harness.persistence.clearCalls).toBe(1);
+		expect(attemptsWhileHeld).toBe(attemptsAtClear);
+		expect(drainStatusWhileHeld).toBe('pending');
+		expect(reset().status).toBe('fulfilled');
+		expect(drainWhileHeld().status).toBe('fulfilled');
+		expect(await harness.persistence.loadHistoryForSession(SESSION_A)).toHaveLength(0);
+		expect(await harness.persistence.loadHistoryForSession(SESSION_B)).toHaveLength(1);
+		expect(harness.persistence.maxConcurrentCalls).toBe(1);
+	});
+
+	it('keeps dispatch held from the start of a clear until its timed-out call settles', async () => {
+		// Given
+		const harness = createDeadlineHarness(TIMEOUT_MS, FLUSH_MS);
+		const { reset, attemptsAtClear } = await holdClearBehindRetainedFailure(harness);
+
+		// When
+		await advanceTimeAsync(TIMEOUT_MS - 1);
+		const attemptsBeforeDeadline = harness.persistence.thoughtAttempts;
+		await advanceTimeAsync(10 * FLUSH_MS);
+		const attemptsWhileStalled = harness.persistence.thoughtAttempts;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(FLUSH_MS);
+
+		// Then
+		expect(reasonOf(reset())).toMatchObject({ call: { kind: 'clearSession' } });
+		expect(attemptsBeforeDeadline).toBe(attemptsAtClear);
+		expect(attemptsWhileStalled).toBe(attemptsAtClear);
+		expect(await harness.persistence.loadHistoryForSession(SESSION_B)).toHaveLength(1);
+		expect(harness.persistence.maxConcurrentCalls).toBe(1);
+	});
+
+	it('starts one reset clear at a time when two sessions reset together', async () => {
+		// Given
+		const harness = createDeadlineHarness(undefined);
+		harness.persistence.holdClears = true;
+
+		// When
+		const resetA = track(harness.coordinator.resetSession(SESSION_A, 'owner-a'));
+		const resetB = track(harness.coordinator.resetSession(SESSION_B, 'owner-b'));
+		await advanceTimeAsync(0);
+		const clearsWhileFirstHeld = harness.persistence.clearCalls;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+		const clearsAfterFirst = harness.persistence.clearCalls;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+
+		// Then
+		expect(clearsWhileFirstHeld).toBe(1);
+		expect(clearsAfterFirst).toBe(2);
+		expect(resetA().status).toBe('fulfilled');
+		expect(resetB().status).toBe('fulfilled');
+		expect(harness.persistence.maxConcurrentCalls).toBe(1);
+	});
+
+	it('rejects a drain that waited for a clear with that clear once it times out', async () => {
+		// Given
+		const harness = createDeadlineHarness(TIMEOUT_MS);
+		harness.persistence.holdClears = true;
+		const reset = track(harness.coordinator.resetSession(SESSION_A, 'owner-a'));
+		await advanceTimeAsync(0);
+		harness.buffer.bufferThought(SESSION_B, thought(SESSION_B, 1));
+
+		// When
+		const drained = track(harness.buffer.drain());
+		await advanceTimeAsync(TIMEOUT_MS);
+
+		// Then
+		expect(reasonOf(reset())).toBeInstanceOf(PersistenceWriteTimeoutError);
+		expect(reasonOf(drained())).toBe(reasonOf(reset()));
+		expect(harness.persistence.thoughtAttempts).toBe(0);
 	});
 
 	it('waits for a held clear and replaces live state when no deadline is configured', async () => {

@@ -108,6 +108,8 @@ type ActiveDrain = {
 	backgroundObserved: boolean;
 	retainedNewFailure: boolean;
 	stalledWrite: PersistenceWriteTimeoutError | null;
+	/** Oldest stall of the closed gate that stopped this generation before its work ran out. */
+	gateError: PersistenceWriteTimeoutError | null;
 	inFlightWork: PersistenceWork | null;
 	settlement: DrainSettlement | null;
 };
@@ -520,14 +522,14 @@ export class PersistenceBuffer {
 				} catch (error) {
 					if (!(error instanceof PersistenceDrainError)) throw error;
 				}
-				this._assertWriteGateOpen();
-				const value = await this._runResetOperation(() =>
-					this._sessionBarrierOwnership.run(operationOwnership, operation)
+				return await this._runResetOperation(
+					() => this._sessionBarrierOwnership.run(operationOwnership, operation),
+					() => {
+						this._queue.discardSession(sessionId);
+						this._quarantinedSessions.delete(sessionId);
+						this._evictionQuarantinedSessions.delete(sessionId);
+					}
 				);
-				this._queue.discardSession(sessionId);
-				this._quarantinedSessions.delete(sessionId);
-				this._evictionQuarantinedSessions.delete(sessionId);
-				return value;
 			} catch (error) {
 				this._quarantinedSessions.add(sessionId);
 				throw error;
@@ -556,12 +558,12 @@ export class PersistenceBuffer {
 					if (!(error instanceof PersistenceDrainError)) throw error;
 				}
 				this._assertWriteGateOpen();
-				const value = await this._runResetOperation(operation);
-				this._queue.discardAll();
-				this._quarantinedSessions.clear();
-				this._evictionQuarantinedSessions.clear();
-				this._globalQuarantined = false;
-				return value;
+				return await this._runResetOperation(operation, () => {
+					this._queue.discardAll();
+					this._quarantinedSessions.clear();
+					this._evictionQuarantinedSessions.clear();
+					this._globalQuarantined = false;
+				});
 			} catch (error) {
 				this._globalQuarantined = true;
 				throw error;
@@ -628,6 +630,7 @@ export class PersistenceBuffer {
 			backgroundObserved: false,
 			retainedNewFailure: false,
 			stalledWrite: null,
+			gateError: null,
 			inFlightWork: null,
 			settlement: null,
 		};
@@ -643,9 +646,15 @@ export class PersistenceBuffer {
 
 	private async _runDrain(generation: ActiveDrain): Promise<void> {
 		while (true) {
-			const work = this._dispatchBlocked()
-				? undefined
-				: this._queue.nextEligibleWork(generation.selectedTokens, generation.mode);
+			while (this._writeGate.clearInFlight && !this._writeGate.isClosed) {
+				await this._writeGate.clearsSettled();
+			}
+			if (this._dispatchBlocked()) {
+				generation.gateError = this._writeGate.oldestError() ?? null;
+				this._closeGeneration(generation, { kind: 'result' });
+				return;
+			}
+			const work = this._queue.nextEligibleWork(generation.selectedTokens, generation.mode);
 			if (work === undefined) {
 				this._closeGeneration(generation, { kind: 'result' });
 				return;
@@ -686,9 +695,9 @@ export class PersistenceBuffer {
 		);
 	}
 
-	/** Single predicate read by every dispatch decision. */
+	/** Single predicate read by every dispatch decision: gate closed or a clear in flight. */
 	private _dispatchBlocked(): boolean {
-		return this._writeGate.isClosed;
+		return this._writeGate.isClosed || this._writeGate.clearInFlight;
 	}
 
 	private _closeWriteGate(
@@ -706,15 +715,26 @@ export class PersistenceBuffer {
 	}
 
 	/**
-	 * Runs a reset barrier's operation. A clear that outlived the write deadline keeps running,
-	 * so it closes the gate like a stalled write until its real outcome settles.
+	 * Runs a reset barrier's operation, its backend clear, as the only clear in flight, and
+	 * applies `commit` on success. No write is dispatched until both are done, so a retained
+	 * write of the reset scope cannot land after the clear. A clear that outlived the write
+	 * deadline keeps running, so it then closes the gate like a stalled write until its real
+	 * outcome settles.
 	 */
-	private async _runResetOperation<T>(operation: () => Promise<T>): Promise<T> {
+	private async _runResetOperation<T>(operation: () => Promise<T>, commit: () => void): Promise<T> {
+		while (this._writeGate.clearInFlight) await this._writeGate.clearsSettled();
+		this._assertWriteGateOpen();
+		const finishClear = this._writeGate.beginClear();
 		try {
-			return await operation();
+			const value = await operation();
+			commit();
+			return value;
 		} catch (error) {
 			this._closeWriteGateOnClear(error);
 			throw error;
+		} finally {
+			finishClear();
+			this._notifySessionProgress();
 		}
 	}
 
@@ -815,15 +835,15 @@ export class PersistenceBuffer {
 	/**
 	 * A generation that dispatched a timed-out write never resolves, even when no failure was
 	 * retained because a newer version superseded that write while its call was in flight.
+	 * Neither does one that the closed gate stopped: it rejects with the gate's oldest stall.
 	 */
 	private _generationSettlement(generation: ActiveDrain): DrainSettlement {
 		const { failures } = this._queue.generationResult(generation.selectedTokens);
 		if (failures.length > 0) {
 			return { kind: 'rejected', reason: new PersistenceDrainError(failures) };
 		}
-		return generation.stalledWrite === null
-			? { kind: 'resolved' }
-			: { kind: 'rejected', reason: generation.stalledWrite };
+		const timeout = generation.stalledWrite ?? generation.gateError;
+		return timeout === null ? { kind: 'resolved' } : { kind: 'rejected', reason: timeout };
 	}
 
 	private async _awaitSessionQuiescence(sessionId: SessionId): Promise<void> {

@@ -1,6 +1,6 @@
 /**
  * Write gate of the persistence buffer: the backend calls that outlived the write deadline and
- * have not settled yet.
+ * have not settled yet, and the reset clear currently in flight.
  *
  * @module PersistenceWriteGate
  */
@@ -58,14 +58,21 @@ function stallBelongsTo(stall: StalledCall, sessionId: SessionId): boolean {
 
 /**
  * Insertion-ordered set of pending stalls. The gate is closed while any stall is pending and
- * the oldest stall is the one reported to callers.
+ * the oldest stall is the one reported to callers. It also counts reset clears in flight.
  */
 export class PersistenceWriteGate {
 	private readonly _stalls = new Set<StalledCall>();
+	private _clearsInFlight = 0;
+	private _clearsSettled: PromiseWithResolvers<void> | null = null;
 
 	/** @returns Whether any timed-out call is still pending. */
 	public get isClosed(): boolean {
 		return this._stalls.size > 0;
+	}
+
+	/** @returns Whether a reset clear has started and not returned to its barrier yet. */
+	public get clearInFlight(): boolean {
+		return this._clearsInFlight > 0;
 	}
 
 	/** @returns The error of the oldest pending stall, or `undefined` when the gate is open. */
@@ -97,5 +104,23 @@ export class PersistenceWriteGate {
 	/** Drops one settled stall; the gate reopens only once no stall is pending. */
 	public settle(stall: StalledCall): void {
 		this._stalls.delete(stall);
+	}
+
+	/** Marks a reset clear as in flight until the returned callback runs once. */
+	public beginClear(): () => void {
+		this._clearsInFlight += 1;
+		return () => {
+			this._clearsInFlight -= 1;
+			if (this._clearsInFlight > 0 || this._clearsSettled === null) return;
+			this._clearsSettled.resolve();
+			this._clearsSettled = null;
+		};
+	}
+
+	/** @returns A promise that resolves once no reset clear is in flight. */
+	public clearsSettled(): Promise<void> {
+		if (!this.clearInFlight) return Promise.resolve();
+		this._clearsSettled ??= Promise.withResolvers<void>();
+		return this._clearsSettled.promise;
 	}
 }
