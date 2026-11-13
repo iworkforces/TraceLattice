@@ -27,7 +27,7 @@ src/
 | Need                           | File                                                                                   |
 | ------------------------------ | -------------------------------------------------------------------------------------- |
 | Public API / DI graph          | `lib.ts` (`_createContainerCore`)                                                      |
-| HTTP library surface           | `lib.ts` imports then exports `HttpTransport` / `createHttpTransport`                  |
+| HTTP library surface           | `lib.ts` imports then exports `HttpTransport` / `createHttpTransport` + typed errors   |
 | Discovery rescan               | `lib.ts` `refreshDiscovery()` — coalesced; rejects after shutdown                      |
 | Add a service                  | `di/ServiceRegistry.ts` + `lib.ts`                                                     |
 | Add a feature flag             | `contracts/features.ts` + `ServerConfig.ts` + `TRACELATTICE_FEATURES_*`                |

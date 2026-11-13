@@ -311,7 +311,7 @@ export async function startHttpTransport(mcpServer: McpServer): Promise<ITranspo
 }
 ```
 
-Call and await `transport.stop(timeout)` during application shutdown. It joins accepted requests for up to `timeout` milliseconds (default 30000). At the timeout it force-closes connections and settles from its own timer: it rejects with an error whose `code` is `TRANSPORT_STOP_TIMEOUT`, carrying `timeoutMs` and `abandonedRequests`, while accepted requests are still running, and resolves otherwise. A later `stop()` call starts a new bounded join.
+Call and await `transport.stop(timeout)` during application shutdown. It joins accepted requests for up to `timeout` milliseconds (default 30000). At the timeout it force-closes connections and settles from its own timer: it rejects with an error whose `code` is `TRANSPORT_STOP_TIMEOUT`, carrying `timeoutMs` and `abandonedRequests`, while accepted requests are still running, and resolves otherwise. A later `stop()` call starts a new bounded join. The package root also exports the typed errors its public API rejects with (`SequentialThinkingError`, `TransportStopTimeoutError`, `PersistenceWriteTimeoutError`, `PersistenceDrainError`, `SessionLifecycleClosedError`), plus `ERROR_CODES`, `isErrorCode`, and the `ErrorCode` type. Test a rejection with `error instanceof TransportStopTimeoutError`, or compare `error.code` with `ERROR_CODES.TRANSPORT_STOP_TIMEOUT` (or call `isErrorCode(error, ERROR_CODES.TRANSPORT_STOP_TIMEOUT)`).
 
 ## Current v2 contract
 
