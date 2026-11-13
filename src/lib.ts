@@ -29,6 +29,8 @@ import { Calibrator } from './core/evaluator/Calibrator.js';
 import { OutcomeRecorder } from './core/reasoning/OutcomeRecorder.js';
 import { createReasoningStrategy } from './core/reasoning/strategies/StrategyFactory.js';
 import { ThoughtFormatter } from './core/ThoughtFormatter.js';
+import { callWithinDeadline } from './core/PersistenceCallDeadline.js';
+import { PersistenceWriteTimeoutError } from './core/PersistenceBufferErrors.js';
 import { ThoughtProcessor, type CallToolResult } from './core/ThoughtProcessor.js';
 import { SessionLock } from './core/SessionLock.js';
 import { SessionLifecycleClosedError } from './core/SessionErrors.js';
@@ -800,19 +802,7 @@ export class ToolAwareSequentialThinkingServer
 				});
 			}
 
-			// Close persistence backend if available
-			const persistence = this._container.resolve('Persistence');
-			if (persistence && persistence !== this._borrowedPersistence) {
-				try {
-					await persistence.close();
-					this._logger.info('Persistence backend closed');
-				} catch (error) {
-					appendCleanupFailure(failures, error);
-					this._logger.error('Error closing persistence backend', {
-						error: getErrorMessage(error),
-					});
-				}
-			}
+			await this._closeOwnedPersistenceWithinDeadline(failures);
 
 			if (failures.length > 0) {
 				throw new AggregateError(failures, 'Failed to stop server cleanly');
@@ -821,6 +811,37 @@ export class ToolAwareSequentialThinkingServer
 			this._logger.info('Server stopped, watchers cleaned up');
 		});
 		return this._stopPromise;
+	}
+
+	/** Closes a server-owned backend within `persistenceWriteTimeout`; an injected one stays open. */
+	private async _closeOwnedPersistenceWithinDeadline(failures: unknown[]): Promise<void> {
+		const persistence = this._container.resolve('Persistence');
+		if (!persistence || persistence === this._borrowedPersistence) return;
+
+		const timeoutMs = this._config.persistenceWriteTimeout;
+		const outcome = await callWithinDeadline(() => persistence.close(), timeoutMs);
+		let failure: unknown;
+		switch (outcome.kind) {
+			case 'fulfilled':
+				this._logger.info('Persistence backend closed');
+				return;
+			case 'rejected':
+				failure = outcome.reason;
+				break;
+			case 'timedOut':
+				failure = new PersistenceWriteTimeoutError(
+					timeoutMs,
+					{ kind: 'close' },
+					outcome.lateOutcome
+				);
+				break;
+			default:
+				assertNever(outcome);
+		}
+		appendCleanupFailure(failures, failure);
+		this._logger.error('Error closing persistence backend', {
+			error: getErrorMessage(failure),
+		});
 	}
 
 	/** Awaitably resets one session and matching processor-owned state. */

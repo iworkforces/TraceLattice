@@ -7,6 +7,12 @@ import { createServer, type ToolAwareSequentialThinkingServer } from '../../lib.
 import { ServerConfig } from '../../ServerConfig.js';
 import { StallingPersistence } from '../helpers/StallingPersistence.js';
 
+const ownedBackend = vi.hoisted(() => ({ current: null as StallingPersistence | null }));
+
+vi.mock('../../persistence/PersistenceFactory.js', () => ({
+	createPersistenceBackend: async () => ownedBackend.current,
+}));
+
 const TIMEOUT_MS = 1000;
 const SESSION_ID = 'write-deadline-session';
 
@@ -37,6 +43,23 @@ async function createDeadlineServer(
 		loadFromPersistence: false,
 		enableWatcher: false,
 	});
+}
+
+async function createOwnedServer(
+	persistence: StallingPersistence
+): Promise<ToolAwareSequentialThinkingServer> {
+	backends.add(persistence);
+	ownedBackend.current = persistence;
+	return createServer({
+		config: deadlineConfig(),
+		autoDiscover: false,
+		loadFromPersistence: false,
+		enableWatcher: false,
+	});
+}
+
+function aggregatedErrors(error: unknown): readonly unknown[] {
+	return error instanceof AggregateError ? error.errors : [];
 }
 
 function trackStop(server: ToolAwareSequentialThinkingServer): TrackedStop {
@@ -72,6 +95,7 @@ afterEach(() => {
 		while (backend.heldCallCount > 0) backend.releaseHeldCall();
 	}
 	backends.clear();
+	ownedBackend.current = null;
 	vi.clearAllTimers();
 	vi.useRealTimers();
 });
@@ -103,5 +127,78 @@ describe('server persistence write deadline', () => {
 		expect(failures[0]?.cause).toMatchObject({ timeoutMs: TIMEOUT_MS });
 		expect(persistence.thoughtAttempts).toBe(1);
 		expect(persistence.closeCalls).toBe(0);
+	});
+
+	it('settles stop at persistenceWriteTimeout when an owned backend close never settles', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createOwnedServer(persistence);
+		persistence.holdClose = true;
+
+		// When
+		const stopping = trackStop(server);
+		await vi.advanceTimersByTimeAsync(TIMEOUT_MS - 1);
+		const settledBeforeDeadline = stopping.isSettled();
+		await vi.advanceTimersByTimeAsync(1);
+		const error = await stopping.result;
+
+		// Then
+		expect(settledBeforeDeadline).toBe(false);
+		expect(error).toBeInstanceOf(AggregateError);
+		const errors = aggregatedErrors(error);
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(PersistenceWriteTimeoutError);
+		expect(errors[0]).toMatchObject({
+			code: 'PERSISTENCE_WRITE_TIMEOUT',
+			timeoutMs: TIMEOUT_MS,
+			call: { kind: 'close' },
+		});
+		expect(persistence.closeCalls).toBe(1);
+	});
+
+	it('aggregates an owned backend close that rejects before the deadline', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createOwnedServer(persistence);
+		persistence.holdClose = true;
+		const closeFailure = new Error('close failed');
+
+		// When
+		const stopping = trackStop(server);
+		await vi.advanceTimersByTimeAsync(0);
+		persistence.releaseHeldCall(closeFailure);
+		const error = await stopping.result;
+
+		// Then
+		expect(aggregatedErrors(error)).toEqual([closeFailure]);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('closes an owned backend that settles in time and resolves stop', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createOwnedServer(persistence);
+
+		// When
+		const error = await trackStop(server).result;
+
+		// Then
+		expect(error).toBeUndefined();
+		expect(persistence.closeCalls).toBe(1);
+	});
+
+	it('never closes an injected backend at shutdown', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createDeadlineServer(persistence);
+		persistence.holdClose = true;
+
+		// When
+		const error = await trackStop(server).result;
+
+		// Then
+		expect(error).toBeUndefined();
+		expect(persistence.closeCalls).toBe(0);
+		expect(persistence.heldCallCount).toBe(0);
 	});
 });
