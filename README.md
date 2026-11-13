@@ -114,17 +114,17 @@ Supported environment variables override values from configuration files. The de
 `ServerConfig` when no file or environment override is present; `.example.env` contains explicit example
 overrides, not another set of defaults.
 
-| Variable                                | Default      | Description                                 |
-| --------------------------------------- | ------------ | ------------------------------------------- |
-| `TRACELATTICE_CONFIG`                   | search paths | Explicit YAML or JSON configuration file    |
-| `TRACELATTICE_MAX_HISTORY_SIZE`         | `10000`      | Maximum thoughts to keep in history         |
-| `TRACELATTICE_MAX_BRANCHES`             | `50`         | Maximum number of branches                  |
-| `TRACELATTICE_MAX_BRANCH_SIZE`          | `100`        | Maximum size of each branch                 |
-| `TRACELATTICE_LOG_LEVEL`                | `info`       | Log level: `debug`, `info`, `warn`, `error` |
+| Variable                                | Default      | Description                                                                                   |
+| --------------------------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| `TRACELATTICE_CONFIG`                   | search paths | Explicit YAML or JSON configuration file                                                      |
+| `TRACELATTICE_MAX_HISTORY_SIZE`         | `10000`      | Maximum thoughts to keep in history                                                           |
+| `TRACELATTICE_MAX_BRANCHES`             | `50`         | Maximum number of branches                                                                    |
+| `TRACELATTICE_MAX_BRANCH_SIZE`          | `100`        | Maximum size of each branch                                                                   |
+| `TRACELATTICE_LOG_LEVEL`                | `info`       | Log level: `debug`, `info`, `warn`, `error`                                                   |
 | `TRACELATTICE_PRETTY_LOG`               | `true`       | Only the literal `false` disables pretty logging; other values do not override a file setting |
-| `TRACELATTICE_SESSION_MAX_PER_OWNER`    | `50`         | Maximum isolated sessions per owner         |
-| `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS`   | `60000`      | Suspended tool-call token TTL in ms         |
-| `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | `60000`      | Expired suspension cleanup interval in ms   |
+| `TRACELATTICE_SESSION_MAX_PER_OWNER`    | `50`         | Maximum isolated sessions per owner                                                           |
+| `TRACELATTICE_TOOL_INTERLEAVE_TTL_MS`   | `60000`      | Suspended tool-call token TTL in ms                                                           |
+| `TRACELATTICE_TOOL_INTERLEAVE_SWEEP_MS` | `60000`      | Expired suspension cleanup interval in ms                                                     |
 
 ### Config files
 
@@ -182,29 +182,29 @@ All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `f
 
 ### Transport
 
-| Variable                                | Default                 | Description                                  |
-| --------------------------------------- | ----------------------- | -------------------------------------------- |
-| `TRACELATTICE_TRANSPORT_TYPE`           | `stdio`                 | Transport: `stdio` or `streamable-http`      |
-| `TRACELATTICE_STREAMABLE_HTTP_PORT`     | `9007`                  | Port for Streamable HTTP server              |
-| `TRACELATTICE_STREAMABLE_HTTP_HOST`     | `localhost`             | Host for Streamable HTTP server              |
-| `TRACELATTICE_STREAMABLE_HTTP_STATEFUL` | `true`                  | Enable stateful session tracking             |
-| `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS` | unset | Maximum retained transport sessions |
-| `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS` | unset | Transport-session idle timeout in milliseconds |
-| `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` | unset | Idle-session sweep interval in milliseconds |
-| `TRACELATTICE_CORS_ORIGIN`              | `*`                     | CORS origin                                  |
-| `TRACELATTICE_ENABLE_CORS`              | `true`                  | Enable CORS preflight                        |
-| `TRACELATTICE_ALLOWED_HOSTS`            | derived from bound host | Comma-separated allowed `Host` header values |
-| `TRACELATTICE_SHUTDOWN_DEADLINE_MS`     | `30000`                 | Total CLI shutdown budget in ms (stdio and Streamable HTTP) |
+| Variable                                                 | Default                 | Description                                                 |
+| -------------------------------------------------------- | ----------------------- | ----------------------------------------------------------- |
+| `TRACELATTICE_TRANSPORT_TYPE`                            | `stdio`                 | Transport: `stdio` or `streamable-http`                     |
+| `TRACELATTICE_STREAMABLE_HTTP_PORT`                      | `9007`                  | Port for Streamable HTTP server                             |
+| `TRACELATTICE_STREAMABLE_HTTP_HOST`                      | `localhost`             | Host for Streamable HTTP server                             |
+| `TRACELATTICE_STREAMABLE_HTTP_STATEFUL`                  | `true`                  | Enable stateful session tracking                            |
+| `TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS`              | unset                   | Maximum retained transport sessions                         |
+| `TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS`   | unset                   | Transport-session idle timeout in milliseconds              |
+| `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` | unset                   | Idle-session sweep interval in milliseconds                 |
+| `TRACELATTICE_CORS_ORIGIN`                               | `*`                     | CORS origin                                                 |
+| `TRACELATTICE_ENABLE_CORS`                               | `true`                  | Enable CORS preflight                                       |
+| `TRACELATTICE_ALLOWED_HOSTS`                             | derived from bound host | Comma-separated allowed `Host` header values                |
+| `TRACELATTICE_SHUTDOWN_DEADLINE_MS`                      | `30000`                 | Total CLI shutdown budget in ms (stdio and Streamable HTTP) |
 
 ### Skill discovery
 
-| Variable                                | Default                                | Description                                             |
-| --------------------------------------- | -------------------------------------- | ------------------------------------------------------- |
-| `TRACELATTICE_SKILL_DIRS`               | `.claude/skills:<home>/.claude/skills:.agents/skills:<home>/.agents/skills` | Colon-separated skill directories |
-| `TRACELATTICE_TOOL_DIRS`                | `.claude/tools:<home>/.claude/tools`   | Colon-separated tool directories                        |
-| `TRACELATTICE_DISCOVERY_CACHE_TTL`      | `300`                                  | Discovery cache TTL in seconds; stored internally as ms |
-| `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | `100`                                  | Discovery cache max entries                             |
-| `TRACELATTICE_WATCHER_VERBOSE`          | unset                                  | Log skill watcher events when set to `true`             |
+| Variable                                | Default                                                                     | Description                                             |
+| --------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `TRACELATTICE_SKILL_DIRS`               | `.claude/skills:<home>/.claude/skills:.agents/skills:<home>/.agents/skills` | Colon-separated skill directories                       |
+| `TRACELATTICE_TOOL_DIRS`                | `.claude/tools:<home>/.claude/tools`                                        | Colon-separated tool directories                        |
+| `TRACELATTICE_DISCOVERY_CACHE_TTL`      | `300`                                                                       | Discovery cache TTL in seconds; stored internally as ms |
+| `TRACELATTICE_DISCOVERY_CACHE_MAX_SIZE` | `100`                                                                       | Discovery cache max entries                             |
+| `TRACELATTICE_WATCHER_VERBOSE`          | unset                                                                       | Log skill watcher events when set to `true`             |
 
 The default skill paths include project-local `.claude/skills` and `.agents/skills` plus both paths
 under the user's home directory. The default tool paths include only `.claude/tools` and its home

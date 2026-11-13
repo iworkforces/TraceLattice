@@ -3,13 +3,7 @@ import { expect, it, vi } from 'vitest';
 import type { WatcherFaultHandler } from '../../watchers/RecoverableWatcher.js';
 import { emitOn, latestWatcher, watchMock, watcherAt } from './chokidar-mock.js';
 import { advanceTime, advanceTimeAsync } from './timers.js';
-import {
-	DIRS,
-	errorAt,
-	fault,
-	startReady,
-	type WatcherSubject,
-} from './watcher-fault-harness.js';
+import { DIRS, errorAt, fault, startReady, type WatcherSubject } from './watcher-fault-harness.js';
 
 export function describeFaultHandling(subject: WatcherSubject): void {
 	it('handles an error event without throwing and reports it once', () => {
