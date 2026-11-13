@@ -56,7 +56,7 @@ export class FilePersistence implements PersistenceBackend {
 		this._maxHistorySize = options?.maxHistorySize ?? 10000;
 		this._persistBranches = options?.persistBranches ?? true;
 		this._metrics = options?.metrics;
-		this._writer = new FileWriter(this._dataDir, options?.writerOperations);
+		this._writer = new FileWriter(this._dataDir, options?.writerOperations, SNAPSHOT_NAME);
 	}
 
 	public static async create(options?: FilePersistenceOptions): Promise<FilePersistence> {

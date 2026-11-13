@@ -1,4 +1,4 @@
-import { readdir, rm } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import Database from 'better-sqlite3';
 import { expect } from 'vitest';
@@ -104,15 +104,11 @@ export async function assertSqliteAbruptDrain(): Promise<void> {
 	}
 }
 
-async function sanitizeKilledFileWriter(root: string): Promise<readonly string[]> {
+async function killedFileWriterArtifacts(root: string): Promise<readonly string[]> {
 	const entries = await readdir(root);
-	const artifacts = entries.filter(
-		(entry) => entry === '.tracelattice-writer.lock' || entry.endsWith('.tmp')
-	);
-	for (const artifact of artifacts) {
-		await rm(join(root, artifact), { recursive: true, force: true });
-	}
-	return artifacts.sort();
+	return entries
+		.filter((entry) => entry === '.tracelattice-writer.lock' || entry.endsWith('.tmp'))
+		.sort();
 }
 
 export async function assertFilePublicationInterruption(): Promise<void> {
@@ -134,7 +130,7 @@ export async function assertFilePublicationInterruption(): Promise<void> {
 			code: null,
 			signal: 'SIGKILL',
 		});
-		const artifacts = await sanitizeKilledFileWriter(root);
+		const artifacts = await killedFileWriterArtifacts(root);
 		expect(artifacts).toContain('.tracelattice-writer.lock');
 		if (phase === 'before') expect(artifacts.some((entry) => entry.endsWith('.tmp'))).toBe(true);
 		if (phase === 'after') expect(artifacts.some((entry) => entry.endsWith('.tmp'))).toBe(false);
@@ -152,5 +148,6 @@ export async function assertFilePublicationInterruption(): Promise<void> {
 			unhandledRejections: [],
 			uncaughtExceptions: [],
 		});
+		expect(await killedFileWriterArtifacts(root)).toEqual([]);
 	}
 }
