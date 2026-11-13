@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -13,6 +13,11 @@ const OPERATION_TIMEOUT_MS = 10_000;
 const FORCE_CLOSE_MS = 5_000;
 const PACKED_SESSION_ID = 'packed-cli-verification';
 const STAGE = { packSucceeded: true, installSucceeded: true };
+const FILE_LOCK_FAILED = 'PACKED_FILE_LOCK_FAILED';
+const FILE_LOCK_NAME = '.tracelattice-writer.lock';
+const FILE_SESSION = 'packed-file-lock';
+const FILE_THOUGHT = 'Verify installed File persistence survives SIGKILL';
+const FILE_POLL_INTERVAL_MS = 50;
 
 function runtimeError(code, message) {
 	return new PackedCliError(code, message, STAGE);
@@ -293,18 +298,18 @@ async function exerciseProtocol(artifact) {
 	}
 }
 
-function requireSqlitePayload(result, session) {
+function requireSessionPayload(result, session, code = 'PACKED_SQLITE_RESTORE_FAILED') {
 	if (result.isError === true || !Array.isArray(result.content)) {
-		throw runtimeError('PACKED_SQLITE_RESTORE_FAILED', 'SQLite thought call failed');
+		throw runtimeError(code, 'persisted thought call failed');
 	}
 	const text = result.content.find((entry) => isRecord(entry) && entry.type === 'text')?.text;
 	const payload = JSON.parse(text);
 	if (!isRecord(payload) || payload.session_id !== session) {
-		throw runtimeError('PACKED_SQLITE_RESTORE_FAILED', 'SQLite session was not echoed');
+		throw runtimeError(code, 'persisted session was not echoed');
 	}
 }
 
-function requireMissingTargetRejected(result) {
+function requireMissingTargetRejected(result, code = 'PACKED_SQLITE_RESTORE_FAILED') {
 	const text = Array.isArray(result.content)
 		? result.content.find((entry) => isRecord(entry) && entry.type === 'text')?.text
 		: undefined;
@@ -313,7 +318,7 @@ function requireMissingTargetRejected(result) {
 		typeof text !== 'string' ||
 		!text.includes('verification_target 1 is missing')
 	) {
-		throw runtimeError('PACKED_SQLITE_RESTORE_FAILED', 'missing SQLite target was accepted');
+		throw runtimeError(code, 'missing verification target was accepted');
 	}
 }
 
@@ -336,7 +341,7 @@ async function exerciseSqliteProcess(artifact, configPath, restore) {
 	};
 	try {
 		await initializeProtocol(client);
-		requireSqlitePayload(
+		requireSessionPayload(
 			requireResult(await callThought(client, 'sqlite-call', input), 'sqlite-call'),
 			session
 		);
@@ -395,9 +400,201 @@ async function verifySqliteRoundTrip(artifact) {
 	return { write: true, restoredVerification: true, missingTargetRejected: true };
 }
 
+function fileLockError(message) {
+	return runtimeError(FILE_LOCK_FAILED, message);
+}
+
+function fileThought(restore) {
+	return {
+		thought: restore ? 'Verify the restored File thought' : FILE_THOUGHT,
+		thought_number: restore ? 2 : 1,
+		total_thoughts: 2,
+		next_thought_needed: false,
+		session_id: FILE_SESSION,
+		confidence: 0.8,
+		...(restore
+			? { thought_type: 'verification', verification_target: 1, verification_result: 1 }
+			: {}),
+	};
+}
+
+async function snapshotHoldsThought(snapshotPath) {
+	let snapshot;
+	try {
+		snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
+	} catch (error) {
+		if (error instanceof SyntaxError || error?.code === 'ENOENT') return false;
+		throw error;
+	}
+	const records = isRecord(snapshot) && Array.isArray(snapshot.thoughts) ? snapshot.thoughts : [];
+	return records.some(
+		(record) =>
+			isRecord(record) &&
+			record.sessionId === FILE_SESSION &&
+			Array.isArray(record.thoughts) &&
+			record.thoughts.some((thought) => isRecord(thought) && thought.thought === FILE_THOUGHT)
+	);
+}
+
+async function waitForDurableThought(snapshotPath) {
+	const expiresAt = Date.now() + OPERATION_TIMEOUT_MS;
+	while (!(await snapshotHoldsThought(snapshotPath))) {
+		if (Date.now() >= expiresAt) {
+			throw fileLockError('snapshot.json never held the written thought');
+		}
+		await new Promise((resolve) => setTimeout(resolve, FILE_POLL_INTERVAL_MS));
+	}
+}
+
+async function requireLockDirectory(lockPath, moment) {
+	let metadata;
+	try {
+		metadata = await lstat(lockPath);
+	} catch (error) {
+		throw fileLockError(`writer lock is missing ${moment}: ${error}`);
+	}
+	if (!metadata.isDirectory()) throw fileLockError(`writer lock is not a directory ${moment}`);
+}
+
+function startFileCli(artifact, configPath) {
+	const running = captureProcess(artifact.binaryPath, [], artifact.consumerRoot, {
+		TRACELATTICE_CONFIG: configPath,
+	});
+	return { running, client: new ProtocolClient(running) };
+}
+
+async function verifyLiveOwnerRejected(artifact, paths, ownerPid) {
+	const competitor = captureProcess(artifact.binaryPath, [], artifact.consumerRoot, {
+		TRACELATTICE_CONFIG: paths.configPath,
+	});
+	try {
+		const status = await deadline(competitor.closed, OPERATION_TIMEOUT_MS, 'live-owner competitor');
+		const stderr = competitor.stderr();
+		const namesOwner =
+			stderr.includes(paths.lockPath) && new RegExp(`\\bpid ${ownerPid}\\b`).test(stderr);
+		if (status.code !== 1 || !namesOwner) {
+			throw fileLockError(
+				`competitor of live owner pid ${ownerPid} exited ${status.code ?? status.signal}: ${stderr.trim()}`
+			);
+		}
+	} finally {
+		await terminate(competitor);
+	}
+}
+
+async function killOwner(owner) {
+	owner.running.child.kill('SIGKILL');
+	const status = await deadline(owner.running.closed, OPERATION_TIMEOUT_MS, 'SIGKILL owner exit');
+	if (status.signal !== 'SIGKILL') {
+		throw fileLockError(`owner exited ${status.code ?? status.signal} instead of by SIGKILL`);
+	}
+}
+
+async function crashDurableOwner(artifact, paths) {
+	const owner = startFileCli(artifact, paths.configPath);
+	try {
+		await initializeProtocol(owner.client);
+		requireSessionPayload(
+			requireResult(
+				await callThought(owner.client, 'file-write', fileThought(false)),
+				'file-write'
+			),
+			FILE_SESSION,
+			FILE_LOCK_FAILED
+		);
+		await waitForDurableThought(paths.snapshotPath);
+		await requireLockDirectory(paths.lockPath, 'while the owner runs');
+		await verifyLiveOwnerRejected(artifact, paths, owner.running.child.pid);
+		await killOwner(owner);
+		await requireLockDirectory(paths.lockPath, 'after SIGKILL');
+	} finally {
+		owner.client.close();
+		await terminate(owner.running);
+	}
+}
+
+async function restartOnKilledOwnerLock(artifact, paths) {
+	const restarted = startFileCli(artifact, paths.configPath);
+	const restoring = fileThought(true);
+	try {
+		await initializeProtocol(restarted.client);
+		requireSessionPayload(
+			requireResult(await callThought(restarted.client, 'file-restore', restoring), 'file-restore'),
+			FILE_SESSION,
+			FILE_LOCK_FAILED
+		);
+		requireMissingTargetRejected(
+			requireResult(
+				await callThought(restarted.client, 'file-missing', {
+					...restoring,
+					session_id: 'packed-file-missing-target',
+				}),
+				'file-missing'
+			),
+			FILE_LOCK_FAILED
+		);
+		restarted.running.child.stdin.end();
+		const status = await deadline(restarted.running.closed, OPERATION_TIMEOUT_MS, 'File close');
+		if (restarted.client.failure) throw restarted.client.failure;
+		if (status.code !== 0 || status.signal !== null) {
+			throw fileLockError(`restarted File process exited ${status.code ?? status.signal}`);
+		}
+	} finally {
+		restarted.client.close();
+		await terminate(restarted.running);
+	}
+}
+
+async function prepareFileRoot(root) {
+	const dataDir = join(root, 'data');
+	await mkdir(dataDir);
+	const canonicalDataDir = await realpath(dataDir);
+	const configPath = join(root, 'config.json');
+	await writeFile(
+		configPath,
+		JSON.stringify({
+			persistence: { enabled: true, backend: 'file', options: { dataDir } },
+			persistenceFlushInterval: 100,
+		})
+	);
+	return {
+		configPath,
+		snapshotPath: join(canonicalDataDir, 'snapshot.json'),
+		lockPath: join(canonicalDataDir, FILE_LOCK_NAME),
+	};
+}
+
+async function verifyFileLockRecovery(artifact) {
+	const root = await mkdtemp(join(tmpdir(), 'tracelattice-packed-file-'));
+	let primary = null;
+	try {
+		const paths = await prepareFileRoot(root);
+		await crashDurableOwner(artifact, paths);
+		await restartOnKilledOwnerLock(artifact, paths);
+	} catch (error) {
+		primary = fileLockError(`File lock recovery failed: ${String(error)}`);
+	}
+	const cleanupErrors = await removeTemporaryRoots([root]);
+	if (primary) throw appendCleanupDiagnostics(primary, cleanupErrors);
+	if (cleanupErrors.length > 0) {
+		throw appendCleanupDiagnostics(
+			runtimeError('PACKED_FILE_CLEANUP_FAILED', 'File temporary root removal failed'),
+			cleanupErrors
+		);
+	}
+	return {
+		durableWrite: true,
+		lockHeld: true,
+		liveOwnerRejected: true,
+		killedOwnerReclaimed: true,
+		restoredThought: true,
+	};
+}
+
 export async function verifyPackedRuntime(artifact) {
 	const version = await verifyVersion(artifact);
 	const exercised = await exerciseProtocol(artifact);
 	const sqliteCheck = await verifySqliteRoundTrip(artifact);
-	return { version, ...exercised, sqliteCheck };
+	const fileLockCheck = await verifyFileLockRecovery(artifact);
+	return { version, ...exercised, sqliteCheck, fileLockCheck };
 }
