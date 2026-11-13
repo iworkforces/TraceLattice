@@ -102,7 +102,7 @@ type ActiveDrain = {
 	mode: PersistenceSelectionMode;
 	backgroundObserved: boolean;
 	retainedNewFailure: boolean;
-	stalledWrite: boolean;
+	stalledWrite: PersistenceWriteTimeoutError | null;
 	inFlightWork: PersistenceWork | null;
 	settlement: DrainSettlement | null;
 };
@@ -358,6 +358,9 @@ export class PersistenceBuffer {
 			if (!(reason instanceof PersistenceDrainError)) throw reason;
 			const failures = reason.failures.filter((failure) => failure.sessionId === sessionId);
 			if (failures.length > 0) throw new PersistenceDrainError(failures);
+			if (generation.stalledWrite !== null && this._queue.hasSessionWork(sessionId)) {
+				throw generation.stalledWrite;
+			}
 		});
 	}
 
@@ -622,7 +625,7 @@ export class PersistenceBuffer {
 			mode,
 			backgroundObserved: false,
 			retainedNewFailure: false,
-			stalledWrite: false,
+			stalledWrite: null,
 			inFlightWork: null,
 			settlement: null,
 		};
@@ -676,12 +679,14 @@ export class PersistenceBuffer {
 	 */
 	private _reportsFailures(generation: ActiveDrain): boolean {
 		return (
-			generation.mode === 'explicit' || generation.retainedNewFailure || generation.stalledWrite
+			generation.mode === 'explicit' ||
+			generation.retainedNewFailure ||
+			generation.stalledWrite !== null
 		);
 	}
 
 	private _closeWriteGate(generation: ActiveDrain, stalled: StalledCall): void {
-		generation.stalledWrite = true;
+		generation.stalledWrite = stalled.error;
 		this._stalledCall = stalled;
 		this._logger.warn('Persistence write timed out; later writes wait until it settles', {
 			sessionId: stalled.work.sessionId,

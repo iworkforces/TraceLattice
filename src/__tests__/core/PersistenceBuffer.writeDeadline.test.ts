@@ -173,6 +173,22 @@ describe('PersistenceBuffer write deadline gate', () => {
 		expect(harness.events).toHaveLength(1);
 	});
 
+	it('rejects a drainSession joined before the timeout while its session still has work', async () => {
+		// Given
+		const harness = createHarness();
+		harness.persistence.holdWrites = true;
+		harness.buffer.bufferThought(A, thought(A, 1));
+		harness.buffer.bufferThought(B, thought(B, 1));
+
+		// When
+		const sessionB = track(harness.buffer.drainSession(B));
+		await advanceTimeAsync(TIMEOUT_MS);
+
+		// Then
+		expect(reasonOf(sessionB())).toBeInstanceOf(PersistenceWriteTimeoutError);
+		expect(await harness.persistence.loadHistoryForSession(B)).toHaveLength(0);
+	});
+
 	it('keeps timer and size triggers inert while the timed-out call is pending', async () => {
 		// Given
 		const harness = createHarness({ bufferSize: 2 });
