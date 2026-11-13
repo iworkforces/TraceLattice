@@ -3,6 +3,11 @@ import { request } from 'node:http';
 import { McpServer } from 'tmcp';
 import { ValibotJsonSchemaAdapter } from '@tmcp/adapter-valibot';
 import { TransportStopTimeoutError } from '../errors.js';
+import {
+	ERROR_CODES,
+	SequentialThinkingError,
+	TransportStopTimeoutError as RootTransportStopTimeoutError,
+} from '../lib.js';
 import { Metrics } from '../metrics/metrics.impl.js';
 import { HttpTransport } from '../transport/HttpTransport.js';
 import { getListeningPort } from './integration/ProtocolHarness.js';
@@ -274,6 +279,32 @@ describe('HttpTransport bounded stop', () => {
 			timeoutMs: 50,
 			abandonedRequests: 1,
 		});
+		gate.release();
+		await pending.outcome;
+	});
+
+	it('rejects a timed-out stop with the error classes exported from the package root', async () => {
+		// Given
+		const gate = await connectGatedTransport(transport, '/messages');
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const pending = startWireRequest(gate.endpoint, controlledCallBody(), {
+			...gate.headers,
+			connection: 'close',
+		});
+		await gate.started;
+		const outcome = transport.stop(50).then(
+			() => null,
+			(error: unknown) => error
+		);
+
+		// When
+		await vi.advanceTimersByTimeAsync(50);
+
+		// Then
+		const error = await outcome;
+		expect(error).toBeInstanceOf(RootTransportStopTimeoutError);
+		expect(error).toBeInstanceOf(SequentialThinkingError);
+		expect(error).toMatchObject({ code: ERROR_CODES.TRANSPORT_STOP_TIMEOUT });
 		gate.release();
 		await pending.outcome;
 	});

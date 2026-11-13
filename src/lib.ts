@@ -12,7 +12,14 @@ import type { Summary } from './core/compression/Summary.js';
 import type { SequentialThinkingSchema } from './schema.js';
 import { SEQUENTIAL_THINKING_TOOL } from './schema.js';
 import type { IDisposable } from './types/disposable.js';
-import { getErrorMessage } from './errors.js';
+import {
+	ERROR_CODES,
+	SequentialThinkingError,
+	TransportStopTimeoutError,
+	getErrorMessage,
+	isErrorCode,
+	type ErrorCode,
+} from './errors.js';
 import { assertNever } from './utils.js';
 
 // New component imports
@@ -29,11 +36,18 @@ import { Calibrator } from './core/evaluator/Calibrator.js';
 import { OutcomeRecorder } from './core/reasoning/OutcomeRecorder.js';
 import { createReasoningStrategy } from './core/reasoning/strategies/StrategyFactory.js';
 import { ThoughtFormatter } from './core/ThoughtFormatter.js';
-import { callWithinDeadline } from './core/PersistenceCallDeadline.js';
-import { PersistenceWriteTimeoutError } from './core/PersistenceBufferErrors.js';
+import { callWithinDeadline, type PersistenceCallOutcome } from './core/PersistenceCallDeadline.js';
+import {
+	PersistenceDrainError,
+	PersistenceWriteTimeoutError,
+	type PersistenceTimedOutCall,
+} from './core/PersistenceBufferErrors.js';
 import { ThoughtProcessor, type CallToolResult } from './core/ThoughtProcessor.js';
 import { SessionLock } from './core/SessionLock.js';
-import { SessionLifecycleClosedError } from './core/SessionErrors.js';
+import {
+	SessionLifecycleClosedError,
+	type SessionLifecycleClosedPhase,
+} from './core/SessionErrors.js';
 import { SessionLifecycleCoordinator } from './core/SessionLifecycleCoordinator.js';
 import { Container } from './di/Container.js';
 import { StructuredLogger } from './logger/StructuredLogger.js';
@@ -54,9 +68,25 @@ import { HttpTransport, createHttpTransport } from './transport/HttpTransport.js
 import type { HttpTransportOptions } from './transport/HttpTransport.js';
 import type { TransportOptions } from './transport/BaseTransport.js';
 import type { ITransport, TransportKind } from './contracts/transport.js';
+import type { PersistenceWorkFailure } from './contracts/persistence-work.js';
 
-export { HttpTransport, createHttpTransport };
+export {
+	HttpTransport,
+	createHttpTransport,
+	SequentialThinkingError,
+	TransportStopTimeoutError,
+	PersistenceWriteTimeoutError,
+	PersistenceDrainError,
+	SessionLifecycleClosedError,
+	ERROR_CODES,
+	isErrorCode,
+};
 export type {
+	ErrorCode,
+	PersistenceWorkFailure,
+	PersistenceTimedOutCall,
+	PersistenceCallOutcome,
+	SessionLifecycleClosedPhase,
 	HttpTransportOptions,
 	TransportOptions,
 	ITransport,
