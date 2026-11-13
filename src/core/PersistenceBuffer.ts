@@ -565,6 +565,7 @@ export class PersistenceBuffer {
 		return Object.freeze({
 			globalQuarantined: this._globalQuarantined,
 			quarantinedSessionCount: quarantinedSessions.size,
+			blockedSessionCount: this._queue.blockedSessionCount,
 			retainedFailureCount: this._queue.currentFailures().length,
 			pendingThoughtCount: this._queue.pendingThoughtCount,
 		});

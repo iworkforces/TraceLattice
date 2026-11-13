@@ -35,6 +35,7 @@ describe('HistoryManager persistence backlog view', () => {
 		expect(history.getPersistenceBacklogView()).toEqual({
 			globalQuarantined: false,
 			quarantinedSessionCount: 0,
+			blockedSessionCount: 0,
 			retainedFailureCount: 0,
 			pendingThoughtCount: 1,
 		});

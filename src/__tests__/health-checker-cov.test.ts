@@ -202,6 +202,7 @@ describe('HealthChecker — persistence backlog component', () => {
 	const IDLE_VIEW: PersistenceBacklogView = {
 		globalQuarantined: false,
 		quarantinedSessionCount: 0,
+		blockedSessionCount: 0,
 		retainedFailureCount: 0,
 		pendingThoughtCount: 0,
 	};
@@ -227,6 +228,7 @@ describe('HealthChecker — persistence backlog component', () => {
 		const view: PersistenceBacklogView = {
 			globalQuarantined: false,
 			quarantinedSessionCount: 2,
+			blockedSessionCount: 1,
 			retainedFailureCount: 3,
 			pendingThoughtCount: 5,
 		};
@@ -243,7 +245,8 @@ describe('HealthChecker — persistence backlog component', () => {
 		expect(result.components['persistenceBacklog']).toEqual({
 			name: 'persistenceBacklog',
 			healthy: true,
-			details: 'quarantined sessions: 2, retained failures: 3, pending thoughts: 5',
+			details:
+				'quarantined sessions: 2, blocked sessions: 1, retained failures: 3, pending thoughts: 5',
 		});
 	});
 
@@ -265,7 +268,7 @@ describe('HealthChecker — persistence backlog component', () => {
 			name: 'persistenceBacklog',
 			healthy: false,
 			details:
-				'Persistence is globally quarantined; quarantined sessions: 0, retained failures: 0, pending thoughts: 0',
+				'Persistence is globally quarantined; quarantined sessions: 0, blocked sessions: 0, retained failures: 0, pending thoughts: 0',
 		});
 	});
 

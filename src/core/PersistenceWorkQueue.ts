@@ -473,6 +473,11 @@ export class PersistenceWorkQueue {
 		return this.currentFailures(undefined, sessionId).length > 0;
 	}
 
+	/** @returns Number of sessions whose later writes are held behind a retained failure. */
+	public get blockedSessionCount(): number {
+		return this._sessionHolds().size;
+	}
+
 	/**
 	 * @param sessionId - Session whose oldest retained thought or backtrack failure is read.
 	 * @returns The failure that holds the session's later writes, or `undefined`.

@@ -166,7 +166,7 @@ describe('built CLI readiness probes', () => {
 		expect(body.components['persistenceBacklog']).toEqual({
 			name: 'persistenceBacklog',
 			healthy: true,
-			details: 'quarantined sessions: 0, retained failures: 0, pending thoughts: 0',
+			details: 'quarantined sessions: 0, blocked sessions: 0, retained failures: 0, pending thoughts: 0',
 		});
 	});
 

@@ -2211,6 +2211,7 @@ describe('PersistenceBuffer backlog view', () => {
 	const EMPTY_VIEW = {
 		globalQuarantined: false,
 		quarantinedSessionCount: 0,
+		blockedSessionCount: 0,
 		retainedFailureCount: 0,
 		pendingThoughtCount: 0,
 	};
@@ -2243,7 +2244,7 @@ describe('PersistenceBuffer backlog view', () => {
 		expect(afterDrain).toEqual(EMPTY_VIEW);
 	});
 
-	it('counts a retained terminal failure and its held write without quarantining anything', async () => {
+	it('counts a retained terminal failure and its blocked session without quarantining anything', async () => {
 		// Given
 		const sessionId = asSessionId('view-failure');
 		const persistence = new RecordingPersistence({
@@ -2262,6 +2263,7 @@ describe('PersistenceBuffer backlog view', () => {
 		expect(outcome.status).toBe('rejected');
 		expect(harness.buffer.getBacklogView()).toEqual({
 			...EMPTY_VIEW,
+			blockedSessionCount: 1,
 			retainedFailureCount: 1,
 			pendingThoughtCount: 2,
 		});
@@ -2375,14 +2377,17 @@ describe('PersistenceBuffer ordered durable writes', () => {
 			`thought:${ORDER_B}:2`,
 			`thought:${ORDER_B}:3`,
 		]);
-		expect(viewDuringOutage).toMatchObject({ pendingThoughtCount: 2 });
+		expect(viewDuringOutage).toMatchObject({ blockedSessionCount: 1, pendingThoughtCount: 2 });
 		expect(eventsOf(events, ORDER_A)).toEqual([
 			`thought:${ORDER_A}:1`,
 			`thought:${ORDER_A}:2`,
 			`thought:${ORDER_A}:2`,
 			`thought:${ORDER_A}:3`,
 		]);
-		expect(harness.buffer.getBacklogView()).toMatchObject({ pendingThoughtCount: 0 });
+		expect(harness.buffer.getBacklogView()).toMatchObject({
+			blockedSessionCount: 0,
+			pendingThoughtCount: 0,
+		});
 	});
 
 	it('holds snapshots accepted after a failed thought and writes only their latest versions', async () => {
@@ -2446,6 +2451,7 @@ describe('PersistenceBuffer ordered durable writes', () => {
 			reason: { failures: [{ kind: 'backtrack', sessionId: ORDER_A }] },
 		});
 		expect(events).toEqual([`backtrack:${ORDER_A}:1`]);
+		expect(harness.buffer.getBacklogView()).toMatchObject({ blockedSessionCount: 1 });
 	});
 
 	it('does not hold a session behind a failed branch, edge or summary snapshot', async () => {
@@ -2471,6 +2477,10 @@ describe('PersistenceBuffer ordered durable writes', () => {
 			`thought:${ORDER_A}:1`,
 			`thought:${ORDER_A}:2`,
 		]);
+		expect(harness.buffer.getBacklogView()).toMatchObject({
+			blockedSessionCount: 0,
+			retainedFailureCount: 3,
+		});
 	});
 
 	it('never resolves a session barrier as quiescent while held work is queued', async () => {
@@ -2550,6 +2560,7 @@ describe('PersistenceBuffer ordered durable writes', () => {
 		expect(recoveredView).toEqual({
 			globalQuarantined: false,
 			quarantinedSessionCount: 1,
+			blockedSessionCount: 0,
 			retainedFailureCount: 0,
 			pendingThoughtCount: 0,
 		});
@@ -2587,6 +2598,7 @@ describe('PersistenceBuffer ordered durable writes', () => {
 			`thought:${ORDER_A}:1`,
 		]);
 		expect(viewAfterReset).toMatchObject({
+			blockedSessionCount: 0,
 			retainedFailureCount: 0,
 			pendingThoughtCount: 0,
 		});
