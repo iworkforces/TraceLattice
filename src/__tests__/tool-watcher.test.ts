@@ -1,30 +1,17 @@
-import type { FSWatcher } from 'chokidar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type WatcherEventHandler = (path: string) => Promise<void> | void;
-let eventHandlers: Map<string, WatcherEventHandler>;
-let mockWatcher: {
-	on: ReturnType<typeof vi.fn>;
-	close: ReturnType<typeof vi.fn>;
-};
 
-vi.mock('chokidar', () => ({
-	watch: vi.fn(() => {
-		eventHandlers = new Map();
-		mockWatcher = {
-			on: vi.fn((event: string, handler: WatcherEventHandler) => {
-				eventHandlers.set(event, handler);
-				return mockWatcher;
-			}),
-			close: vi.fn().mockResolvedValue(undefined),
-		};
-		return mockWatcher as unknown as FSWatcher;
-	}),
-}));
+vi.mock('chokidar', async () => {
+	const { watchMock } = await import('./helpers/chokidar-mock.js');
+	return { watch: watchMock };
+});
 
 vi.mock('node:os', () => ({ homedir: () => '/mock/home' }));
 
 import { watch } from 'chokidar';
+import { emitOn, latestWatcher, resetChokidarMock } from './helpers/chokidar-mock.js';
+import { describeWatcherFaultRecovery } from './helpers/watcher-fault-suite.js';
 import type { Logger, LogLevel } from '../logger/StructuredLogger.js';
 import { ToolRegistry } from '../registry/ToolRegistry.js';
 import { ToolWatcher } from '../watchers/ToolWatcher.js';
@@ -41,9 +28,7 @@ function createLogger(): Logger {
 }
 
 function handler(event: string): WatcherEventHandler {
-	const registered = eventHandlers.get(event);
-	if (!registered) throw new Error(`Missing ${event} handler`);
-	return registered;
+	return (path) => emitOn(latestWatcher(), event, path);
 }
 
 describe('ToolWatcher', () => {
@@ -53,6 +38,7 @@ describe('ToolWatcher', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		resetChokidarMock();
 		registry = new ToolRegistry({ toolDirs: [] });
 		refresh = vi.spyOn(registry, 'refreshAsync').mockResolvedValue(0);
 		logger = createLogger();
@@ -71,9 +57,9 @@ describe('ToolWatcher', () => {
 			['.claude/tools', '/mock/home/.claude/tools'],
 			expect.objectContaining({ persistent: true })
 		);
-		expect(mockWatcher.on).toHaveBeenCalledWith('add', expect.any(Function));
-		expect(mockWatcher.on).toHaveBeenCalledWith('change', expect.any(Function));
-		expect(mockWatcher.on).toHaveBeenCalledWith('unlink', expect.any(Function));
+		expect(latestWatcher().on).toHaveBeenCalledWith('add', expect.any(Function));
+		expect(latestWatcher().on).toHaveBeenCalledWith('change', expect.any(Function));
+		expect(latestWatcher().on).toHaveBeenCalledWith('unlink', expect.any(Function));
 		await watcher.stop();
 	});
 
@@ -177,8 +163,19 @@ describe('ToolWatcher', () => {
 
 		// Then
 		expect(refresh).toHaveBeenCalledTimes(1);
-		expect(mockWatcher.close).toHaveBeenCalledTimes(1);
+		expect(latestWatcher().close).toHaveBeenCalledTimes(1);
 		await watcher.stop();
-		expect(mockWatcher.close).toHaveBeenCalledTimes(1);
+		expect(latestWatcher().close).toHaveBeenCalledTimes(1);
 	});
+});
+
+describeWatcherFaultRecovery({
+	name: 'ToolWatcher',
+	eventPath: '/tools/example.tool.md',
+	create(directories, onFault) {
+		const registry = new ToolRegistry({ toolDirs: [] });
+		const refresh = vi.spyOn(registry, 'refreshAsync').mockResolvedValue(0);
+		const logger = createLogger();
+		return { watcher: new ToolWatcher(registry, logger, directories, onFault), refresh, logger };
+	},
 });

@@ -22,8 +22,16 @@ import { assertNever } from '../utils.js';
 import type { Summary } from './compression/Summary.js';
 import type { DurableIdentitySession } from './DurableThoughtIdentityIndex.js';
 import type { Edge } from './graph/Edge.js';
-import { PersistenceWorkQueue, type PersistenceSelectionMode } from './PersistenceWorkQueue.js';
-import { PersistenceWriter, type PersistenceDelay } from './PersistenceWriter.js';
+import {
+	PersistenceWorkQueue,
+	type PersistenceRetrySchedule,
+	type PersistenceSelectionMode,
+} from './PersistenceWorkQueue.js';
+import {
+	PersistenceWriter,
+	type PersistenceDelay,
+	type PersistenceWriteResult,
+} from './PersistenceWriter.js';
 import type { ThoughtData } from './thought.js';
 
 /** Event emitter contract for persistence error events. */
@@ -33,6 +41,11 @@ export interface PersistenceEventEmitter {
 
 /** Observable persistence state relevant to safe in-memory session eviction. */
 export type SessionEvictionState = 'quiescent' | 'pending' | 'failed' | 'barrier';
+
+/** Time source for background retry backoff. */
+export interface PersistenceClock {
+	now(): number;
+}
 
 /** Configuration options for {@link PersistenceBuffer}. */
 export interface PersistenceBufferConfig {
@@ -45,6 +58,13 @@ export interface PersistenceBufferConfig {
 	readonly logger?: Logger;
 	/** Optional retry scheduler for deterministic coordination and testing. */
 	readonly delay?: PersistenceDelay;
+	/**
+	 * Clock that gates background retries of retained failures. A retained failure becomes
+	 * eligible for timer and size-triggered drains `min(flushInterval * 2^(n-1), 60000)` ms after
+	 * its n-th terminal failure; explicit drains retry it at once.
+	 * @default Date.now
+	 */
+	readonly clock?: PersistenceClock;
 	readonly durableHistorySize?: number;
 	readonly persistBranches?: boolean;
 	/**
@@ -58,6 +78,19 @@ export interface PersistenceBufferConfig {
 }
 
 const DEFAULT_MAX_PENDING_THOUGHTS_PER_SESSION = 10_000;
+const MAX_BACKGROUND_RETRY_BACKOFF_MS = 60_000;
+const SYSTEM_CLOCK: PersistenceClock = Object.freeze({ now: () => Date.now() });
+
+function backgroundRetrySchedule(
+	clock: PersistenceClock,
+	flushInterval: number
+): PersistenceRetrySchedule {
+	return {
+		now: () => clock.now(),
+		backoffAfter: (failures) =>
+			Math.min(flushInterval * 2 ** (failures - 1), MAX_BACKGROUND_RETRY_BACKOFF_MS),
+	};
+}
 
 type ActiveDrain = {
 	readonly promise: Promise<void>;
@@ -66,6 +99,7 @@ type ActiveDrain = {
 	readonly selectedTokens: Set<PersistenceWorkToken>;
 	mode: PersistenceSelectionMode;
 	backgroundObserved: boolean;
+	retainedNewFailure: boolean;
 	inFlightWork: PersistenceWork | null;
 	settlement: DrainSettlement | null;
 };
@@ -118,7 +152,11 @@ export class PersistenceBuffer {
 	 * @param config - Persistence dependencies, trigger thresholds, and retry policy.
 	 */
 	public constructor(config: PersistenceBufferConfig) {
-		this._queue = new PersistenceWorkQueue(config.durableHistorySize, config.persistBranches);
+		this._queue = new PersistenceWorkQueue(
+			config.durableHistorySize,
+			config.persistBranches,
+			backgroundRetrySchedule(config.clock ?? SYSTEM_CLOCK, config.flushInterval)
+		);
 		this._bufferSize = config.bufferSize;
 		this._flushInterval = config.flushInterval;
 		this._maxPendingThoughtsPerSession =
@@ -530,6 +568,7 @@ export class PersistenceBuffer {
 		return Object.freeze({
 			globalQuarantined: this._globalQuarantined,
 			quarantinedSessionCount: quarantinedSessions.size,
+			blockedSessionCount: this._queue.blockedSessionCount,
 			retainedFailureCount: this._queue.currentFailures().length,
 			pendingThoughtCount: this._queue.pendingThoughtCount,
 		});
@@ -555,6 +594,7 @@ export class PersistenceBuffer {
 			selectedTokens: new Set<PersistenceWorkToken>(),
 			mode,
 			backgroundObserved: false,
+			retainedNewFailure: false,
 			inFlightWork: null,
 			settlement: null,
 		};
@@ -582,11 +622,27 @@ export class PersistenceBuffer {
 
 			generation.inFlightWork = work;
 			const result = await this._writer.write(work);
-			if (result === true) this._queue.acknowledgeSuccess(work);
-			else this._queue.acknowledgeFailure(work, result);
+			this._acknowledge(generation, work, result);
 			generation.inFlightWork = null;
 			this._notifySessionProgress();
 		}
+	}
+
+	private _acknowledge(
+		generation: ActiveDrain,
+		work: PersistenceWork,
+		result: PersistenceWriteResult
+	): void {
+		if (result === true) {
+			this._queue.acknowledgeSuccess(work);
+			return;
+		}
+		if (this._queue.acknowledgeFailure(work, result)) generation.retainedNewFailure = true;
+	}
+
+	/** Background generations report a failure only when it is first retained, not per retry. */
+	private _reportsFailures(generation: ActiveDrain): boolean {
+		return generation.mode === 'explicit' || generation.retainedNewFailure;
 	}
 
 	private _closeGeneration(generation: ActiveDrain, termination: DrainTermination): void {
@@ -618,7 +674,10 @@ export class PersistenceBuffer {
 				return;
 			case 'rejected':
 				generation.reject(settlement.reason);
-				if (settlement.reason instanceof PersistenceDrainError) {
+				if (
+					settlement.reason instanceof PersistenceDrainError &&
+					this._reportsFailures(generation)
+				) {
 					this._observeFailure(generation, settlement.reason);
 				}
 				return;
@@ -659,9 +718,12 @@ export class PersistenceBuffer {
 		}
 
 		const failures = this._queue.currentFailures(generation.selectedTokens, sessionId);
-		return failures.length === 0
+		if (failures.length > 0)
+			return { kind: 'rejected', reason: new PersistenceDrainError(failures) };
+		const blocking = this._queue.blockingFailure(sessionId);
+		return blocking === undefined
 			? { kind: 'resolved' }
-			: { kind: 'rejected', reason: new PersistenceDrainError(failures) };
+			: { kind: 'rejected', reason: new PersistenceDrainError([blocking]) };
 	}
 
 	private _waitForSessionProgress(sessionId: SessionId): Promise<void> {

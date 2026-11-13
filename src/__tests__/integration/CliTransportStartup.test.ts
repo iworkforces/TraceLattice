@@ -40,6 +40,7 @@ async function cliEnvironment() {
 			TRACELATTICE_STREAMABLE_HTTP_SESSION_IDLE_TIMEOUT_MS: undefined,
 			TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS: undefined,
 			TRACELATTICE_STREAMABLE_HTTP_STATEFUL: undefined,
+			TRACELATTICE_SHUTDOWN_DEADLINE_MS: undefined,
 		},
 	};
 }
@@ -52,6 +53,10 @@ describe('built CLI invalid transport configuration rollback', () => {
 		{ ...retention, TRACELATTICE_STREAMABLE_HTTP_MAX_SESSIONS: '0' },
 		{ ...retention, TRACELATTICE_STREAMABLE_HTTP_STATEFUL: 'false' },
 		{ ...retention, TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS: '2147483648' },
+		{ TRACELATTICE_SHUTDOWN_DEADLINE_MS: '0' },
+		{ TRACELATTICE_SHUTDOWN_DEADLINE_MS: 'abc' },
+		{ TRACELATTICE_SHUTDOWN_DEADLINE_MS: '2147483648' },
+		{ TRACELATTICE_TRANSPORT_TYPE: 'stdio', TRACELATTICE_SHUTDOWN_DEADLINE_MS: '' },
 	])('stops the initialized server before rejecting %j', async (invalid) => {
 		const { port, env } = await cliEnvironment();
 		const running = spawnCli({ ...env, ...invalid });
@@ -166,7 +171,7 @@ describe('built CLI readiness probes', () => {
 		expect(body.components['persistenceBacklog']).toEqual({
 			name: 'persistenceBacklog',
 			healthy: true,
-			details: 'quarantined sessions: 0, retained failures: 0, pending thoughts: 0',
+			details: 'quarantined sessions: 0, blocked sessions: 0, retained failures: 0, pending thoughts: 0',
 		});
 	});
 

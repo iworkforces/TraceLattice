@@ -55,6 +55,7 @@ export const ERROR_CODES = {
 	UNKNOWN_TOOL: 'UNKNOWN_TOOL',
 	LOCK_TIMEOUT: 'LOCK_TIMEOUT',
 	CLI_SHUTDOWN_TIMEOUT: 'CLI_SHUTDOWN_TIMEOUT',
+	TRANSPORT_STOP_TIMEOUT: 'TRANSPORT_STOP_TIMEOUT',
 	SESSION_ACCESS_DENIED: 'SESSION_ACCESS_DENIED',
 	SESSION_EXPIRED: 'SESSION_EXPIRED',
 	SESSION_LIFECYCLE_CLOSED: 'SESSION_LIFECYCLE_CLOSED',
@@ -708,6 +709,27 @@ export class CliShutdownTimeoutError extends SequentialThinkingError {
 		super(`CLI shutdown timed out after ${timeoutMs}ms`, ERROR_CODES.CLI_SHUTDOWN_TIMEOUT);
 		this.name = 'CliShutdownTimeoutError';
 		this.timeoutMs = timeoutMs;
+	}
+}
+
+/**
+ * Error thrown when a transport's stop timeout elapses before its accepted work settles.
+ * `abandonedRequests` is null when the stopper does not track requests.
+ */
+export class TransportStopTimeoutError extends SequentialThinkingError {
+	public readonly timeoutMs: number;
+	public readonly abandonedRequests: number | null;
+
+	constructor(timeoutMs: number, abandonedRequests: number | null) {
+		super(
+			abandonedRequests === null
+				? `Transport stop timed out after ${timeoutMs}ms`
+				: `Transport stop timed out after ${timeoutMs}ms with ${abandonedRequests} accepted request(s) still running`,
+			ERROR_CODES.TRANSPORT_STOP_TIMEOUT
+		);
+		this.name = 'TransportStopTimeoutError';
+		this.timeoutMs = timeoutMs;
+		this.abandonedRequests = abandonedRequests;
 	}
 }
 

@@ -1,10 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { request } from 'node:http';
 import { McpServer } from 'tmcp';
 import { ValibotJsonSchemaAdapter } from '@tmcp/adapter-valibot';
+import { TransportStopTimeoutError } from '../errors.js';
 import { Metrics } from '../metrics/metrics.impl.js';
 import { HttpTransport } from '../transport/HttpTransport.js';
 import { getListeningPort } from './integration/ProtocolHarness.js';
+import {
+	connectGatedTransport,
+	controlledCallBody,
+	getTransportServer,
+	startWireRequest,
+} from './integration/TransportLifecycleHarness.js';
 
 const EXPECTED_METRICS =
 	'# HELP test_metric_total Test metric\n' +
@@ -222,5 +229,78 @@ describe('HttpTransport', () => {
 
 		expect(response.statusCode).toBe(403);
 		expect(response.body).toContain('invalid host header');
+	});
+});
+
+describe('HttpTransport bounded stop', () => {
+	let transport: HttpTransport;
+
+	beforeEach(() => {
+		transport = new HttpTransport({
+			port: 0,
+			host: '127.0.0.1',
+			enableRateLimit: false,
+			requestTimeout: 60_000,
+		});
+	});
+
+	afterEach(async () => {
+		vi.useRealTimers();
+		await transport.stop(1_000);
+	});
+
+	it('honors its stop timeout and reports the abandoned count while a handler never finishes', async () => {
+		// Given
+		const gate = await connectGatedTransport(transport, '/messages');
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const pending = startWireRequest(gate.endpoint, controlledCallBody(), {
+			...gate.headers,
+			connection: 'close',
+		});
+		await gate.started;
+		const outcome = transport.stop(50).then(
+			() => null,
+			(error: unknown) => error
+		);
+
+		// When
+		await vi.advanceTimersByTimeAsync(50);
+
+		// Then
+		const error = await outcome;
+		expect(error).toBeInstanceOf(TransportStopTimeoutError);
+		expect(error).toMatchObject({
+			code: 'TRANSPORT_STOP_TIMEOUT',
+			timeoutMs: 50,
+			abandonedRequests: 1,
+		});
+		gate.release();
+		await pending.outcome;
+	});
+
+	it('resolves from its own timer when server.close never calls back and no work is pending', async () => {
+		// Given
+		await transport.connect(createMockMcpServer());
+		const server = getTransportServer(transport);
+		const close = vi.spyOn(server, 'close').mockImplementation(() => server);
+		const forceClose = vi.spyOn(server, 'closeAllConnections');
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const settled: string[] = [];
+		const stopping = transport.stop(5_000);
+		void stopping.then(() => settled.push('resolved'));
+
+		// When
+		await vi.advanceTimersByTimeAsync(4_999);
+		const settledBeforeTimeout = [...settled];
+		await vi.advanceTimersByTimeAsync(1);
+		await stopping;
+
+		// Then
+		expect(settledBeforeTimeout).toEqual([]);
+		expect(settled).toEqual(['resolved']);
+		expect(forceClose).toHaveBeenCalledTimes(1);
+		close.mockRestore();
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
 	});
 });

@@ -1,4 +1,5 @@
 import type { ServerResponse } from 'node:http';
+import { TransportStopTimeoutError } from '../errors.js';
 
 type ResponseWriter = (response: ServerResponse) => void;
 type WorkFailureHandler = (error: unknown) => void;
@@ -178,4 +179,41 @@ export class AcceptedWorkTracker {
 			await Promise.all(this._work);
 		}
 	}
+}
+
+export interface StopDeadline {
+	readonly timeoutMs: number;
+	readonly acceptedWork: AcceptedWorkTracker;
+	readonly forceClose: () => void;
+}
+
+/**
+ * Settles with `joined` when it settles first. At the deadline this timer, not socket teardown,
+ * settles the result: it rejects while accepted work is still pending and resolves otherwise.
+ */
+export function boundStop(joined: Promise<void>, deadline: StopDeadline): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			const abandonedRequests = deadline.acceptedWork.size;
+			try {
+				deadline.forceClose();
+			} finally {
+				if (abandonedRequests > 0) {
+					reject(new TransportStopTimeoutError(deadline.timeoutMs, abandonedRequests));
+				} else {
+					resolve();
+				}
+			}
+		}, deadline.timeoutMs);
+		void joined.then(
+			() => {
+				clearTimeout(timer);
+				resolve();
+			},
+			(error: unknown) => {
+				clearTimeout(timer);
+				reject(error);
+			}
+		);
+	});
 }

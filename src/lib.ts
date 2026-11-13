@@ -381,8 +381,21 @@ export class ToolAwareSequentialThinkingServer
 
 		// Initialize watchers if enabled
 		if (options.enableWatcher) {
-			this._skillWatcher = new SkillWatcher(this.skills, this._logger, this.config.skillDirs);
-			this._toolWatcher = new ToolWatcher(this.tools, this._logger, this.config.toolDirs);
+			const reportFault = (fault: { error: Error; directory: string }): void => {
+				this.emit('discoveryError', { directory: fault.directory, error: fault.error });
+			};
+			this._skillWatcher = new SkillWatcher(
+				this.skills,
+				this._logger,
+				this.config.skillDirs,
+				reportFault
+			);
+			this._toolWatcher = new ToolWatcher(
+				this.tools,
+				this._logger,
+				this.config.toolDirs,
+				reportFault
+			);
 		}
 	}
 

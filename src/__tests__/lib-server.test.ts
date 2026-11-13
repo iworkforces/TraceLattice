@@ -1,4 +1,13 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('chokidar', async () => {
+	const { watchMock } = await import('./helpers/chokidar-mock.js');
+	return { watch: watchMock };
+});
+
 import { ToolAwareSequentialThinkingServer, createServer, initializeServer } from '../lib.js';
 import { Container } from '../di/Container.js';
 import { ServerConfig } from '../ServerConfig.js';
@@ -16,6 +25,20 @@ import type { ThoughtData } from '../core/thought.js';
 import type { Edge } from '../core/graph/Edge.js';
 import type { Summary } from '../core/compression/Summary.js';
 import { createTestThought } from './helpers/factories.js';
+import {
+	emitOn,
+	resetChokidarMock,
+	setReadyOnRegistration,
+	watchMock,
+	watcherAt,
+	whenWatchersCreated,
+} from './helpers/chokidar-mock.js';
+import { advanceTimeAsync, useFakeTimers, useRealTimers } from './helpers/timers.js';
+
+beforeEach(() => {
+	resetChokidarMock();
+	setReadyOnRegistration(true);
+});
 
 function createMockContainer() {
 	const container = new Container();
@@ -654,5 +677,101 @@ describe('lib.ts — uncovered branches', () => {
 				expect.objectContaining({ error: '42' })
 			);
 		});
+	});
+});
+
+describe('watcher faults', () => {
+	function createWatchedServer(): ToolAwareSequentialThinkingServer {
+		const mocks = createMockContainer();
+		mocks.container.unregister('Config');
+		mocks.container.registerInstance(
+			'Config',
+			new ServerConfig({ skillDirs: ['./qa/skills/'], toolDirs: ['tools/'] })
+		);
+		return new ToolAwareSequentialThinkingServer({
+			container: mocks.container,
+			enableWatcher: true,
+			autoDiscover: false,
+		});
+	}
+
+	it('emits one discoveryError per watcher error with the configured root', async () => {
+		// Given
+		const server = createWatchedServer();
+		const handler = vi.fn();
+		server.on('discoveryError', handler);
+		const skillError = Object.assign(new Error('EACCES'), { path: resolve('qa/skills/a.md') });
+		const toolError = new Error('EMFILE');
+
+		try {
+			// When
+			emitOn(watcherAt(0), 'error', skillError);
+			emitOn(watcherAt(1), 'error', toolError);
+
+			// Then
+			expect(handler).toHaveBeenCalledTimes(2);
+			expect(handler).toHaveBeenNthCalledWith(1, { directory: './qa/skills/', error: skillError });
+			expect(handler).toHaveBeenNthCalledWith(2, { directory: 'tools/', error: toolError });
+		} finally {
+			await server.stop();
+		}
+	});
+
+	it('does not emit discoveryError after stop', async () => {
+		// Given
+		const server = createWatchedServer();
+		const handler = vi.fn();
+		server.on('discoveryError', handler);
+		await server.stop();
+
+		// When
+		emitOn(watcherAt(0), 'error', new Error('late'));
+
+		// Then
+		expect(handler).not.toHaveBeenCalled();
+		expect(watchMock).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe('degraded watcher startup', () => {
+	it('completes restore and initial discovery when chokidar never reports ready', async () => {
+		// Given
+		const root = await mkdtemp(join(tmpdir(), 'tracelattice-degraded-'));
+		await writeFile(
+			join(root, 'degraded.md'),
+			['---', 'name: degraded-skill', 'description: still discovered', '---', '# Body'].join('\n')
+		);
+		const persistence = createCloseOnlyPersistence();
+		const restore = vi.spyOn(persistence, 'loadAllSessionsForRestore');
+		setReadyOnRegistration(false);
+		useFakeTimers();
+		let server: ToolAwareSequentialThinkingServer | undefined;
+
+		try {
+			// When
+			const creating = ToolAwareSequentialThinkingServer.create({
+				config: new ServerConfig({
+					skillDirs: [root],
+					toolDirs: [join(root, 'tools')],
+					features: { toolInterleave: false },
+				}),
+				enableWatcher: true,
+				autoDiscover: true,
+				loadFromPersistence: true,
+				persistenceBackend: persistence,
+			});
+			await whenWatchersCreated(2);
+			await advanceTimeAsync(5000);
+			server = await creating;
+
+			// Then
+			expect(restore).toHaveBeenCalledOnce();
+			expect(server.skills.has('degraded-skill')).toBe(true);
+			expect(watchMock).toHaveBeenCalledTimes(2);
+		} finally {
+			useRealTimers();
+			await server?.stop();
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });

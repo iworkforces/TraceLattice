@@ -44,6 +44,8 @@ import type { ERROR_CODES, ErrorCode } from '../errors.js';
  *  - InvalidBacktrackError     → INVALID_BACKTRACK
  *  - UnknownToolError          → UNKNOWN_TOOL
  *  - LockTimeoutError          → LOCK_TIMEOUT
+ *  - CliShutdownTimeoutError   → CLI_SHUTDOWN_TIMEOUT
+ *  - TransportStopTimeoutError → TRANSPORT_STOP_TIMEOUT
  *  - SessionAccessDeniedError  → SESSION_ACCESS_DENIED
  *  - PersistenceOwnershipError → PERSISTENCE_OWNERSHIP
  *  - PersistenceCorruptionError → PERSISTENCE_CORRUPTION
@@ -84,6 +86,7 @@ type _AllSubclassCodes =
 	| 'UNKNOWN_TOOL'
 	| 'LOCK_TIMEOUT'
 	| 'CLI_SHUTDOWN_TIMEOUT'
+	| 'TRANSPORT_STOP_TIMEOUT'
 	| 'SESSION_ACCESS_DENIED'
 	| 'SESSION_EXPIRED'
 	| 'SESSION_LIFECYCLE_CLOSED'

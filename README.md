@@ -194,6 +194,7 @@ All feature flags default to enabled in `ServerConfig`. Set a boolean flag to `f
 | `TRACELATTICE_CORS_ORIGIN`              | `*`                     | CORS origin                                  |
 | `TRACELATTICE_ENABLE_CORS`              | `true`                  | Enable CORS preflight                        |
 | `TRACELATTICE_ALLOWED_HOSTS`            | derived from bound host | Comma-separated allowed `Host` header values |
+| `TRACELATTICE_SHUTDOWN_DEADLINE_MS`     | `30000`                 | Total CLI shutdown budget in ms (stdio and Streamable HTTP) |
 
 ### Skill discovery
 
@@ -232,8 +233,11 @@ inside the server's share of the CLI shutdown deadline, 15 s by default.
 `persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
 unacknowledged, counting writes that failed terminally. At the limit a thought is rejected with
 `PERSISTENCE_BACKLOG_FULL` before any history, branch, edge, outcome or suspension state changes, so
-the same call can be retried with the same thought id. Other sessions are unaffected. Each rejection
-also retries the retained failures in the background, so a retry succeeds once the backend is back.
+the same call can be retried with the same thought id. Other sessions are unaffected. A thought write
+that fails terminally holds every later write of its session until it succeeds or the session is
+reset, so durable history keeps accepted order. Each rejection retries the retained failures at once,
+and timer and size-triggered drains retry them on a backoff capped at one minute, so the backlog clears
+once the backend is back.
 
 ## Transports
 
@@ -246,11 +250,13 @@ Set `TRACELATTICE_TRANSPORT_TYPE` to pick one:
 
 The Streamable HTTP endpoint defaults to `POST /mcp` for JSON-RPC requests and supports stateful sessions via the `Mcp-Session-Id` header. `GET /mcp` is not allowed. The library also exposes `HttpTransport` for stateless JSON-RPC over HTTP, but the CLI does not select it with `TRACELATTICE_TRANSPORT_TYPE`.
 
-Streamable HTTP also serves `GET /health` (liveness) and `GET /ready` (readiness). Both answer after Host validation and the shutting-down 503 but ahead of the per-client rate limiter, so an orchestrator polling them neither spends nor is rejected by the client budget. They still apply CORS origin validation and headers. With persistence disabled, `/ready` is `ok` with no components. With persistence enabled it probes the backend under a one second deadline: concurrent polls share one probe, a probe that timed out is joined until it settles, and a settled result is reused for one second. `/ready` answers 503 when the probe fails or times out, or when persistence is globally quarantined after a failed global reset. Otherwise it answers 200 and lists the quarantined session count, retained write failure count and pending thought count in the `persistenceBacklog` component details. Those counts do not make the instance unready, because nothing retries retained failures until an explicit drain.
+Streamable HTTP also serves `GET /health` (liveness) and `GET /ready` (readiness). Both answer after Host validation and the shutting-down 503 but ahead of the per-client rate limiter, so an orchestrator polling them neither spends nor is rejected by the client budget. They still apply CORS origin validation and headers. With persistence disabled, `/ready` is `ok` with no components. With persistence enabled it probes the backend under a one second deadline: concurrent polls share one probe, a probe that timed out is joined until it settles, and a settled result is reused for one second. `/ready` answers 503 when the probe fails or times out, or when persistence is globally quarantined after a failed global reset. Otherwise it answers 200 and lists the quarantined session count, blocked session count, retained write failure count and pending thought count in the `persistenceBacklog` component details. A blocked session has later writes held behind a failed thought write. Those counts do not make the instance unready, because timer drains keep retrying retained failures on a capped backoff.
 
 Set all three transport-session retention variables or leave all three unset. Each must be a positive safe integer; the two timing values use milliseconds. With none set, transport sessions remain unbounded and live until shutdown. Retention settings are rejected with `TRACELATTICE_STREAMABLE_HTTP_STATEFUL=false`. At capacity, a request that would create a new session receives HTTP 503 with JSON-RPC code `-32000`. After an idle session is swept, a request using its header receives HTTP 404 with code `-32001`; the client must re-initialize without the old `Mcp-Session-Id`. Sweeps skip sessions with accepted POSTs still in flight and don't change thought sessions (`session_id`), their history, ownership, or TTL handling.
 
 In Streamable HTTP mode, the port and retention values accept only unsigned decimal integers without leading zeros (except `0`), signs, whitespace, or trailing characters, and must be safe integers. `TRACELATTICE_STREAMABLE_HTTP_PORT` accepts 0 through 65535 and defaults to 9007. `TRACELATTICE_STREAMABLE_HTTP_SESSION_SWEEP_INTERVAL_MS` must be at most 2147483647, the largest timer delay Node and Bun honor. Invalid values, a partial retention set, or an unknown `TRACELATTICE_TRANSPORT_TYPE` stop CLI startup with exit code 1. Stdio ignores HTTP-only variables.
+
+`TRACELATTICE_SHUTDOWN_DEADLINE_MS` is parsed for stdio and Streamable HTTP alike. It accepts a positive safe integer of at most 2147483647; zero, a malformed value, an empty string, or a larger value stops CLI startup with exit code 1 after stopping the already initialized server. On SIGINT, SIGTERM, or stdin end (stdio) the CLI gives the transport half of the budget as its stop timeout, then always stops the server with the time left, which drains buffered writes and releases the File backend's writer lock. A transport still waiting on an accepted request at that point is abandoned with a `TRANSPORT_STOP_TIMEOUT` failure. Every failure is reported and exits with code 1; a server stop that outlives the total budget fails with `CLI_SHUTDOWN_TIMEOUT` at the deadline. A clean stop exits with code 0. Set the budget below your process supervisor's kill timeout.
 
 ### Session model
 
@@ -289,7 +295,7 @@ export async function startHttpTransport(mcpServer: McpServer): Promise<ITranspo
 }
 ```
 
-Call and await `transport.stop()` during application shutdown.
+Call and await `transport.stop(timeout)` during application shutdown. It joins accepted requests for up to `timeout` milliseconds (default 30000). At the timeout it force-closes connections and settles from its own timer: it rejects with an error whose `code` is `TRANSPORT_STOP_TIMEOUT`, carrying `timeoutMs` and `abandonedRequests`, while accepted requests are still running, and resolves otherwise. A later `stop()` call starts a new bounded join.
 
 ## Current v2 contract
 

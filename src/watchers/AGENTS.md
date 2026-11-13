@@ -5,14 +5,15 @@
 
 ## OVERVIEW
 
-Chokidar live-refresh for tool/skill registries. Both watchers serialize `refreshAsync()` — they do **not** mutate the registry by name.
+Chokidar live-refresh for tool/skill registries. Both watchers serialize `refreshAsync()` — they do **not** mutate the registry by name. Both delegate the chokidar lifecycle to one shared supervisor so they cannot drift.
 
 ## FILES
 
 ```
 watchers/
-├── ToolWatcher.ts    # .tool.md add/change/unlink → ToolRegistry.refreshAsync()
-└── SkillWatcher.ts   # add/change/unlink → SkillRegistry.refreshAsync()
+├── RecoverableWatcher.ts # chokidar supervisor: error → close → capped-backoff restart, bounded ready/stop
+├── ToolWatcher.ts        # .tool.md add/change/unlink → ToolRegistry.refreshAsync()
+└── SkillWatcher.ts       # add/change/unlink → SkillRegistry.refreshAsync()
 ```
 
 ## EVENTS
@@ -29,8 +30,8 @@ watchers/
 
 Wired in `lib.ts` when `enableWatcher`:
 
-- `new ToolWatcher(tools, logger, config.toolDirs)`
-- `new SkillWatcher(skills, logger, config.skillDirs)`
+- `new ToolWatcher(tools, logger, config.toolDirs, reportFault)`
+- `new SkillWatcher(skills, logger, config.skillDirs, reportFault)`
 
 Constructor fallbacks (only if no dirs passed):
 
@@ -44,7 +45,11 @@ Skill **discovery** defaults also include `.agents/skills` + `~/.agents/skills`.
 - Errors from `refreshAsync()` are logged, never thrown.
 - `ignoreInitial: true`. Ignore `node_modules` + `.DS_Store`.
 - Tool events that are not `.tool.md` are ignored. Skills log add/change/remove when `TRACELATTICE_WATCHER_VERBOSE=true`.
-- `ready()` waits for chokidar's initial scan. `stop()` closes the watcher and joins the in-flight refresh.
+- `ready()` returns the constructor-time promise. It resolves on chokidar's first `ready`, or degraded after a fixed 5000 ms bound with a logged warning. It never rejects, and a timeout alone does not restart the watcher.
+- Every chokidar instance has an `error` listener. A fault (including a synchronous `watch()` throw) is logged, reported through the optional constructor callback `(fault: { error: Error; directory: string }) => void`, and the instance is closed without awaiting `close()`. One replacement is scheduled after a capped exponential backoff (1000 ms doubling to 30000 ms, reset when a replacement reports ready). Events from retired instances are ignored.
+- When a replacement reports ready, the watcher runs one `refreshAsync()` through the same single-in-flight scheduling, because changes during the outage went unseen.
+- `directory` in a fault is a configured root, spelled as configured. `lib.ts` forwards each fault as the `discoveryError` event.
+- `stop()` cancels the restart and ready timers, closes the live instance with a 2000 ms bound, and joins the in-flight refresh. A fault after `stop()` creates nothing.
 - Instantiated only if `enableWatcher`. Stopped with the server.
 
 ## FORBIDDEN
