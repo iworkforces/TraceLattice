@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 
 import { asSessionId, type SessionId } from '../../contracts/ids.js';
 import { PersistenceBuffer } from '../../core/PersistenceBuffer.js';
-import { PersistenceWriteTimeoutError } from '../../core/PersistenceBufferErrors.js';
+import {
+	PersistenceDrainError,
+	PersistenceWriteTimeoutError,
+} from '../../core/PersistenceBufferErrors.js';
 import { SessionResetCoordinator } from '../../core/SessionResetCoordinator.js';
 import type { ThoughtData } from '../../core/thought.js';
 import { NullLogger } from '../../logger/NullLogger.js';
@@ -83,7 +86,8 @@ const deadlineHarnesses = new Set<DeadlineHarness>();
 
 function createDeadlineHarness(
 	timeoutMs: number | undefined,
-	flushInterval = 60_000
+	flushInterval = 60_000,
+	maxRetries = 0
 ): DeadlineHarness {
 	const persistence = new StallingPersistence();
 	const logger = new NullLogger();
@@ -92,7 +96,7 @@ function createDeadlineHarness(
 		persistence,
 		bufferSize: 100,
 		flushInterval,
-		maxRetries: 0,
+		maxRetries,
 		writeTimeout: timeoutMs,
 		logger,
 	});
@@ -159,6 +163,23 @@ async function holdClearBehindRetainedFailure(
 	harness.buffer.bufferThought(SESSION_B, thought(SESSION_B, 1));
 	harness.buffer.startFlushTimer();
 	return { reset, attemptsAtClear };
+}
+
+/**
+ * Makes SESSION_A's first write attempt reject, so its retry delay is running, then starts a
+ * reset of SESSION_B whose clear is held.
+ */
+async function holdClearDuringRetryDelay(
+	harness: DeadlineHarness
+): Promise<{ readonly drained: () => Outcome; readonly reset: () => Outcome }> {
+	harness.persistence.down = true;
+	harness.buffer.bufferThought(SESSION_A, thought(SESSION_A, 1));
+	const drained = track(harness.buffer.drain());
+	await advanceTimeAsync(0);
+	harness.persistence.holdClears = true;
+	const reset = track(harness.coordinator.resetSession(SESSION_B, 'owner-b'));
+	await advanceTimeAsync(0);
+	return { drained, reset };
 }
 
 const hungClears = [
@@ -468,5 +489,64 @@ describe('SessionResetCoordinator clear deadline', () => {
 		expect(harness.sessions.get(SESSION_A)).not.toBe(original);
 		expect(harness.buffer.getBacklogView().quarantinedSessionCount).toBe(0);
 		expect(harness.warn).not.toHaveBeenCalled();
+	});
+
+	it("holds another session's due retry behind a held clear and sends it once the clear ends", async () => {
+		// Given
+		const harness = createDeadlineHarness(undefined, FLUSH_MS, 3);
+		const { drained, reset } = await holdClearDuringRetryDelay(harness);
+		const attemptsAtClear = harness.persistence.thoughtAttempts;
+		harness.persistence.down = false;
+
+		// When
+		await advanceTimeAsync(TIMEOUT_MS);
+		const attemptsWhileHeld = harness.persistence.thoughtAttempts;
+		const drainedWhileHeld = drained().status;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+
+		// Then
+		expect(attemptsAtClear).toBe(1);
+		expect(attemptsWhileHeld).toBe(1);
+		expect(drainedWhileHeld).toBe('pending');
+		expect(reset().status).toBe('fulfilled');
+		expect(drained().status).toBe('fulfilled');
+		expect(harness.persistence.thoughtAttempts).toBe(2);
+		expect(await harness.persistence.loadHistoryForSession(SESSION_A)).toHaveLength(1);
+		expect(harness.persistence.maxConcurrentCalls).toBe(1);
+	});
+
+	it('ends a write whose retry came due behind a clear that timed out, and resends it only after the clear settles', async () => {
+		// Given
+		const harness = createDeadlineHarness(TIMEOUT_MS, FLUSH_MS, 3);
+		const { drained, reset } = await holdClearDuringRetryDelay(harness);
+
+		// When
+		await advanceTimeAsync(TIMEOUT_MS);
+		const attemptsAtTimeout = harness.persistence.thoughtAttempts;
+		await advanceTimeAsync(20 * FLUSH_MS);
+		const drainWhileStalled = track(harness.buffer.drain());
+		await advanceTimeAsync(0);
+		const attemptsWhileStalled = harness.persistence.thoughtAttempts;
+		harness.persistence.down = false;
+		harness.persistence.holdClears = false;
+		harness.persistence.releaseHeldCall();
+		await advanceTimeAsync(0);
+		const drainAfterSettle = track(harness.buffer.drain());
+		await advanceTimeAsync(0);
+
+		// Then
+		expect(reasonOf(reset())).toBeInstanceOf(PersistenceWriteTimeoutError);
+		expect(reasonOf(drained())).toBeInstanceOf(PersistenceDrainError);
+		expect(reasonOf(drained())).toMatchObject({
+			failures: [{ sessionId: SESSION_A, attempts: 1, cause: new Error('backend down') }],
+		});
+		expect(attemptsAtTimeout).toBe(1);
+		expect(attemptsWhileStalled).toBe(1);
+		expect(reasonOf(drainWhileStalled())).toBe(reasonOf(reset()));
+		expect(drainAfterSettle().status).toBe('fulfilled');
+		expect(harness.persistence.thoughtAttempts).toBe(2);
+		expect(await harness.persistence.loadHistoryForSession(SESSION_A)).toHaveLength(1);
+		expect(harness.persistence.maxConcurrentCalls).toBe(1);
 	});
 });

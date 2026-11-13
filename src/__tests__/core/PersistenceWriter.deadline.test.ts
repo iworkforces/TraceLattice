@@ -272,3 +272,79 @@ describe('PersistenceWriter write deadline', () => {
 		}
 	);
 });
+
+describe('PersistenceWriter retry admission', () => {
+	it('is not consulted before the first attempt, nor after a first-attempt success', async () => {
+		// Given
+		const admitRetry = vi.fn(() => Promise.resolve(true));
+		const harness = createHarness({ admitRetry });
+		harness.persistence.holdWrites = true;
+
+		// When
+		const write = track(harness.writer.write(harness.work));
+		await vi.advanceTimersByTimeAsync(0);
+		const consultedAtFirstAttempt = admitRetry.mock.calls.length;
+		harness.persistence.releaseHeldCall();
+
+		// Then
+		expect(consultedAtFirstAttempt).toBe(0);
+		expect(await write.result).toBe(true);
+		expect(admitRetry).not.toHaveBeenCalled();
+	});
+
+	it('ends the write with the attempts made and the real cause when a retry is refused', async () => {
+		// Given
+		const admitRetry = vi.fn(() => Promise.resolve(false));
+		const harness = createHarness({ admitRetry });
+		harness.persistence.down = true;
+
+		// When
+		const result = await harness.writer.write(harness.work);
+
+		// Then
+		expect(result).toMatchObject({ kind: 'thought', token: harness.work.token, attempts: 1 });
+		expect(result === true ? undefined : result.cause).toEqual(new Error('backend down'));
+		expect(harness.persistence.thoughtAttempts).toBe(1);
+		expect(harness.delays).toEqual([100]);
+		expect(admitRetry).toHaveBeenCalledTimes(1);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('keeps attempts and delays unchanged while every retry is admitted', async () => {
+		// Given
+		const admitRetry = vi.fn(() => Promise.resolve(true));
+		const harness = createHarness({ admitRetry });
+		harness.persistence.down = true;
+
+		// When
+		const result = await harness.writer.write(harness.work);
+
+		// Then
+		expect(result).toMatchObject({ kind: 'thought', attempts: 4 });
+		expect(result === true ? undefined : result.cause).toEqual(new Error('backend down'));
+		expect(harness.delays).toEqual([100, 500, 2000]);
+		expect(harness.persistence.thoughtAttempts).toBe(4);
+		expect(admitRetry).toHaveBeenCalledTimes(3);
+	});
+
+	it('holds a retry until a pending admission resolves', async () => {
+		// Given
+		const admission = Promise.withResolvers<boolean>();
+		const harness = createHarness({ admitRetry: () => admission.promise });
+		harness.persistence.down = true;
+
+		// When
+		const write = track(harness.writer.write(harness.work));
+		await vi.advanceTimersByTimeAsync(60_000);
+		const attemptsWhilePending = harness.persistence.thoughtAttempts;
+		const settledWhilePending = write.isSettled();
+		harness.persistence.down = false;
+		admission.resolve(true);
+
+		// Then
+		expect(attemptsWhilePending).toBe(1);
+		expect(settledWhilePending).toBe(false);
+		expect(await write.result).toBe(true);
+		expect(harness.persistence.thoughtAttempts).toBe(2);
+	});
+});

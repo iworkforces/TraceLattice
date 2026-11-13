@@ -24,6 +24,12 @@ export type PersistenceWriterConfig = {
 	readonly delay?: PersistenceDelay;
 	/** Per-call deadline in milliseconds; `undefined` waits on every call without a deadline. */
 	readonly writeTimeout?: number;
+	/**
+	 * Consulted after each retry delay, never before the first attempt. Resolving `false` ends the
+	 * write without another dispatch: the failure keeps the attempts made and the cause of the last
+	 * real attempt. `undefined` admits every retry without an extra await.
+	 */
+	readonly admitRetry?: () => Promise<boolean>;
 };
 
 /** Allocation-free success sentinel or an attributable terminal failure. */
@@ -47,6 +53,9 @@ function defaultDelay(milliseconds: number): Promise<void> {
  * the failure's cause is a {@link PersistenceWriteTimeoutError} whose `lateOutcome`
  * reports the same backend call, and no further attempt is dispatched.
  *
+ * With `admitRetry`, every retry attempt is admitted after its delay; a refused retry ends the
+ * write as a failure of the attempts already made.
+ *
  * @example
  * ```ts
  * const writer = new PersistenceWriter({ persistence, maxRetries: 0 });
@@ -60,6 +69,7 @@ export class PersistenceWriter {
 	private readonly _retryDelays: readonly number[];
 	private readonly _delay: PersistenceDelay;
 	private readonly _writeTimeout: number | undefined;
+	private readonly _admitRetry: (() => Promise<boolean>) | undefined;
 
 	/**
 	 * Creates a bounded writer.
@@ -82,6 +92,7 @@ export class PersistenceWriter {
 		this._retryDelays = [...(config.retryDelays ?? DEFAULT_RETRY_DELAYS)];
 		this._delay = config.delay ?? defaultDelay;
 		this._writeTimeout = timeout;
+		this._admitRetry = config.admitRetry;
 	}
 
 	/**
@@ -96,6 +107,9 @@ export class PersistenceWriter {
 		for (let attemptIndex = 0; attemptIndex <= this._maxRetries; attemptIndex++) {
 			if (attemptIndex > 0) {
 				await this._delay(this._retryDelay(attemptIndex - 1));
+				if (this._admitRetry !== undefined && !(await this._admitRetry())) {
+					return this._failure(work, attemptIndex, finalCause);
+				}
 			}
 
 			const timeoutMs = this._writeTimeout;

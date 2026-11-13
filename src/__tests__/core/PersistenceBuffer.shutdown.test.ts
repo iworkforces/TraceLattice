@@ -23,14 +23,18 @@ type Harness = { readonly persistence: StallingPersistence; readonly buffer: Per
 const harnesses = new Set<Harness>();
 
 function createHarness(
-	options: { readonly writeTimeout?: number; readonly bufferSize?: number } = {}
+	options: {
+		readonly writeTimeout?: number;
+		readonly bufferSize?: number;
+		readonly maxRetries?: number;
+	} = {}
 ): Harness {
 	const persistence = new StallingPersistence();
 	const buffer = new PersistenceBuffer({
 		persistence,
 		bufferSize: options.bufferSize ?? 100,
 		flushInterval: 60_000,
-		maxRetries: 0,
+		maxRetries: options.maxRetries ?? 0,
 		writeTimeout: options.writeTimeout,
 	});
 	const harness = { persistence, buffer };
@@ -204,5 +208,26 @@ describe('PersistenceBuffer shutdown seal', () => {
 		expect(vi.getTimerCount()).toBe(0);
 		expect(buffer.pendingThoughtCount).toBe(0);
 		expect(await persistence.loadHistoryForSession(A)).toHaveLength(1);
+	});
+
+	it('refuses a retry attempt that comes due after the bounded flush settled', async () => {
+		// Given
+		const { persistence, buffer } = createHarness({ maxRetries: 3 });
+		persistence.down = true;
+		buffer.bufferThought(A, thought(A, 1));
+
+		// When
+		const closed = track(buffer.closeForShutdown(FLUSH_BOUND_MS));
+		await advanceTimeAsync(FLUSH_BOUND_MS);
+		const attemptsAtSeal = persistence.thoughtAttempts;
+		await advanceTimeAsync(3000);
+
+		// Then
+		expect(reasonOf(closed())).toMatchObject({ phase: 'flush' });
+		expect(attemptsAtSeal).toBe(2);
+		expect(persistence.thoughtAttempts).toBe(attemptsAtSeal);
+		expect(buffer.pendingThoughtCount).toBe(1);
+		expect(buffer.isFlushing).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 });

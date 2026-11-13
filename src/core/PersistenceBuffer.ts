@@ -188,6 +188,7 @@ export class PersistenceBuffer {
 			maxRetries: config.maxRetries,
 			delay: config.delay,
 			writeTimeout: config.writeTimeout,
+			admitRetry: () => this._retryAdmitted(),
 		});
 	}
 
@@ -765,6 +766,17 @@ export class PersistenceBuffer {
 	 */
 	private _dispatchBlocked(): boolean {
 		return this._writeGate.isClosed || this._writeGate.clearInFlight || this._dispatchSealed;
+	}
+
+	/**
+	 * Admits a write's retry attempt under the rules of a first dispatch: it waits for a clear in
+	 * flight while the gate is open, and is refused once dispatch is still blocked afterwards.
+	 */
+	private async _retryAdmitted(): Promise<boolean> {
+		while (this._writeGate.clearInFlight && !this._writeGate.isClosed) {
+			await this._writeGate.clearsSettled();
+		}
+		return !this._dispatchBlocked();
 	}
 
 	private _closeWriteGate(
