@@ -1,4 +1,6 @@
-import type { SessionId, ThoughtId } from '../../contracts/ids.js';
+import type { BranchId, SessionId, ThoughtId } from '../../contracts/ids.js';
+import type { Summary } from '../../core/compression/Summary.js';
+import type { Edge } from '../../core/graph/Edge.js';
 import type { ThoughtData } from '../../core/thought.js';
 import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
 
@@ -6,17 +8,22 @@ import { MemoryPersistence } from '../../persistence/MemoryPersistence.js';
  * Memory backend whose thought writes and scoped deletes can be switched off from a test.
  * It extends the production memory sink so contract changes to `PersistenceBackend` apply here.
  *
- * With `holdWrites` or `holdClose` set, the matching calls stay unsettled until the test
- * releases them in call order with {@link StallingPersistence.releaseHeldCall}. A held write
- * released as a success stores its thought; one released with an error stores nothing.
+ * With `holdWrites`, `holdClears` or `holdClose` set, the matching calls stay unsettled until the
+ * test releases them in call order with {@link StallingPersistence.releaseHeldCall}. A held call
+ * released as a success takes effect; one released with an error changes nothing.
+ * `holdWrites` covers every write: thought, backtrack, branch save and delete, edges, summaries.
  */
 export class StallingPersistence extends MemoryPersistence {
 	public down = false;
 	public failClear = false;
 	public thoughtAttempts = 0;
 	public holdWrites = false;
+	public holdClears = false;
 	public holdClose = false;
 	public closeCalls = 0;
+	public clearCalls = 0;
+	public maxConcurrentWrites = 0;
+	private _concurrentWrites = 0;
 	private readonly _held: PromiseWithResolvers<void>[] = [];
 
 	/** Number of held calls the test has not released yet. */
@@ -43,8 +50,7 @@ export class StallingPersistence extends MemoryPersistence {
 	): Promise<void> {
 		this.thoughtAttempts += 1;
 		if (this.down) throw new Error('backend down');
-		if (this.holdWrites) await this._hold();
-		await super.saveThoughtForSession(sessionId, thought);
+		await this._write(() => super.saveThoughtForSession(sessionId, thought));
 	}
 
 	public override async saveBacktrackForSession(
@@ -54,19 +60,60 @@ export class StallingPersistence extends MemoryPersistence {
 	): Promise<void> {
 		this.thoughtAttempts += 1;
 		if (this.down) throw new Error('backend down');
-		if (this.holdWrites) await this._hold();
-		await super.saveBacktrackForSession(sessionId, thought, targetThoughtId);
+		await this._write(() => super.saveBacktrackForSession(sessionId, thought, targetThoughtId));
+	}
+
+	public override saveBranchForSession(
+		sessionId: SessionId,
+		branchId: BranchId,
+		thoughts: readonly ThoughtData[]
+	): Promise<void> {
+		return this._write(() => super.saveBranchForSession(sessionId, branchId, thoughts));
+	}
+
+	public override deleteBranchForSession(sessionId: SessionId, branchId: BranchId): Promise<void> {
+		return this._write(() => super.deleteBranchForSession(sessionId, branchId));
+	}
+
+	public override saveEdges(sessionId: SessionId, edges: readonly Edge[]): Promise<void> {
+		return this._write(() => super.saveEdges(sessionId, edges));
+	}
+
+	public override saveSummaries(
+		sessionId: SessionId,
+		summaries: readonly Summary[]
+	): Promise<void> {
+		return this._write(() => super.saveSummaries(sessionId, summaries));
 	}
 
 	public override async clearSession(sessionId: SessionId): Promise<void> {
+		this.clearCalls += 1;
 		if (this.failClear) throw new Error('delete failed');
+		if (this.holdClears) await this._hold();
 		await super.clearSession(sessionId);
+	}
+
+	public override async clearAll(): Promise<void> {
+		this.clearCalls += 1;
+		if (this.holdClears) await this._hold();
+		await super.clearAll();
 	}
 
 	public override async close(): Promise<void> {
 		this.closeCalls += 1;
 		if (this.holdClose) await this._hold();
 		await super.close();
+	}
+
+	private async _write(write: () => Promise<void>): Promise<void> {
+		this._concurrentWrites += 1;
+		this.maxConcurrentWrites = Math.max(this.maxConcurrentWrites, this._concurrentWrites);
+		try {
+			if (this.holdWrites) await this._hold();
+			await write();
+		} finally {
+			this._concurrentWrites -= 1;
+		}
 	}
 
 	private _hold(): Promise<void> {
