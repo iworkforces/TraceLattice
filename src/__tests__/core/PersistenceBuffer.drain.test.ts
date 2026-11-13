@@ -462,7 +462,7 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([1, 1]);
 	});
 
-	it('removes successes once and retains only terminal failures for an explicit later generation', async () => {
+	it('holds later same-session writes in the generation a thought fails and retries it first later', async () => {
 		// Given
 		const sessionId = asSessionId('partial-session');
 		let failSecond = true;
@@ -478,6 +478,7 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 
 		// When
 		const first = await settle(drain(harness.buffer));
+		const writesAfterFirst = persistence.thoughtWrites.map((write) => write.thought.thought_number);
 		failSecond = false;
 		const second = await settle(drain(harness.buffer));
 
@@ -490,9 +491,10 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 				failures: [{ sessionId, kind: 'thought', attempts: 1 }],
 			},
 		});
+		expect(writesAfterFirst).toEqual([1, 2]);
 		expect(second).toEqual({ status: 'fulfilled' });
 		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([
-			1, 2, 3, 2,
+			1, 2, 2, 3,
 		]);
 	});
 
@@ -576,7 +578,7 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 		expect(persistence.thoughtWrites).toHaveLength(2);
 	});
 
-	it('does not let a capacity trigger reattempt exhausted work without explicit rearm', async () => {
+	it('holds later writes behind a failed thought that a capacity trigger does not reattempt', async () => {
 		// Given
 		const sessionId = asSessionId('capacity-exhaustion');
 		const persistence = new RecordingPersistence({
@@ -593,7 +595,7 @@ describe('PersistenceBuffer bounded attributable retries', () => {
 		await flushMicrotasks();
 
 		// Then
-		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([1, 2]);
+		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([1]);
 	});
 });
 
@@ -1547,7 +1549,7 @@ describe('PersistenceBuffer background joiner regression', () => {
 
 		// Then
 		expect(outcome.status).toBe('rejected');
-		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([1, 2]);
+		expect(persistence.thoughtWrites.map((write) => write.thought.thought_number)).toEqual([1]);
 		expect(events).toHaveLength(1);
 	});
 });
@@ -1956,11 +1958,11 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 
 		// Then
 		expect(whileDown).toBeInstanceOf(PersistenceBacklogFullError);
-		expect(attemptsWhileDown).toEqual([1, 2, 1, 2]);
+		expect(attemptsWhileDown).toEqual([1, 1]);
 		expect(afterRecovery).toBeInstanceOf(PersistenceBacklogFullError);
 		expect(pendingAfterRejectionDrain).toBe(0);
 		expect(retry).toBeUndefined();
-		expect(thoughtNumbers(persistence)).toEqual([1, 2, 1, 2, 1, 2, 3]);
+		expect(thoughtNumbers(persistence)).toEqual([1, 1, 1, 2, 3]);
 		expect(harness.buffer.pendingThoughtCount).toBe(0);
 	});
 
@@ -1991,11 +1993,12 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 	it('upgrades a background generation so retained failures are retried in the same pass', async () => {
 		// Given
 		const sessionId = asSessionId('limit-upgrade');
+		const other = asSessionId('limit-upgrade-other');
 		const gate = createDeferred();
 		let recovered = false;
 		const persistence = new RecordingPersistence({
-			thought: async ({ thought }) => {
-				if (thought.thought_number === 2) await gate.promise;
+			thought: async ({ sessionId: owner }) => {
+				if (owner === other) await gate.promise;
 				else if (!recovered) throw new ExpectedWriteError('terminal');
 			},
 		});
@@ -2003,11 +2006,11 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 			persistence,
 			maxRetries: 0,
 			flushInterval: 100,
-			maxPendingThoughtsPerSession: 2,
+			maxPendingThoughtsPerSession: 1,
 		});
 		acceptThought(harness, sessionId, 1);
 		await settle(drain(harness.buffer));
-		acceptThought(harness, sessionId, 2);
+		acceptThought(harness, other, 1);
 		harness.buffer.startFlushTimer();
 		await vi.advanceTimersByTimeAsync(100);
 		harness.buffer.stopFlushTimer();
@@ -2020,7 +2023,11 @@ describe('PersistenceBuffer per-session backlog limit', () => {
 
 		// Then
 		expect(rejection).toBeInstanceOf(PersistenceBacklogFullError);
-		expect(thoughtNumbers(persistence)).toEqual([1, 2, 1]);
+		expect(persistence.thoughtWrites.map((write) => write.sessionId)).toEqual([
+			sessionId,
+			other,
+			sessionId,
+		]);
 		expect(harness.buffer.pendingThoughtCount).toBe(0);
 		expect(harness.buffer.isFlushing).toBe(false);
 	});
@@ -2186,7 +2193,7 @@ describe('PersistenceBuffer backlog view', () => {
 		expect(afterDrain).toEqual(EMPTY_VIEW);
 	});
 
-	it('counts a retained terminal failure without quarantining anything', async () => {
+	it('counts a retained terminal failure and its held write without quarantining anything', async () => {
 		// Given
 		const sessionId = asSessionId('view-failure');
 		const persistence = new RecordingPersistence({
@@ -2206,7 +2213,7 @@ describe('PersistenceBuffer backlog view', () => {
 		expect(harness.buffer.getBacklogView()).toEqual({
 			...EMPTY_VIEW,
 			retainedFailureCount: 1,
-			pendingThoughtCount: 1,
+			pendingThoughtCount: 2,
 		});
 	});
 
@@ -2262,5 +2269,154 @@ describe('PersistenceBuffer backlog view', () => {
 		expect(Object.isFrozen(view)).toBe(true);
 		expect(view.pendingThoughtCount).toBe(0);
 		expect(harness.buffer.getBacklogView().pendingThoughtCount).toBe(1);
+	});
+});
+
+describe('PersistenceBuffer ordered durable writes', () => {
+	const ORDER_A = asSessionId('ordered-a');
+	const ORDER_B = asSessionId('ordered-b');
+
+	function loggingBackend(
+		events: string[],
+		fails: (event: string) => boolean
+	): RecordingPersistence {
+		const record = async (event: string): Promise<void> => {
+			events.push(event);
+			if (fails(event)) throw new ExpectedWriteError(event);
+		};
+		return new RecordingPersistence({
+			thought: ({ sessionId, thought }) => record(`thought:${sessionId}:${thought.thought_number}`),
+			backtrack: ({ sessionId, thought }) =>
+				record(`backtrack:${sessionId}:${thought.thought_number}`),
+			branch: ({ sessionId, branchId }) => record(`branch:${sessionId}:${branchId}`),
+			edges: ({ sessionId, snapshot }) => record(`edges:${sessionId}:${snapshot.length}`),
+			summaries: ({ sessionId }) => record(`summaries:${sessionId}`),
+		});
+	}
+
+	it('holds snapshots accepted after a failed thought and writes only their latest versions', async () => {
+		// Given
+		const events: string[] = [];
+		let down = true;
+		const persistence = loggingBackend(events, (event) => down && event === `thought:${ORDER_A}:1`);
+		const harness = createHarness({ persistence });
+		acceptBranch(harness.buffer, ORDER_A, asBranchId('early'), []);
+		acceptThought(harness, ORDER_A, 1);
+		acceptBranch(harness.buffer, ORDER_A, asBranchId('late'), []);
+		acceptEdges(harness, ORDER_A, [edge(ORDER_A, 'v1', 1)]);
+		acceptSummaries(harness.buffer, ORDER_A, [summary(ORDER_A, 'held')]);
+		acceptEdges(harness, ORDER_A, [edge(ORDER_A, 'v1', 1), edge(ORDER_A, 'v2', 2)]);
+		acceptEdges(harness, ORDER_B, [edge(ORDER_B, 'free', 1)]);
+
+		// When
+		const failed = await settle(drain(harness.buffer));
+		const duringOutage = [...events];
+		down = false;
+		const recovered = await settle(drain(harness.buffer));
+
+		// Then
+		expect(failed).toMatchObject({
+			status: 'rejected',
+			reason: { failures: [{ kind: 'thought', sessionId: ORDER_A }] },
+		});
+		expect(duringOutage).toEqual([
+			`branch:${ORDER_A}:early`,
+			`thought:${ORDER_A}:1`,
+			`edges:${ORDER_B}:1`,
+		]);
+		expect(recovered).toEqual({ status: 'fulfilled' });
+		expect(events.slice(duringOutage.length)).toEqual([
+			`thought:${ORDER_A}:1`,
+			`branch:${ORDER_A}:late`,
+			`summaries:${ORDER_A}`,
+			`edges:${ORDER_A}:2`,
+		]);
+		expect(harness.buffer.sessionEvictionState(ORDER_A)).toBe('quiescent');
+	});
+
+	it('holds a session behind a failed backtrack', async () => {
+		// Given
+		const events: string[] = [];
+		const persistence = loggingBackend(events, (event) => event.startsWith('backtrack:'));
+		const harness = createHarness({ persistence });
+		harness.buffer.bufferBacktrack(
+			ORDER_A,
+			createTestThought({ id: 'held-backtrack', session_id: ORDER_A, thought_number: 1 }),
+			asThoughtId('held-target')
+		);
+		acceptThought(harness, ORDER_A, 2);
+
+		// When
+		const outcome = await settle(drain(harness.buffer));
+
+		// Then
+		expect(outcome).toMatchObject({
+			status: 'rejected',
+			reason: { failures: [{ kind: 'backtrack', sessionId: ORDER_A }] },
+		});
+		expect(events).toEqual([`backtrack:${ORDER_A}:1`]);
+	});
+
+	it('does not hold a session behind a failed branch, edge or summary snapshot', async () => {
+		// Given
+		const events: string[] = [];
+		const persistence = loggingBackend(events, (event) => !event.startsWith('thought:'));
+		const harness = createHarness({ persistence });
+		acceptBranch(harness.buffer, ORDER_A, asBranchId('failing'), []);
+		acceptEdges(harness, ORDER_A, [edge(ORDER_A, 'failing', 1)]);
+		acceptSummaries(harness.buffer, ORDER_A, [summary(ORDER_A, 'failing')]);
+		acceptThought(harness, ORDER_A, 1);
+		acceptThought(harness, ORDER_A, 2);
+
+		// When
+		const outcome = await settle(drain(harness.buffer));
+
+		// Then
+		expect(outcome).toMatchObject({
+			status: 'rejected',
+			reason: { failures: [{ kind: 'branch' }, { kind: 'edge' }, { kind: 'summary' }] },
+		});
+		expect(events.filter((event) => event.startsWith('thought:'))).toEqual([
+			`thought:${ORDER_A}:1`,
+			`thought:${ORDER_A}:2`,
+		]);
+	});
+
+	it('never resolves a session barrier as quiescent while held work is queued', async () => {
+		// Given
+		const events: string[] = [];
+		let down = true;
+		const persistence = loggingBackend(events, (event) => down && event === `thought:${ORDER_A}:1`);
+		const harness = createHarness({ persistence });
+		acceptThought(harness, ORDER_A, 1);
+		acceptThought(harness, ORDER_A, 2);
+		acceptEdges(harness, ORDER_A, [edge(ORDER_A, 'held', 1)]);
+		await settle(drain(harness.buffer));
+		const callback = async (): Promise<void> => {
+			events.push('callback');
+		};
+
+		// When
+		const blocked = await settle(harness.buffer.withSessionBarrier(ORDER_A, callback));
+		const eventsWhileBlocked = [...events];
+		down = false;
+		const released = await settle(harness.buffer.withSessionBarrier(ORDER_A, callback));
+
+		// Then
+		expect(blocked).toMatchObject({
+			status: 'rejected',
+			reason: {
+				name: 'PersistenceDrainError',
+				failures: [{ kind: 'thought', sessionId: ORDER_A, attempts: 1 }],
+			},
+		});
+		expect(eventsWhileBlocked).toEqual([`thought:${ORDER_A}:1`, `thought:${ORDER_A}:1`]);
+		expect(released).toEqual({ status: 'fulfilled' });
+		expect(events.slice(eventsWhileBlocked.length)).toEqual([
+			`thought:${ORDER_A}:1`,
+			`thought:${ORDER_A}:2`,
+			`edges:${ORDER_A}:1`,
+			'callback',
+		]);
 	});
 });

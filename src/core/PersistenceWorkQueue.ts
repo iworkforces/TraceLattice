@@ -53,6 +53,8 @@ type Acceptance = {
  * Thought entries retain FIFO acceptance order. Auxiliary snapshots coalesce at
  * their stable coordinate and use versioned compare-and-set acknowledgement.
  * Generation state remains caller-owned in a `Set` passed to selection methods.
+ * A retained thought or backtrack failure holds every entry its session accepted after it,
+ * of every kind, until that write succeeds or the session is discarded.
  *
  * @example
  * ```ts
@@ -435,6 +437,16 @@ export class PersistenceWorkQueue {
 	}
 
 	/**
+	 * @param sessionId - Session whose oldest retained thought or backtrack failure is read.
+	 * @returns The failure that holds the session's later writes, or `undefined`.
+	 */
+	public blockingFailure(sessionId: SessionId): PersistenceWorkFailure | undefined {
+		return this._thoughts.find(
+			(entry) => entry.work.sessionId === sessionId && entry.terminalFailure !== undefined
+		)?.terminalFailure;
+	}
+
+	/**
 	 * Forgets version coordinates only after all accepted work for a session is gone.
 	 *
 	 * @returns `false` without mutation while any accepted work remains.
@@ -537,14 +549,32 @@ export class PersistenceWorkQueue {
 		mode: PersistenceSelectionMode,
 		sessionId?: SessionId
 	): AnyQueueEntry | undefined {
+		const holds = this._sessionHolds();
 		let oldest: AnyQueueEntry | undefined;
 		for (const entry of this._entries()) {
 			if (selectedTokens.has(entry.work.token)) continue;
 			if (sessionId !== undefined && entry.work.sessionId !== sessionId) continue;
+			if (this._isHeld(entry, holds)) continue;
 			if (!this._modeAllows(mode, entry.terminalFailure !== undefined)) continue;
 			if (oldest === undefined || entry.acceptedSequence < oldest.acceptedSequence) oldest = entry;
 		}
 		return oldest;
+	}
+
+	/** @returns Accepted sequence of each session's oldest retained thought or backtrack failure. */
+	private _sessionHolds(): Map<SessionId, number> {
+		const holds = new Map<SessionId, number>();
+		for (const entry of this._thoughts) {
+			if (entry.terminalFailure !== undefined && !holds.has(entry.work.sessionId)) {
+				holds.set(entry.work.sessionId, entry.acceptedSequence);
+			}
+		}
+		return holds;
+	}
+
+	private _isHeld(entry: AnyQueueEntry, holds: ReadonlyMap<SessionId, number>): boolean {
+		const hold = holds.get(entry.work.sessionId);
+		return hold !== undefined && entry.acceptedSequence > hold;
 	}
 
 	private _modeAllows(mode: PersistenceSelectionMode, hasTerminalFailure: boolean): boolean {

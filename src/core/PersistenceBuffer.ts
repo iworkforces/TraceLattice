@@ -656,9 +656,12 @@ export class PersistenceBuffer {
 		}
 
 		const failures = this._queue.currentFailures(generation.selectedTokens, sessionId);
-		return failures.length === 0
+		if (failures.length > 0)
+			return { kind: 'rejected', reason: new PersistenceDrainError(failures) };
+		const blocking = this._queue.blockingFailure(sessionId);
+		return blocking === undefined
 			? { kind: 'resolved' }
-			: { kind: 'rejected', reason: new PersistenceDrainError(failures) };
+			: { kind: 'rejected', reason: new PersistenceDrainError([blocking]) };
 	}
 
 	private _waitForSessionProgress(sessionId: SessionId): Promise<void> {

@@ -2179,7 +2179,9 @@ describe('ThoughtProcessor persistence backlog limit', () => {
 		// Given
 		const harness = await seedFullSession(2);
 		const rejected = await harness.processor.process(verificationInput());
+		const attemptsBeforeOutageDrain = harness.persistence.thoughtAttempts;
 		await recoverAndDrain(harness);
+		const outageDrainAttempts = harness.persistence.thoughtAttempts - attemptsBeforeOutageDrain;
 
 		// When
 		const attemptsBeforeRetry = harness.persistence.thoughtAttempts;
@@ -2191,6 +2193,7 @@ describe('ThoughtProcessor persistence backlog limit', () => {
 
 		// Then
 		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
+		expect(outageDrainAttempts).toBe(1);
 		expect(payloadOf(whileRetained).code).toBe('PERSISTENCE_BACKLOG_FULL');
 		expect(attemptsStartedByRejection).toBe(2);
 		expect(retried.isError).toBeUndefined();
@@ -2234,7 +2237,9 @@ describe('ThoughtProcessor persistence backlog limit', () => {
 		// When
 		const rejected = await harness.processor.process(observation);
 		const tokenAfterRejection = harness.suspensionStore.peek(token);
+		const attemptsBeforeOutageDrain = harness.persistence.thoughtAttempts;
 		await recoverAndDrain(harness);
+		const outageDrainAttempts = harness.persistence.thoughtAttempts - attemptsBeforeOutageDrain;
 		const attemptsBeforeRetry = harness.persistence.thoughtAttempts;
 		const stillRetained = await harness.processor.process(observation);
 		const attemptsStartedByRejection = harness.persistence.thoughtAttempts - attemptsBeforeRetry;
@@ -2246,6 +2251,7 @@ describe('ThoughtProcessor persistence backlog limit', () => {
 		expect(payloadOf(rejected).code).toBe('PERSISTENCE_BACKLOG_FULL');
 		expect(tokenAfterRejection).not.toBeNull();
 		expect(surface(harness)).not.toEqual(before);
+		expect(outageDrainAttempts).toBe(1);
 		expect(payloadOf(stillRetained).code).toBe('PERSISTENCE_BACKLOG_FULL');
 		expect(attemptsStartedByRejection).toBe(2);
 		expect(retried.isError).toBeUndefined();
