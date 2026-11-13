@@ -237,7 +237,8 @@ an injected backend is still never closed. A timer cannot interrupt the synchron
 so the deadline only takes effect for asynchronous backends such as File or an injected backend.
 Size it for shutdown: watcher stop (up to 2 s), the buffer flush (up to the timeout) and the
 owned-backend close (up to the timeout) must fit inside the server's share of the CLI shutdown
-deadline, 15 s by default.
+deadline, 15 s by default. A reset still waiting on its `clearSession` or `clearAll` when shutdown
+starts can add up to one more timeout before the flush.
 
 `persistenceMaxPendingThoughtsPerSession` limits the thought and backtrack writes one session may hold
 unacknowledged, counting writes that failed terminally. At the limit a thought is rejected with
