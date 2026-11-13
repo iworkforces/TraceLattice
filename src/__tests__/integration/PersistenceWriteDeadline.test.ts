@@ -3,6 +3,7 @@ import {
 	PersistenceDrainError,
 	PersistenceWriteTimeoutError,
 } from '../../core/PersistenceBufferErrors.js';
+import { asSessionId } from '../../contracts/ids.js';
 import { createServer, type ToolAwareSequentialThinkingServer } from '../../lib.js';
 import { ServerConfig } from '../../ServerConfig.js';
 import { StallingPersistence } from '../helpers/StallingPersistence.js';
@@ -74,14 +75,29 @@ function trackStop(server: ToolAwareSequentialThinkingServer): TrackedStop {
 	return { result, isSettled: () => settled };
 }
 
-function thoughtInput(thoughtNumber: number) {
+function thoughtInput(thoughtNumber: number, sessionId: string = SESSION_ID) {
 	return {
 		thought: `deadline thought ${thoughtNumber}`,
 		thought_number: thoughtNumber,
-		total_thoughts: 2,
+		total_thoughts: 3,
 		next_thought_needed: true,
-		session_id: SESSION_ID,
+		session_id: sessionId,
 	};
+}
+
+function holdEveryCall(persistence: StallingPersistence): void {
+	persistence.holdWrites = true;
+	persistence.holdClears = true;
+	persistence.holdClose = true;
+}
+
+async function stallFirstWrite(server: ToolAwareSequentialThinkingServer): Promise<unknown> {
+	const drained = server.history.drainSession(asSessionId(SESSION_ID)).then(
+		() => undefined,
+		(error: unknown) => error
+	);
+	await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+	return drained;
 }
 
 beforeEach(() => {
@@ -91,6 +107,7 @@ beforeEach(() => {
 afterEach(() => {
 	for (const backend of backends) {
 		backend.holdWrites = false;
+		backend.holdClears = false;
 		backend.holdClose = false;
 		while (backend.heldCallCount > 0) backend.releaseHeldCall();
 	}
@@ -201,4 +218,82 @@ describe('server persistence write deadline', () => {
 		expect(persistence.closeCalls).toBe(0);
 		expect(persistence.heldCallCount).toBe(0);
 	});
+});
+
+describe('server behaviour while a timed-out write is pending', () => {
+	it('keeps answering tool calls in every session', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createDeadlineServer(persistence);
+		persistence.holdWrites = true;
+		await server.processThought(thoughtInput(1));
+		const drainError = await stallFirstWrite(server);
+
+		// When
+		const sameSession = await server.processThought(thoughtInput(2));
+		const otherSession = await server.processThought(thoughtInput(1, 'write-deadline-other'));
+
+		// Then
+		expect(drainError).toBeInstanceOf(PersistenceDrainError);
+		expect(sameSession.isError).toBeUndefined();
+		expect(otherSession.isError).toBeUndefined();
+		expect(persistence.maxConcurrentWrites).toBe(1);
+		expect(server.history.getPersistenceBacklogView()).toMatchObject({
+			retainedFailureCount: 1,
+			blockedSessionCount: 1,
+		});
+	});
+
+	it('saves a late success exactly once and drains the writes buffered meanwhile', async () => {
+		// Given
+		const persistence = new StallingPersistence();
+		const server = await createDeadlineServer(persistence);
+		persistence.holdWrites = true;
+		await server.processThought(thoughtInput(1));
+		await stallFirstWrite(server);
+		await server.processThought(thoughtInput(2));
+
+		// When
+		persistence.holdWrites = false;
+		persistence.releaseHeldCall();
+		await vi.advanceTimersByTimeAsync(0);
+		await server.history.drainSession(asSessionId(SESSION_ID));
+
+		// Then
+		const saved = await persistence.loadHistoryForSession(asSessionId(SESSION_ID));
+		expect(saved.map((thought) => thought.thought_number)).toEqual([1, 2]);
+		expect(new Set(saved.map((thought) => thought.id)).size).toBe(2);
+		expect(persistence.thoughtAttempts).toBe(2);
+		expect(persistence.maxConcurrentWrites).toBe(1);
+	});
+
+	it.each(['owned', 'injected'] as const)(
+		'settles stop with aggregated failures when an %s backend never settles any call',
+		async (ownership) => {
+			// Given
+			const persistence = new StallingPersistence();
+			const server =
+				ownership === 'owned'
+					? await createOwnedServer(persistence)
+					: await createDeadlineServer(persistence);
+			await server.processThought(thoughtInput(1));
+			holdEveryCall(persistence);
+
+			// When
+			const stopping = trackStop(server);
+			await vi.advanceTimersByTimeAsync(2 * TIMEOUT_MS);
+			const settled = stopping.isSettled();
+			const errors = aggregatedErrors(await stopping.result);
+
+			// Then
+			expect(settled).toBe(true);
+			expect(errors[0]).toBeInstanceOf(PersistenceDrainError);
+			expect(errors.slice(1)).toEqual(
+				ownership === 'owned' ? [expect.any(PersistenceWriteTimeoutError)] : []
+			);
+			expect(persistence.closeCalls).toBe(ownership === 'owned' ? 1 : 0);
+			expect(persistence.clearCalls).toBe(0);
+			expect(persistence.maxConcurrentWrites).toBe(1);
+		}
+	);
 });
