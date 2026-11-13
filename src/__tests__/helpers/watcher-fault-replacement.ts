@@ -99,7 +99,9 @@ export function describeReplacementBound(subject: WatcherSubject): void {
 		expect(vi.getTimerCount()).toBe(1);
 		expect(refresh).toHaveBeenCalledOnce();
 	});
+}
 
+export function describeReplacementBoundTimer(subject: WatcherSubject): void {
 	it('clears the bound when the replacement reports ready first', async () => {
 		const onFault = vi.fn();
 		const { refresh } = startHungReplacement(subject, onFault);
